@@ -34,6 +34,7 @@ import {
   heikinAshi,
   findDivergences,
   type DivergenceSegment,
+  type IndicatorPoint,
 } from "@/lib/indicators";
 import type { Candle, Timeframe } from "@/lib/binance/types";
 import {
