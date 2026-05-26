@@ -1,8 +1,77 @@
 import type { Candle } from "@/lib/binance/types";
+import gliRaw from "@/lib/data/global-m2.json";
 
 export interface IndicatorPoint {
   time: number;
   value: number;
+}
+
+// --- Global Liquidity Index (GLI / Global M2) ---
+// Monthly snapshots of US + EU + JP + CN M2 in USD trillions.
+// Bundled as a static JSON; refresh with scripts/update-global-m2.mjs.
+
+interface GliFile {
+  source: string;
+  unit: string;
+  frequency: string;
+  lastUpdated: string;
+  data: [string, number][];
+}
+
+// Pre-parse once at module load: ISO date -> unix seconds (UTC).
+const GLI_POINTS: IndicatorPoint[] = ((): IndicatorPoint[] => {
+  const raw = gliRaw as unknown as GliFile;
+  return raw.data
+    .map(([date, value]) => ({
+      time: Math.floor(
+        new Date(`${date}T00:00:00Z`).getTime() / 1000,
+      ),
+      value,
+    }))
+    .filter((p) => Number.isFinite(p.time) && Number.isFinite(p.value))
+    .sort((a, b) => a.time - b.time);
+})();
+
+export const GLI_META = {
+  source: (gliRaw as unknown as GliFile).source,
+  unit: (gliRaw as unknown as GliFile).unit,
+  lastUpdated: (gliRaw as unknown as GliFile).lastUpdated,
+};
+
+/**
+ * Global Liquidity Index (Global M2 in USD trillions).
+ *
+ * Interpolates the bundled monthly dataset to match each candle's timestamp
+ * so the line renders smoothly on any timeframe (1m → 1W).
+ *
+ * For candle times outside the dataset's range the nearest boundary value
+ * is used (so the line extends flat instead of disappearing).
+ */
+export function globalLiquidity(candles: Candle[]): IndicatorPoint[] {
+  if (candles.length === 0 || GLI_POINTS.length === 0) return [];
+  const out: IndicatorPoint[] = [];
+  let j = 0;
+  for (const c of candles) {
+    while (
+      j < GLI_POINTS.length - 1 &&
+      GLI_POINTS[j + 1].time <= c.time
+    ) {
+      j++;
+    }
+    const a = GLI_POINTS[j];
+    const b = GLI_POINTS[Math.min(j + 1, GLI_POINTS.length - 1)];
+    let value: number;
+    if (c.time <= a.time) {
+      value = a.value;
+    } else if (c.time >= b.time || a.time === b.time) {
+      value = b.value;
+    } else {
+      const t = (c.time - a.time) / (b.time - a.time);
+      value = a.value + (b.value - a.value) * t;
+    }
+    out.push({ time: c.time, value });
+  }
+  return out;
 }
 
 export interface MACDPoint {

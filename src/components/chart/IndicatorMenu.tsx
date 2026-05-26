@@ -54,6 +54,7 @@ const ENTRIES: Entry[] = [
     label: (c) => `Stochastic (${c.stochK}, ${c.stochD}, ${c.stochSmooth})`,
   },
   { key: "cipher", group: "VuManChu", label: () => "Cipher B (WaveTrend)" },
+  { key: "gli", group: "Macro", label: () => "Global Liquidity (M2)" },
 ];
 
 export function IndicatorMenu() {

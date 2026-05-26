@@ -26,6 +26,7 @@ const TITLES: Record<IndicatorKey, string> = {
   stoch: "Stochastic",
   vwap: "VWAP",
   cipher: "VuManChu Cipher B",
+  gli: "Global Liquidity (M2)",
 };
 
 export function IndicatorSettingsDialog() {

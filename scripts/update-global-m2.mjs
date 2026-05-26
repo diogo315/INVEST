@@ -1,0 +1,167 @@
+#!/usr/bin/env node
+/**
+ * Update src/lib/data/global-m2.json with fresh M2 data from public sources.
+ *
+ * Sources (all free, no API key):
+ *   - US M2 : FRED via dbnomics (FED/H6/M2NSA — billions USD, monthly)
+ *   - EU M2 : ECB via dbnomics (ECB/BSI/M.U2.Y.V.M20.X.1.U2.2300.Z01.E — millions EUR, monthly)
+ *   - JP M2 : BoJ via dbnomics (BOJ/MD02/MD02'MAM1NAM2MO — hundred millions JPY, monthly)
+ *   - CN M2 : PBoC via dbnomics (NBS/A0M0103 — hundred millions CNY, monthly)
+ *
+ * The series above are best-effort; if any provider changes its codes, override
+ * via env vars `US_M2_SERIES`, `EU_M2_SERIES`, `JP_M2_SERIES`, `CN_M2_SERIES`.
+ * Find updated codes at https://db.nomics.world/.
+ *
+ * Usage:
+ *   node scripts/update-global-m2.mjs
+ *
+ * The script writes the merged dataset to src/lib/data/global-m2.json.
+ * Run it monthly (or whenever you want fresh data) and commit the change.
+ */
+
+import { writeFileSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const OUT_FILE = join(__dirname, "..", "src", "lib", "data", "global-m2.json");
+
+const SERIES = {
+  us: process.env.US_M2_SERIES ?? "FED/H6/M2NSA",
+  eu: process.env.EU_M2_SERIES ?? "ECB/BSI/M.U2.Y.V.M20.X.1.U2.2300.Z01.E",
+  jp: process.env.JP_M2_SERIES ?? "BOJ/MD02/MD02'MAM1NAM2MO",
+  cn: process.env.CN_M2_SERIES ?? "NBS/A0M0103",
+};
+
+// Approximate FX rates (USD per local unit). Update if drift becomes large.
+// You can also re-derive these from dbnomics FX series.
+const FX = {
+  EUR_USD: 1.08,
+  JPY_USD: 1 / 150,
+  CNY_USD: 1 / 7.2,
+};
+
+// Multipliers to convert source unit → trillions USD.
+const TO_TRILLIONS_USD = {
+  us: 1 / 1_000, // billions USD → trillions USD
+  eu: (FX.EUR_USD) / 1_000_000, // millions EUR → trillions USD
+  jp: (FX.JPY_USD * 100_000_000) / 1_000_000_000_000, // 100M JPY → trillions USD
+  cn: (FX.CNY_USD * 100_000_000) / 1_000_000_000_000, // 100M CNY → trillions USD
+};
+
+async function fetchSeries(code) {
+  const url = `https://api.db.nomics.world/v22/series/${code}?observations=1&format=json`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${code}: HTTP ${res.status}`);
+  const json = await res.json();
+  const docs = json?.series?.docs?.[0];
+  if (!docs?.period || !docs?.value) {
+    throw new Error(`${code}: unexpected payload shape`);
+  }
+  /** @type {Array<[string, number]>} */
+  const points = [];
+  for (let i = 0; i < docs.period.length; i++) {
+    const p = docs.period[i];
+    const v = docs.value[i];
+    if (v === "NA" || v === null || v === undefined) continue;
+    // Normalize period to "YYYY-MM-01"
+    let date;
+    if (/^\d{4}-\d{2}$/.test(p)) date = `${p}-01`;
+    else if (/^\d{4}-\d{2}-\d{2}$/.test(p)) date = p;
+    else continue;
+    points.push([date, Number(v)]);
+  }
+  return points;
+}
+
+function mergeByMonth(map, points, mult) {
+  for (const [date, value] of points) {
+    const key = date.slice(0, 7); // YYYY-MM
+    const usd = value * mult;
+    const cur = map.get(key) ?? { date: `${key}-01`, partials: {} };
+    cur.partials[key] = (cur.partials[key] ?? 0) + usd;
+    map.set(key, cur);
+  }
+}
+
+async function main() {
+  console.log("Fetching M2 series from dbnomics...");
+  const [us, eu, jp, cn] = await Promise.all([
+    fetchSeries(SERIES.us).catch((e) => {
+      console.warn("US M2 failed:", e.message);
+      return [];
+    }),
+    fetchSeries(SERIES.eu).catch((e) => {
+      console.warn("EU M2 failed:", e.message);
+      return [];
+    }),
+    fetchSeries(SERIES.jp).catch((e) => {
+      console.warn("JP M2 failed:", e.message);
+      return [];
+    }),
+    fetchSeries(SERIES.cn).catch((e) => {
+      console.warn("CN M2 failed:", e.message);
+      return [];
+    }),
+  ]);
+
+  // Build a YYYY-MM -> sum map. We only emit a month if ALL four sources have data.
+  const monthly = new Map();
+  function add(points, mult, sourceKey) {
+    for (const [date, value] of points) {
+      const key = date.slice(0, 7);
+      const cur = monthly.get(key) ?? { sources: {} };
+      cur.sources[sourceKey] = value * mult;
+      monthly.set(key, cur);
+    }
+  }
+  add(us, TO_TRILLIONS_USD.us, "us");
+  add(eu, TO_TRILLIONS_USD.eu, "eu");
+  add(jp, TO_TRILLIONS_USD.jp, "jp");
+  add(cn, TO_TRILLIONS_USD.cn, "cn");
+
+  /** @type {Array<[string, number]>} */
+  const data = [];
+  const keys = [...monthly.keys()].sort();
+  for (const k of keys) {
+    const { sources } = monthly.get(k);
+    if (
+      sources.us !== undefined &&
+      sources.eu !== undefined &&
+      sources.jp !== undefined &&
+      sources.cn !== undefined
+    ) {
+      const sum =
+        sources.us + sources.eu + sources.jp + sources.cn;
+      data.push([`${k}-01`, Math.round(sum * 10) / 10]);
+    }
+  }
+
+  if (data.length === 0) {
+    console.error(
+      "No complete months retrieved. The JSON was NOT overwritten.",
+    );
+    process.exit(1);
+  }
+
+  const out = {
+    _comment:
+      "Auto-generated by scripts/update-global-m2.mjs. Edit by re-running the script.",
+    source:
+      "US M2 (FRED) + EU M2 (ECB) + JP M2 (BOJ) + CN M2 (PBoC), summed in USD trillions",
+    unit: "USD trillions",
+    frequency: "monthly",
+    lastUpdated: new Date().toISOString().slice(0, 10),
+    fxAssumptions: FX,
+    data,
+  };
+
+  mkdirSync(dirname(OUT_FILE), { recursive: true });
+  writeFileSync(OUT_FILE, JSON.stringify(out, null, 2) + "\n");
+  console.log(`Wrote ${data.length} monthly points to ${OUT_FILE}`);
+}
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

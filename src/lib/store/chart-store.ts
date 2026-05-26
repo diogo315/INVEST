@@ -14,7 +14,8 @@ export type IndicatorKey =
   | "bb"
   | "stoch"
   | "vwap"
-  | "cipher";
+  | "cipher"
+  | "gli";
 
 export type DrawingTool = "cursor" | "hline" | "measure" | "eraser";
 
@@ -204,6 +205,7 @@ export const INDICATOR_COLORS: Record<IndicatorKey, string> = {
   stoch: "#ec407a",
   vwap: "#ffca28",
   cipher: "#4994ec",
+  gli: "#f59e0b",
 };
 
 export const DEFAULT_WATCHLIST = [
@@ -275,6 +277,7 @@ export const useChartStore = create<ChartState>()(
         stoch: false,
         vwap: false,
         cipher: false,
+        gli: false,
       },
       hidden: {
         ema20: false,
@@ -287,6 +290,7 @@ export const useChartStore = create<ChartState>()(
         stoch: false,
         vwap: false,
         cipher: false,
+        gli: false,
       },
       config: { ...DEFAULT_CONFIG },
       watchlist: DEFAULT_WATCHLIST,

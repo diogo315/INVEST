@@ -33,6 +33,7 @@ import {
   schaffTC,
   heikinAshi,
   findDivergences,
+  globalLiquidity,
   type DivergenceSegment,
   type IndicatorPoint,
 } from "@/lib/indicators";
@@ -109,6 +110,7 @@ interface LastValues {
   bbMiddle?: number;
   bbLower?: number;
   vwap?: number;
+  gli?: number;
   stochK?: number;
   stochD?: number;
   cipherWt1?: number;
@@ -141,6 +143,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
   const bbMiddleRef = useRef<ISeriesApi<"Line"> | null>(null);
   const bbLowerRef = useRef<ISeriesApi<"Line"> | null>(null);
   const vwapRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const gliRef = useRef<ISeriesApi<"Line"> | null>(null);
   const stochKRef = useRef<ISeriesApi<"Line"> | null>(null);
   const stochDRef = useRef<ISeriesApi<"Line"> | null>(null);
   const stoch20Ref = useRef<ISeriesApi<"Line"> | null>(null);
@@ -330,6 +333,23 @@ export function PriceChart({ symbol, timeframe }: Props) {
       lastValueVisible: false,
     });
 
+    // Global Liquidity Index — overlay on pane 0 using its own (invisible)
+    // price scale so trillions-of-USD values don't break the price scale.
+    // Shape of the line is what matters for crypto correlation analysis.
+    gliRef.current = chart.addSeries(LineSeries, {
+      color: INDICATOR_COLORS.gli,
+      lineWidth: 2,
+      lineStyle: 0,
+      priceScaleId: "gli",
+      priceLineVisible: false,
+      lastValueVisible: false,
+      visible: false,
+    });
+    chart.priceScale("gli").applyOptions({
+      visible: false,
+      scaleMargins: { top: 0.05, bottom: 0.05 },
+    });
+
     chartRef.current = chart;
 
     // Click handler — add horizontal price line when hline tool is active
@@ -445,6 +465,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
       bbMiddleRef.current = null;
       bbLowerRef.current = null;
       vwapRef.current = null;
+      gliRef.current = null;
       stochKRef.current = null;
       stochDRef.current = null;
       stoch20Ref.current = null;
@@ -1022,6 +1043,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
     bbMiddleRef.current?.applyOptions({ visible: v("bb") });
     bbLowerRef.current?.applyOptions({ visible: v("bb") });
     vwapRef.current?.applyOptions({ visible: v("vwap") });
+    gliRef.current?.applyOptions({ visible: v("gli") });
     stochKRef.current?.applyOptions({ visible: v("stoch") });
     stochDRef.current?.applyOptions({ visible: v("stoch") });
     stoch20Ref.current?.applyOptions({ visible: v("stoch") });
@@ -1360,6 +1382,16 @@ export function PriceChart({ symbol, timeframe }: Props) {
       data.map((p) => ({ time: p.time as UTCTimestamp, value: p.value })),
     );
     setLastValues((prev) => ({ ...prev, vwap: data.at(-1)?.value }));
+  }
+
+  function updateGLI() {
+    const c = candlesRef.current;
+    if (c.length === 0 || !gliRef.current) return;
+    const data = globalLiquidity(c);
+    gliRef.current.setData(
+      data.map((p) => ({ time: p.time as UTCTimestamp, value: p.value })),
+    );
+    setLastValues((prev) => ({ ...prev, gli: data.at(-1)?.value }));
   }
 
   function updateStochastic() {
@@ -2018,6 +2050,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
         updateMACD();
         updateBB();
         updateVWAP();
+        updateGLI();
         updateStochastic();
         updateCipher();
         chartRef.current?.timeScale().fitContent();
@@ -2282,6 +2315,21 @@ export function PriceChart({ symbol, timeframe }: Props) {
               onToggleHide={() => toggleHidden("vwap")}
               onSettings={() => setSettingsTarget("vwap")}
               onRemove={() => removeIndicator("vwap")}
+            />
+          )}
+          {indicators.gli && (
+            <IndicatorPill
+              name="Global M2"
+              value={
+                lastValues.gli !== undefined
+                  ? `$${lastValues.gli.toFixed(1)}T`
+                  : undefined
+              }
+              color={INDICATOR_COLORS.gli}
+              hidden={hidden.gli}
+              onToggleHide={() => toggleHidden("gli")}
+              onSettings={() => setSettingsTarget("gli")}
+              onRemove={() => removeIndicator("gli")}
             />
           )}
         </div>
