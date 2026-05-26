@@ -3,18 +3,38 @@
 import { useEffect, useRef, useState } from "react";
 import {
   createChart,
+  createSeriesMarkers,
   CandlestickSeries,
   LineSeries,
+  AreaSeries,
+  BaselineSeries,
   HistogramSeries,
   CrosshairMode,
   type IChartApi,
   type ISeriesApi,
   type IPriceLine,
+  type ISeriesMarkersPluginApi,
+  type SeriesMarker,
+  type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
-import { fetchKlines } from "@/lib/binance/rest";
-import { getBinanceWS } from "@/lib/binance/ws";
-import { ema, rsi, macd } from "@/lib/indicators";
+import { fetchKlinesCached } from "@/lib/binance/multi-tf";
+import { getAdapter, parseSymbol } from "@/lib/exchanges";
+import {
+  ema,
+  rsi,
+  macd,
+  bollinger,
+  stochastic,
+  vwap,
+  wavetrend,
+  mfiArea,
+  stochRsi,
+  schaffTC,
+  heikinAshi,
+  findDivergences,
+  type DivergenceSegment,
+} from "@/lib/indicators";
 import type { Candle, Timeframe } from "@/lib/binance/types";
 import {
   INDICATOR_COLORS,
@@ -52,7 +72,7 @@ interface Props {
 }
 
 const TV_COLORS = {
-  bg: "#131722",
+  bg: "#000000",
   panel: "#1e222d",
   border: "#2a2e39",
   text: "#d1d4dc",
@@ -62,7 +82,7 @@ const TV_COLORS = {
   blue: "#2962ff",
   yellow: "#ffb74d",
   purple: "#ab47bc",
-  grid: "#1e222d",
+  grid: "#15171f",
 };
 
 interface HoverInfo {
@@ -84,6 +104,17 @@ interface LastValues {
   macdSignal?: number;
   macdHist?: number;
   volume?: number;
+  bbUpper?: number;
+  bbMiddle?: number;
+  bbLower?: number;
+  vwap?: number;
+  stochK?: number;
+  stochD?: number;
+  cipherWt1?: number;
+  cipherWt2?: number;
+  cipherMfi?: number;
+  cipherStochK?: number;
+  cipherStochD?: number;
 }
 
 interface PaneOffset {
@@ -105,6 +136,58 @@ export function PriceChart({ symbol, timeframe }: Props) {
   const macdRef = useRef<ISeriesApi<"Line"> | null>(null);
   const macdSignalRef = useRef<ISeriesApi<"Line"> | null>(null);
   const macdHistRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const bbUpperRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const bbMiddleRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const bbLowerRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const vwapRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const stochKRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const stochDRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const stoch20Ref = useRef<ISeriesApi<"Line"> | null>(null);
+  const stoch80Ref = useRef<ISeriesApi<"Line"> | null>(null);
+  // VuManChu Cipher B series — WT1/WT2 use BaselineSeries so the area
+  // is filled relative to zero (so the wave appears both above and below 0).
+  const cipherWt1Ref = useRef<ISeriesApi<"Baseline"> | null>(null);
+  const cipherWt2Ref = useRef<ISeriesApi<"Baseline"> | null>(null);
+  const cipherVwapRef = useRef<ISeriesApi<"Baseline"> | null>(null);
+  const cipherMfiRef = useRef<ISeriesApi<"Baseline"> | null>(null);
+  const cipherStochKRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const cipherStochDRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const cipherObRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const cipherOb2Ref = useRef<ISeriesApi<"Line"> | null>(null);
+  const cipherOb3Ref = useRef<ISeriesApi<"Line"> | null>(null);
+  const cipherOsRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const cipherOs2Ref = useRef<ISeriesApi<"Line"> | null>(null);
+  const cipherOs3Ref = useRef<ISeriesApi<"Line"> | null>(null);
+  const cipherZeroRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const cipherRsiRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const cipherStochFillRef = useRef<ISeriesApi<"Area"> | null>(null);
+  // Divergence series — each one renders multiple discontinuous segments
+  // (gaps via whitespace data points). Naming: <source><kind>DivRef.
+  const wtBearDivRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const wtBullDivRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const wtBearHidDivRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const wtBullHidDivRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const wtBearDiv2Ref = useRef<ISeriesApi<"Line"> | null>(null);
+  const wtBullDiv2Ref = useRef<ISeriesApi<"Line"> | null>(null);
+  const rsiBearDivRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const rsiBullDivRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const rsiBearHidDivRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const rsiBullHidDivRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const stochBearDivRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const stochBullDivRef = useRef<ISeriesApi<"Line"> | null>(null);
+  // Schaff Trend Cycle line
+  const cipherSchaffRef = useRef<ISeriesApi<"Line"> | null>(null);
+  // Sommi higher-timeframe VWAP line (smoothed)
+  const cipherSommiHVwapRef = useRef<ISeriesApi<"Line"> | null>(null);
+  // Multi-TF candle caches (Sommi flag uses sommiVwapTF, diamond uses HTCRes/HTCRes2, macd colors uses macdColorsTF)
+  const multiTFCandlesRef = useRef<{
+    sommiFlag: Candle[];
+    sommiHTC1: Candle[];
+    sommiHTC2: Candle[];
+    macdColors: Candle[];
+  }>({ sommiFlag: [], sommiHTC1: [], sommiHTC2: [], macdColors: [] });
+  const [multiTFTick, setMultiTFTick] = useState(0);
+  const cipherMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const candlesRef = useRef<Candle[]>([]);
   const priceLinesMapRef = useRef<Map<string, IPriceLine>>(new Map());
 
@@ -212,6 +295,35 @@ export function PriceChart({ symbol, timeframe }: Props) {
     });
     ema200Ref.current = chart.addSeries(LineSeries, {
       color: INDICATOR_COLORS.ema200,
+      lineWidth: 2,
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+
+    // Bollinger Bands — upper / middle / lower (pane 0, hidden by default)
+    bbUpperRef.current = chart.addSeries(LineSeries, {
+      color: INDICATOR_COLORS.bb,
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+    bbMiddleRef.current = chart.addSeries(LineSeries, {
+      color: INDICATOR_COLORS.bb,
+      lineWidth: 1,
+      lineStyle: 2,
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+    bbLowerRef.current = chart.addSeries(LineSeries, {
+      color: INDICATOR_COLORS.bb,
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+
+    // VWAP (pane 0)
+    vwapRef.current = chart.addSeries(LineSeries, {
+      color: INDICATOR_COLORS.vwap,
       lineWidth: 2,
       priceLineVisible: false,
       lastValueVisible: false,
@@ -328,6 +440,44 @@ export function PriceChart({ symbol, timeframe }: Props) {
       macdRef.current = null;
       macdSignalRef.current = null;
       macdHistRef.current = null;
+      bbUpperRef.current = null;
+      bbMiddleRef.current = null;
+      bbLowerRef.current = null;
+      vwapRef.current = null;
+      stochKRef.current = null;
+      stochDRef.current = null;
+      stoch20Ref.current = null;
+      stoch80Ref.current = null;
+      cipherWt1Ref.current = null;
+      cipherWt2Ref.current = null;
+      cipherVwapRef.current = null;
+      cipherMfiRef.current = null;
+      cipherStochKRef.current = null;
+      cipherStochDRef.current = null;
+      cipherStochFillRef.current = null;
+      cipherRsiRef.current = null;
+      cipherObRef.current = null;
+      cipherOb2Ref.current = null;
+      cipherOb3Ref.current = null;
+      cipherOsRef.current = null;
+      cipherOs2Ref.current = null;
+      cipherOs3Ref.current = null;
+      cipherZeroRef.current = null;
+      cipherMarkersRef.current = null;
+      wtBearDivRef.current = null;
+      wtBullDivRef.current = null;
+      wtBearHidDivRef.current = null;
+      wtBullHidDivRef.current = null;
+      wtBearDiv2Ref.current = null;
+      wtBullDiv2Ref.current = null;
+      rsiBearDivRef.current = null;
+      rsiBullDivRef.current = null;
+      rsiBearHidDivRef.current = null;
+      rsiBullHidDivRef.current = null;
+      stochBearDivRef.current = null;
+      stochBullDivRef.current = null;
+      cipherSchaffRef.current = null;
+      cipherSommiHVwapRef.current = null;
     };
   }, []);
 
@@ -468,6 +618,392 @@ export function PriceChart({ symbol, timeframe }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [indicators.macd, indicators.rsi]);
 
+  // Cipher B pane — appended after RSI/MACD/Stoch if those are active
+  useEffect(() => {
+    if (!chartRef.current) return;
+    if (indicators.cipher && !cipherWt1Ref.current) {
+      const paneIndex =
+        1 +
+        (indicators.rsi ? 1 : 0) +
+        (indicators.macd ? 1 : 0) +
+        (indicators.stoch ? 1 : 0);
+      // WT1 baseline area — same color above & below 0 to draw a sinusoidal
+      // wave that crosses zero (Pine: #4994ec light blue).
+      const wt1 = chartRef.current.addSeries(
+        BaselineSeries,
+        {
+          baseValue: { type: "price", price: 0 },
+          topFillColor1: "#4994ecB3",
+          topFillColor2: "#4994ec30",
+          topLineColor: "#4994ec",
+          bottomFillColor1: "#4994ec30",
+          bottomFillColor2: "#4994ecB3",
+          bottomLineColor: "#4994ec",
+          lineWidth: 1,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        },
+        paneIndex,
+      );
+      // WT2 baseline area — Pine: #1f1559 dark purple
+      const wt2 = chartRef.current.addSeries(
+        BaselineSeries,
+        {
+          baseValue: { type: "price", price: 0 },
+          topFillColor1: "#1f1559BF",
+          topFillColor2: "#1f155950",
+          topLineColor: "#1f1559",
+          bottomFillColor1: "#1f155950",
+          bottomFillColor2: "#1f1559BF",
+          bottomLineColor: "#1f1559",
+          lineWidth: 1,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        },
+        paneIndex,
+      );
+      // Fast WT (wt1 - wt2), Pine renders as white area (also crosses 0)
+      const vw = chartRef.current.addSeries(
+        BaselineSeries,
+        {
+          baseValue: { type: "price", price: 0 },
+          topFillColor1: "#ffffff80",
+          topFillColor2: "#ffffff20",
+          topLineColor: "#ffffff",
+          bottomFillColor1: "#ffffff20",
+          bottomFillColor2: "#ffffff80",
+          bottomLineColor: "#ffffff",
+          lineWidth: 1,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        },
+        paneIndex,
+      );
+      // MFI baseline area (green above 0, red below — matches Pine's style_area)
+      const mfiH = chartRef.current.addSeries(
+        BaselineSeries,
+        {
+          baseValue: { type: "price", price: 0 },
+          topFillColor1: "#3ee145FF",
+          topFillColor2: "#3ee14580",
+          topLineColor: "#3ee145FF",
+          bottomFillColor1: "#ff3d2e80",
+          bottomFillColor2: "#ff3d2eFF",
+          bottomLineColor: "#ff3d2eFF",
+          lineWidth: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        },
+        paneIndex,
+      );
+      // Stoch RSI K (Pine: #21baf3 cyan)
+      const sk = chartRef.current.addSeries(
+        LineSeries,
+        {
+          color: "#21baf3",
+          lineWidth: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        },
+        paneIndex,
+      );
+      // Stoch RSI D (Pine: #673ab7 violet)
+      const sd = chartRef.current.addSeries(
+        LineSeries,
+        {
+          color: "#673ab7",
+          lineWidth: 1,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        },
+        paneIndex,
+      );
+      // Stoch K-D fill — soft area below K to approximate the K/D fill from Pine
+      const sFill = chartRef.current.addSeries(
+        AreaSeries,
+        {
+          topColor: "#21baf340",
+          bottomColor: "#21baf300",
+          lineColor: "#21baf300",
+          lineWidth: 1,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        },
+        paneIndex,
+      );
+      // RSI line (Pine: #c33ee1 purple/pink baseline color)
+      const rsiLine = chartRef.current.addSeries(
+        LineSeries,
+        {
+          color: "#c33ee1",
+          lineWidth: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        },
+        paneIndex,
+      );
+      const ob = chartRef.current.addSeries(
+        LineSeries,
+        {
+          color: TV_COLORS.textMuted,
+          lineWidth: 1,
+          lineStyle: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        },
+        paneIndex,
+      );
+      const ob2 = chartRef.current.addSeries(
+        LineSeries,
+        {
+          color: TV_COLORS.text,
+          lineWidth: 1,
+          lineStyle: 0,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        },
+        paneIndex,
+      );
+      const ob3 = chartRef.current.addSeries(
+        LineSeries,
+        {
+          color: `${TV_COLORS.text}60`,
+          lineWidth: 1,
+          lineStyle: 3,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        },
+        paneIndex,
+      );
+      const os = chartRef.current.addSeries(
+        LineSeries,
+        {
+          color: TV_COLORS.textMuted,
+          lineWidth: 1,
+          lineStyle: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        },
+        paneIndex,
+      );
+      const os2 = chartRef.current.addSeries(
+        LineSeries,
+        {
+          color: TV_COLORS.text,
+          lineWidth: 1,
+          lineStyle: 0,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        },
+        paneIndex,
+      );
+      const os3 = chartRef.current.addSeries(
+        LineSeries,
+        {
+          color: `${TV_COLORS.text}60`,
+          lineWidth: 1,
+          lineStyle: 3,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        },
+        paneIndex,
+      );
+      const zero = chartRef.current.addSeries(
+        LineSeries,
+        {
+          color: `${TV_COLORS.text}60`,
+          lineWidth: 1,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        },
+        paneIndex,
+      );
+      // Divergence line series — render as 2px-wide segments. Colors from Pine.
+      const makeDivSeries = (color: string, width = 2) =>
+        chartRef.current!.addSeries(
+          LineSeries,
+          {
+            color,
+            lineWidth: width as 1 | 2 | 3 | 4,
+            priceLineVisible: false,
+            lastValueVisible: false,
+          },
+          paneIndex,
+        );
+      wtBearDivRef.current = makeDivSeries("#e60000");
+      wtBullDivRef.current = makeDivSeries("#00e676");
+      wtBearHidDivRef.current = makeDivSeries("#e60000");
+      wtBullHidDivRef.current = makeDivSeries("#00e676");
+      wtBearDiv2Ref.current = makeDivSeries("#e6000099");
+      wtBullDiv2Ref.current = makeDivSeries("#00e67699");
+      rsiBearDivRef.current = makeDivSeries("#e60000", 1);
+      rsiBullDivRef.current = makeDivSeries("#38ff42", 1);
+      rsiBearHidDivRef.current = makeDivSeries("#e60000", 1);
+      rsiBullHidDivRef.current = makeDivSeries("#38ff42", 1);
+      stochBearDivRef.current = makeDivSeries("#e60000", 1);
+      stochBullDivRef.current = makeDivSeries("#38ff42", 1);
+
+      // Schaff Trend Cycle — soft purple line
+      cipherSchaffRef.current = chartRef.current.addSeries(
+        LineSeries,
+        {
+          color: "#673ab7",
+          lineWidth: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        },
+        paneIndex,
+      );
+      // Sommi higher-TF VWAP (smoothed) — yellow line
+      cipherSommiHVwapRef.current = chartRef.current.addSeries(
+        LineSeries,
+        {
+          color: "#ffe500",
+          lineWidth: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        },
+        paneIndex,
+      );
+
+      cipherWt1Ref.current = wt1;
+      cipherWt2Ref.current = wt2;
+      cipherVwapRef.current = vw;
+      cipherMfiRef.current = mfiH;
+      cipherStochKRef.current = sk;
+      cipherStochDRef.current = sd;
+      cipherStochFillRef.current = sFill;
+      cipherRsiRef.current = rsiLine;
+      cipherObRef.current = ob;
+      cipherOb2Ref.current = ob2;
+      cipherOb3Ref.current = ob3;
+      cipherOsRef.current = os;
+      cipherOs2Ref.current = os2;
+      cipherOs3Ref.current = os3;
+      cipherZeroRef.current = zero;
+      cipherMarkersRef.current = createSeriesMarkers(wt2, []);
+      try {
+        chartRef.current.panes()[paneIndex]?.setStretchFactor(2);
+        chartRef.current.panes()[0]?.setStretchFactor(3);
+      } catch {}
+      updateCipher();
+    } else if (!indicators.cipher && cipherWt1Ref.current && chartRef.current) {
+      cipherMarkersRef.current?.detach();
+      cipherMarkersRef.current = null;
+      for (const r of [
+        cipherWt1Ref,
+        cipherWt2Ref,
+        cipherVwapRef,
+        cipherMfiRef,
+        cipherStochKRef,
+        cipherStochDRef,
+        cipherStochFillRef,
+        cipherRsiRef,
+        cipherObRef,
+        cipherOb2Ref,
+        cipherOb3Ref,
+        cipherOsRef,
+        cipherOs2Ref,
+        cipherOs3Ref,
+        cipherZeroRef,
+        wtBearDivRef,
+        wtBullDivRef,
+        wtBearHidDivRef,
+        wtBullHidDivRef,
+        wtBearDiv2Ref,
+        wtBullDiv2Ref,
+        rsiBearDivRef,
+        rsiBullDivRef,
+        rsiBearHidDivRef,
+        rsiBullHidDivRef,
+        stochBearDivRef,
+        stochBullDivRef,
+        cipherSchaffRef,
+        cipherSommiHVwapRef,
+      ]) {
+        if (r.current) {
+          try {
+            chartRef.current.removeSeries(r.current);
+          } catch {}
+          r.current = null;
+        }
+      }
+    }
+    requestAnimationFrame(() => recomputePaneOffsets());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [indicators.cipher, indicators.rsi, indicators.macd, indicators.stoch]);
+
+  // Stochastic pane — appended after RSI/MACD if those are active
+  useEffect(() => {
+    if (!chartRef.current) return;
+    if (indicators.stoch && !stochKRef.current) {
+      const paneIndex =
+        1 + (indicators.rsi ? 1 : 0) + (indicators.macd ? 1 : 0);
+      const k = chartRef.current.addSeries(
+        LineSeries,
+        {
+          color: INDICATOR_COLORS.stoch,
+          lineWidth: 1,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        },
+        paneIndex,
+      );
+      const d = chartRef.current.addSeries(
+        LineSeries,
+        {
+          color: TV_COLORS.yellow,
+          lineWidth: 1,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        },
+        paneIndex,
+      );
+      const s20 = chartRef.current.addSeries(
+        LineSeries,
+        {
+          color: TV_COLORS.textMuted,
+          lineWidth: 1,
+          lineStyle: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        },
+        paneIndex,
+      );
+      const s80 = chartRef.current.addSeries(
+        LineSeries,
+        {
+          color: TV_COLORS.textMuted,
+          lineWidth: 1,
+          lineStyle: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+        },
+        paneIndex,
+      );
+      stochKRef.current = k;
+      stochDRef.current = d;
+      stoch20Ref.current = s20;
+      stoch80Ref.current = s80;
+      try {
+        chartRef.current.panes()[paneIndex]?.setStretchFactor(1);
+        chartRef.current.panes()[0]?.setStretchFactor(3);
+      } catch {}
+      updateStochastic();
+    } else if (!indicators.stoch && stochKRef.current && chartRef.current) {
+      if (stochKRef.current) chartRef.current.removeSeries(stochKRef.current);
+      if (stochDRef.current) chartRef.current.removeSeries(stochDRef.current);
+      if (stoch20Ref.current) chartRef.current.removeSeries(stoch20Ref.current);
+      if (stoch80Ref.current) chartRef.current.removeSeries(stoch80Ref.current);
+      stochKRef.current = null;
+      stochDRef.current = null;
+      stoch20Ref.current = null;
+      stoch80Ref.current = null;
+    }
+    requestAnimationFrame(() => recomputePaneOffsets());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [indicators.stoch, indicators.rsi, indicators.macd]);
+
   // Visibility — eye toggle (hidden state) + enabled state combined
   useEffect(() => {
     const v = (key: IndicatorKey) => indicators[key] && !hidden[key];
@@ -481,7 +1017,71 @@ export function PriceChart({ symbol, timeframe }: Props) {
     if (macdSignalRef.current) macdSignalRef.current.applyOptions({ visible: v("macd") });
     if (macdHistRef.current) macdHistRef.current.applyOptions({ visible: v("macd") });
     if (volumeSeriesRef.current) volumeSeriesRef.current.applyOptions({ visible: v("volume") });
-  }, [indicators, hidden]);
+    bbUpperRef.current?.applyOptions({ visible: v("bb") });
+    bbMiddleRef.current?.applyOptions({ visible: v("bb") });
+    bbLowerRef.current?.applyOptions({ visible: v("bb") });
+    vwapRef.current?.applyOptions({ visible: v("vwap") });
+    stochKRef.current?.applyOptions({ visible: v("stoch") });
+    stochDRef.current?.applyOptions({ visible: v("stoch") });
+    stoch20Ref.current?.applyOptions({ visible: v("stoch") });
+    stoch80Ref.current?.applyOptions({ visible: v("stoch") });
+    // Cipher B — top-level visibility AND per-sub-feature toggles
+    const cipherOn = v("cipher");
+    const cfg = config;
+    const wtVis = cipherOn && cfg.cipherShowWaveTrend;
+    cipherWt1Ref.current?.applyOptions({ visible: wtVis });
+    cipherWt2Ref.current?.applyOptions({ visible: wtVis });
+    cipherVwapRef.current?.applyOptions({
+      visible: cipherOn && cfg.cipherShowFastWT,
+    });
+    cipherMfiRef.current?.applyOptions({
+      visible: cipherOn && cfg.cipherShowMFI,
+    });
+    const stochVis = cipherOn && cfg.cipherShowStochRSI;
+    cipherStochKRef.current?.applyOptions({ visible: stochVis });
+    cipherStochDRef.current?.applyOptions({ visible: stochVis });
+    cipherStochFillRef.current?.applyOptions({ visible: stochVis });
+    cipherRsiRef.current?.applyOptions({
+      visible: cipherOn && cfg.cipherShowRSI,
+    });
+    // OB/OS lines are always shown when cipher is on
+    for (const r of [
+      cipherObRef,
+      cipherOb2Ref,
+      cipherOb3Ref,
+      cipherOsRef,
+      cipherOs2Ref,
+      cipherOs3Ref,
+      cipherZeroRef,
+    ]) {
+      r.current?.applyOptions({ visible: cipherOn });
+    }
+    // Divergence series visibility
+    const wtDivOn = cipherOn && cfg.cipherShowWTDivergences;
+    const wtHidOn = cipherOn && cfg.cipherShowWTDivergencesHidden;
+    const wtDiv2On = cipherOn && cfg.cipherShowWTDivergences2;
+    const rsiDivOn = cipherOn && cfg.cipherShowRSIDivergences;
+    const rsiHidOn = cipherOn && cfg.cipherShowRSIDivergencesHidden;
+    const stDivOn = cipherOn && cfg.cipherShowStochDivergences;
+    wtBearDivRef.current?.applyOptions({ visible: wtDivOn });
+    wtBullDivRef.current?.applyOptions({ visible: wtDivOn });
+    wtBearHidDivRef.current?.applyOptions({ visible: wtHidOn });
+    wtBullHidDivRef.current?.applyOptions({ visible: wtHidOn });
+    wtBearDiv2Ref.current?.applyOptions({ visible: wtDiv2On });
+    wtBullDiv2Ref.current?.applyOptions({ visible: wtDiv2On });
+    rsiBearDivRef.current?.applyOptions({ visible: rsiDivOn });
+    rsiBullDivRef.current?.applyOptions({ visible: rsiDivOn });
+    rsiBearHidDivRef.current?.applyOptions({ visible: rsiHidOn });
+    rsiBullHidDivRef.current?.applyOptions({ visible: rsiHidOn });
+    stochBearDivRef.current?.applyOptions({ visible: stDivOn });
+    stochBullDivRef.current?.applyOptions({ visible: stDivOn });
+    cipherSchaffRef.current?.applyOptions({
+      visible: cipherOn && cfg.cipherShowSchaff,
+    });
+    cipherSommiHVwapRef.current?.applyOptions({
+      visible: cipherOn && cfg.cipherShowSommiFastWave,
+    });
+  }, [indicators, hidden, config]);
 
   // Recompute indicators when config changes (periods)
   useEffect(() => {
@@ -495,6 +1095,137 @@ export function PriceChart({ symbol, timeframe }: Props) {
   useEffect(() => {
     updateMACD();
   }, [config.macdFast, config.macdSlow, config.macdSignal]);
+
+  useEffect(() => {
+    updateBB();
+  }, [config.bbPeriod, config.bbStdDev]);
+
+  useEffect(() => {
+    updateStochastic();
+  }, [config.stochK, config.stochD, config.stochSmooth]);
+
+  // Multi-TF data fetching for Sommi flag/diamond and MACD colors override.
+  // Runs whenever the user enables one of these features or changes the relevant TF.
+  useEffect(() => {
+    if (!indicators.cipher) return;
+    const needFlag = config.cipherShowSommiFlag || config.cipherShowSommiFastWave;
+    const needDiamond = config.cipherShowSommiDiamond;
+    const needMacd = config.cipherShowMacdColors;
+    if (!needFlag && !needDiamond && !needMacd) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const targets: Array<{
+          key: keyof typeof multiTFCandlesRef.current;
+          tf: Timeframe;
+        }> = [];
+        if (needFlag)
+          targets.push({
+            key: "sommiFlag",
+            tf: config.cipherSommiVwapTF as Timeframe,
+          });
+        if (needDiamond) {
+          targets.push({
+            key: "sommiHTC1",
+            tf: config.cipherSommiHTCRes as Timeframe,
+          });
+          targets.push({
+            key: "sommiHTC2",
+            tf: config.cipherSommiHTCRes2 as Timeframe,
+          });
+        }
+        if (needMacd)
+          targets.push({
+            key: "macdColors",
+            tf: config.cipherMacdColorsTF as Timeframe,
+          });
+        const results = await Promise.all(
+          targets.map((t) => fetchKlinesCached(symbol, t.tf, 500)),
+        );
+        if (cancelled) return;
+        for (let i = 0; i < targets.length; i++) {
+          multiTFCandlesRef.current[targets[i].key] = results[i];
+        }
+        setMultiTFTick((t) => t + 1);
+      } catch (e) {
+        console.error("multi-TF fetch failed:", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    indicators.cipher,
+    symbol,
+    timeframe,
+    config.cipherShowSommiFlag,
+    config.cipherShowSommiFastWave,
+    config.cipherShowSommiDiamond,
+    config.cipherShowMacdColors,
+    config.cipherSommiVwapTF,
+    config.cipherSommiHTCRes,
+    config.cipherSommiHTCRes2,
+    config.cipherMacdColorsTF,
+  ]);
+
+  useEffect(() => {
+    updateCipher();
+  }, [
+    config.wtChannelLen,
+    config.wtAverageLen,
+    config.wtMALen,
+    config.mfiPeriod,
+    config.mfiMultiplier,
+    config.cipherMfiYPos,
+    config.cipherStochLen,
+    config.cipherStochRsiLen,
+    config.cipherStochSmoothK,
+    config.cipherStochSmoothD,
+    config.cipherStochUseLog,
+    config.cipherStochUseAvg,
+    config.cipherRsiLen,
+    config.cipherRsiOverbought,
+    config.cipherRsiOversold,
+    config.wtObLevel,
+    config.wtObLevel2,
+    config.wtObLevel3,
+    config.wtOsLevel,
+    config.wtOsLevel2,
+    config.wtOsLevel3,
+    config.cipherShowBuyDots,
+    config.cipherShowGoldDots,
+    config.cipherShowSellDots,
+    config.cipherShowCrossDots,
+    config.cipherShowDivDots,
+    config.cipherShowWTDivergences,
+    config.cipherShowWTDivergences2,
+    config.cipherShowRSIDivergences,
+    config.cipherNotApplyOBOSOnHidden,
+    config.cipherWtDivOBLevel,
+    config.cipherWtDivOSLevel,
+    config.cipherWtDivOBLevel2,
+    config.cipherWtDivOSLevel2,
+    config.cipherRsiDivOBLevel,
+    config.cipherRsiDivOSLevel,
+    config.cipherShowSchaff,
+    config.cipherSchaffLength,
+    config.cipherSchaffFast,
+    config.cipherSchaffSlow,
+    config.cipherSchaffFactor,
+    config.cipherShowSommiFlag,
+    config.cipherShowSommiFastWave,
+    config.cipherShowSommiDiamond,
+    config.cipherShowMacdColors,
+    config.cipherSommiVwapBearLevel,
+    config.cipherSommiVwapBullLevel,
+    config.cipherSommiFlagWTBearLevel,
+    config.cipherSommiFlagWTBullLevel,
+    config.cipherSommiRSIMFIBearLevel,
+    config.cipherSommiRSIMFIBullLevel,
+    config.cipherSommiDiamondWTBearLevel,
+    config.cipherSommiDiamondWTBullLevel,
+    multiTFTick,
+  ]);
 
   // Sync price lines from store to the candle series
   useEffect(() => {
@@ -597,6 +1328,632 @@ export function PriceChart({ symbol, timeframe }: Props) {
     setLastValues((prev) => ({ ...prev, rsi: data.at(-1)?.value }));
   }
 
+  function updateBB() {
+    const c = candlesRef.current;
+    if (c.length === 0 || !bbUpperRef.current) return;
+    const cfg = configRef.current;
+    const data = bollinger(c, cfg.bbPeriod, cfg.bbStdDev);
+    bbUpperRef.current.setData(
+      data.map((p) => ({ time: p.time as UTCTimestamp, value: p.upper })),
+    );
+    bbMiddleRef.current?.setData(
+      data.map((p) => ({ time: p.time as UTCTimestamp, value: p.middle })),
+    );
+    bbLowerRef.current?.setData(
+      data.map((p) => ({ time: p.time as UTCTimestamp, value: p.lower })),
+    );
+    const last = data.at(-1);
+    setLastValues((prev) => ({
+      ...prev,
+      bbUpper: last?.upper,
+      bbMiddle: last?.middle,
+      bbLower: last?.lower,
+    }));
+  }
+
+  function updateVWAP() {
+    const c = candlesRef.current;
+    if (c.length === 0 || !vwapRef.current) return;
+    const data = vwap(c);
+    vwapRef.current.setData(
+      data.map((p) => ({ time: p.time as UTCTimestamp, value: p.value })),
+    );
+    setLastValues((prev) => ({ ...prev, vwap: data.at(-1)?.value }));
+  }
+
+  function updateStochastic() {
+    const c = candlesRef.current;
+    if (c.length === 0 || !stochKRef.current) return;
+    const cfg = configRef.current;
+    const data = stochastic(c, cfg.stochK, cfg.stochD, cfg.stochSmooth);
+    stochKRef.current.setData(
+      data.map((p) => ({ time: p.time as UTCTimestamp, value: p.k })),
+    );
+    stochDRef.current?.setData(
+      data.map((p) => ({ time: p.time as UTCTimestamp, value: p.d })),
+    );
+    if (stoch20Ref.current && data.length > 0)
+      stoch20Ref.current.setData([
+        { time: data[0].time as UTCTimestamp, value: 20 },
+        { time: data[data.length - 1].time as UTCTimestamp, value: 20 },
+      ]);
+    if (stoch80Ref.current && data.length > 0)
+      stoch80Ref.current.setData([
+        { time: data[0].time as UTCTimestamp, value: 80 },
+        { time: data[data.length - 1].time as UTCTimestamp, value: 80 },
+      ]);
+    const last = data.at(-1);
+    setLastValues((prev) => ({
+      ...prev,
+      stochK: last?.k,
+      stochD: last?.d,
+    }));
+  }
+
+  function updateCipher() {
+    const c = candlesRef.current;
+    if (c.length === 0 || !cipherWt1Ref.current) return;
+    const cfg = configRef.current;
+
+    const wt = wavetrend(c, cfg.wtChannelLen, cfg.wtAverageLen, cfg.wtMALen);
+    const mfi = mfiArea(c, cfg.mfiPeriod, cfg.mfiMultiplier, cfg.cipherMfiYPos);
+    const sr = stochRsi(
+      c,
+      cfg.cipherStochLen,
+      cfg.cipherStochRsiLen,
+      cfg.cipherStochSmoothK,
+      cfg.cipherStochSmoothD,
+      cfg.cipherStochUseLog,
+    );
+    const rsiVals = rsi(c, cfg.cipherRsiLen);
+
+    cipherWt1Ref.current.setData(
+      wt.map((p) => ({ time: p.time as UTCTimestamp, value: p.wt1 })),
+    );
+    cipherWt2Ref.current?.setData(
+      wt.map((p) => ({ time: p.time as UTCTimestamp, value: p.wt2 })),
+    );
+    cipherVwapRef.current?.setData(
+      wt.map((p) => ({ time: p.time as UTCTimestamp, value: p.vwap })),
+    );
+    cipherMfiRef.current?.setData(
+      mfi.map((p) => ({
+        time: p.time as UTCTimestamp,
+        value: p.value,
+      })),
+    );
+    // Stoch K/D — keep native 0..100 scale (the pane auto-scales to fit -100..+100 from WT)
+    cipherStochKRef.current?.setData(
+      sr.map((p) => ({
+        time: p.time as UTCTimestamp,
+        value: cfg.cipherStochUseAvg ? (p.k + p.d) / 2 : p.k,
+      })),
+    );
+    cipherStochDRef.current?.setData(
+      sr.map((p) => ({ time: p.time as UTCTimestamp, value: p.d })),
+    );
+    // K/D fill — only where K >= D (Pine logic) — render K and clip the rest via D-baseline
+    cipherStochFillRef.current?.setData(
+      sr.map((p) => ({
+        time: p.time as UTCTimestamp,
+        value: Math.max(p.k, p.d),
+      })),
+    );
+    // RSI line
+    cipherRsiRef.current?.setData(
+      rsiVals.map((p) => ({ time: p.time as UTCTimestamp, value: p.value })),
+    );
+
+    // OB/OS dashed horizontal lines
+    if (wt.length > 0) {
+      const first = wt[0].time as UTCTimestamp;
+      const last = wt[wt.length - 1].time as UTCTimestamp;
+      cipherObRef.current?.setData([
+        { time: first, value: cfg.wtObLevel },
+        { time: last, value: cfg.wtObLevel },
+      ]);
+      cipherOb2Ref.current?.setData([
+        { time: first, value: cfg.wtObLevel2 },
+        { time: last, value: cfg.wtObLevel2 },
+      ]);
+      cipherOb3Ref.current?.setData([
+        { time: first, value: cfg.wtObLevel3 },
+        { time: last, value: cfg.wtObLevel3 },
+      ]);
+      cipherOsRef.current?.setData([
+        { time: first, value: cfg.wtOsLevel },
+        { time: last, value: cfg.wtOsLevel },
+      ]);
+      cipherOs2Ref.current?.setData([
+        { time: first, value: cfg.wtOsLevel2 },
+        { time: last, value: cfg.wtOsLevel2 },
+      ]);
+      cipherOs3Ref.current?.setData([
+        { time: first, value: cfg.wtOsLevel3 },
+        { time: last, value: cfg.wtOsLevel3 },
+      ]);
+      cipherZeroRef.current?.setData([
+        { time: first, value: 0 },
+        { time: last, value: 0 },
+      ]);
+    }
+
+    // Divergences — render each set as discontinuous line segments
+    // (a segment per pair of consecutive divergent fractals).
+    const wtPoints: IndicatorPoint[] = wt.map((p) => ({
+      time: p.time,
+      value: p.wt2,
+    }));
+    const stochPoints: IndicatorPoint[] = sr.map((p) => ({
+      time: p.time,
+      value: p.k,
+    }));
+    const hiddenObLimit = cfg.cipherNotApplyOBOSOnHidden
+      ? null
+      : cfg.cipherWtDivOBLevel;
+    const hiddenOsLimit = cfg.cipherNotApplyOBOSOnHidden
+      ? null
+      : cfg.cipherWtDivOSLevel;
+    const wtDivs = findDivergences(
+      wtPoints,
+      c,
+      cfg.cipherWtDivOBLevel,
+      cfg.cipherWtDivOSLevel,
+    );
+    const wtDivs2 = findDivergences(
+      wtPoints,
+      c,
+      cfg.cipherWtDivOBLevel2,
+      cfg.cipherWtDivOSLevel2,
+    );
+    const wtDivsHidden = findDivergences(
+      wtPoints,
+      c,
+      hiddenObLimit,
+      hiddenOsLimit,
+    );
+    const rsiDivs = findDivergences(
+      rsiVals,
+      c,
+      cfg.cipherRsiDivOBLevel,
+      cfg.cipherRsiDivOSLevel,
+    );
+    const rsiDivsHidden = findDivergences(
+      rsiVals,
+      c,
+      cfg.cipherNotApplyOBOSOnHidden ? null : cfg.cipherRsiDivOBLevel,
+      cfg.cipherNotApplyOBOSOnHidden ? null : cfg.cipherRsiDivOSLevel,
+    );
+    const stochDivs = findDivergences(stochPoints, c, null, null);
+
+    // Convert segments to a discontinuous LineSeries dataset (whitespace gaps).
+    const segmentsToLineData = (
+      segs: DivergenceSegment[],
+      filterKind: DivergenceSegment["kind"][],
+    ) => {
+      const filtered = segs
+        .filter((s) => filterKind.includes(s.kind))
+        .sort((a, b) => a.fromTime - b.fromTime);
+      const data: Array<
+        { time: UTCTimestamp; value: number } | { time: UTCTimestamp }
+      > = [];
+      let lastTime = -Infinity;
+      for (const s of filtered) {
+        // ensure strictly increasing times; skip overlapping segments
+        if (s.fromTime <= lastTime) continue;
+        data.push({ time: s.fromTime as UTCTimestamp, value: s.fromValue });
+        data.push({ time: s.toTime as UTCTimestamp, value: s.toValue });
+        lastTime = s.toTime;
+      }
+      return data;
+    };
+
+    wtBearDivRef.current?.setData(
+      segmentsToLineData(wtDivs, ["bearRegular"]) as never,
+    );
+    wtBullDivRef.current?.setData(
+      segmentsToLineData(wtDivs, ["bullRegular"]) as never,
+    );
+    wtBearHidDivRef.current?.setData(
+      segmentsToLineData(wtDivsHidden, ["bearHidden"]) as never,
+    );
+    wtBullHidDivRef.current?.setData(
+      segmentsToLineData(wtDivsHidden, ["bullHidden"]) as never,
+    );
+    wtBearDiv2Ref.current?.setData(
+      segmentsToLineData(wtDivs2, ["bearRegular"]) as never,
+    );
+    wtBullDiv2Ref.current?.setData(
+      segmentsToLineData(wtDivs2, ["bullRegular"]) as never,
+    );
+    rsiBearDivRef.current?.setData(
+      segmentsToLineData(rsiDivs, ["bearRegular"]) as never,
+    );
+    rsiBullDivRef.current?.setData(
+      segmentsToLineData(rsiDivs, ["bullRegular"]) as never,
+    );
+    rsiBearHidDivRef.current?.setData(
+      segmentsToLineData(rsiDivsHidden, ["bearHidden"]) as never,
+    );
+    rsiBullHidDivRef.current?.setData(
+      segmentsToLineData(rsiDivsHidden, ["bullHidden"]) as never,
+    );
+    stochBearDivRef.current?.setData(
+      segmentsToLineData(stochDivs, ["bearRegular"]) as never,
+    );
+    stochBullDivRef.current?.setData(
+      segmentsToLineData(stochDivs, ["bullRegular"]) as never,
+    );
+
+    // Markers — crosses + buy/sell/gold circles, placed at wt2 in the cipher pane
+    if (cipherMarkersRef.current) {
+      const rsiByTime = new Map(rsiVals.map((p) => [p.time, p.value]));
+      // Divergence buy/sell circles: when ANY enabled divergence ends at this pivot
+      const bullDivAtTime = new Set<number>();
+      const bearDivAtTime = new Set<number>();
+      if (cfg.cipherShowDivDots) {
+        if (cfg.cipherShowWTDivergences) {
+          for (const s of wtDivs) {
+            if (s.kind === "bullRegular") bullDivAtTime.add(s.toTime);
+            else if (s.kind === "bearRegular") bearDivAtTime.add(s.toTime);
+          }
+        }
+        if (cfg.cipherShowWTDivergences2) {
+          for (const s of wtDivs2) {
+            if (s.kind === "bullRegular") bullDivAtTime.add(s.toTime);
+            else if (s.kind === "bearRegular") bearDivAtTime.add(s.toTime);
+          }
+        }
+        if (cfg.cipherShowRSIDivergences) {
+          for (const s of rsiDivs) {
+            if (s.kind === "bullRegular") bullDivAtTime.add(s.toTime);
+            else if (s.kind === "bearRegular") bearDivAtTime.add(s.toTime);
+          }
+        }
+      }
+      const markers: SeriesMarker<Time>[] = [];
+      // First: divergence circles placed at pivot times (offset -2 from detection)
+      const wtByTime = new Map(wt.map((p) => [p.time, p.wt2]));
+      for (const t of bullDivAtTime) {
+        const oscVal = wtByTime.get(t);
+        if (oscVal === undefined) continue;
+        markers.push({
+          time: t as UTCTimestamp,
+          position: "atPriceMiddle",
+          price: oscVal,
+          color: "#3fff00",
+          shape: "circle",
+          size: 3,
+        });
+      }
+      for (const t of bearDivAtTime) {
+        const oscVal = wtByTime.get(t);
+        if (oscVal === undefined) continue;
+        markers.push({
+          time: t as UTCTimestamp,
+          position: "atPriceMiddle",
+          price: oscVal,
+          color: "#ff0000",
+          shape: "circle",
+          size: 3,
+        });
+      }
+      for (let i = 1; i < wt.length; i++) {
+        const prev = wt[i - 1];
+        const cur = wt[i];
+        const crossUp = prev.wt1 <= prev.wt2 && cur.wt1 > cur.wt2;
+        const crossDown = prev.wt1 >= prev.wt2 && cur.wt1 < cur.wt2;
+        if (!crossUp && !crossDown) continue;
+        const isOversold = cur.wt2 <= cfg.wtOsLevel;
+        const isOverbought = cur.wt2 >= cfg.wtObLevel;
+        const rsiHere = rsiByTime.get(cur.time);
+        // Gold buy — oversold extreme cross-up with RSI < 30
+        if (
+          cfg.cipherShowGoldDots &&
+          crossUp &&
+          rsiHere !== undefined &&
+          rsiHere < 30 &&
+          prev.wt2 <= cfg.wtOsLevel3 &&
+          cur.wt2 - prev.wt2 >= 0 &&
+          cur.wt2 > cfg.wtOsLevel3 - 5
+        ) {
+          markers.push({
+            time: cur.time as UTCTimestamp,
+            position: "atPriceMiddle",
+            price: cur.wt2,
+            color: "#e2a400",
+            shape: "circle",
+            size: 2,
+          });
+          continue;
+        }
+        if (cfg.cipherShowBuyDots && crossUp && isOversold) {
+          markers.push({
+            time: cur.time as UTCTimestamp,
+            position: "atPriceMiddle",
+            price: cur.wt2,
+            color: "#3fff00",
+            shape: "circle",
+            size: 2,
+          });
+        } else if (cfg.cipherShowSellDots && crossDown && isOverbought) {
+          markers.push({
+            time: cur.time as UTCTimestamp,
+            position: "atPriceMiddle",
+            price: cur.wt2,
+            color: "#ff0000",
+            shape: "circle",
+            size: 2,
+          });
+        } else if (cfg.cipherShowCrossDots) {
+          // small neutral cross marker
+          markers.push({
+            time: cur.time as UTCTimestamp,
+            position: "atPriceMiddle",
+            price: cur.wt2,
+            color: crossUp ? "#00e676" : "#ff5252",
+            shape: "circle",
+            size: 1,
+          });
+        }
+      }
+      // ====== Sommi flag (needs higher-TF WaveTrend VWAP) ======
+      if (cfg.cipherShowSommiFlag || cfg.cipherShowSommiFastWave) {
+        const htfCandles = multiTFCandlesRef.current.sommiFlag;
+        if (htfCandles.length > 0) {
+          const htfWT = wavetrend(
+            htfCandles,
+            cfg.wtChannelLen,
+            cfg.wtAverageLen,
+            cfg.wtMALen,
+          );
+          // EMA(htfVwap, 3) — replicates plot(ema(hvwap, 3)) from Pine
+          const hVwapCandles: Candle[] = htfWT.map((p) => ({
+            time: p.time,
+            open: p.vwap,
+            high: p.vwap,
+            low: p.vwap,
+            close: p.vwap,
+            volume: 0,
+          }));
+          const hVwapSmoothed = ema(hVwapCandles, 3);
+          if (cfg.cipherShowSommiFastWave) {
+            cipherSommiHVwapRef.current?.setData(
+              hVwapSmoothed.map((p) => ({
+                time: p.time as UTCTimestamp,
+                value: p.value,
+              })),
+            );
+          } else {
+            cipherSommiHVwapRef.current?.setData([]);
+          }
+          // Map current bar -> htf vwap by aligning to most-recent htf bar
+          const htfVwapByTime = new Map(
+            htfWT.map((p) => [p.time, p.vwap] as const),
+          );
+          const htfTimes = htfWT.map((p) => p.time);
+          const findHtfVwap = (t: number): number | undefined => {
+            // pick the latest htf time <= t (HTF bar containing or preceding `t`)
+            let lo = 0;
+            let hi = htfTimes.length - 1;
+            let res = -1;
+            while (lo <= hi) {
+              const mid = (lo + hi) >> 1;
+              if (htfTimes[mid] <= t) {
+                res = mid;
+                lo = mid + 1;
+              } else hi = mid - 1;
+            }
+            if (res < 0) return undefined;
+            return htfVwapByTime.get(htfTimes[res]);
+          };
+          if (cfg.cipherShowSommiFlag) {
+            for (let i = 1; i < wt.length; i++) {
+              const prev = wt[i - 1];
+              const cur = wt[i];
+              const crossDown = prev.wt1 >= prev.wt2 && cur.wt1 < cur.wt2;
+              const crossUp = prev.wt1 <= prev.wt2 && cur.wt1 > cur.wt2;
+              if (!crossDown && !crossUp) continue;
+              const rmfi = mfi.find((p) => p.time === cur.time)?.value ?? 0;
+              const hVwap = findHtfVwap(cur.time) ?? 0;
+              const bear =
+                crossDown &&
+                rmfi < cfg.cipherSommiRSIMFIBearLevel &&
+                cur.wt2 > cfg.cipherSommiFlagWTBearLevel &&
+                hVwap < cfg.cipherSommiVwapBearLevel;
+              const bull =
+                crossUp &&
+                rmfi > cfg.cipherSommiRSIMFIBullLevel &&
+                cur.wt2 < cfg.cipherSommiFlagWTBullLevel &&
+                hVwap > cfg.cipherSommiVwapBullLevel;
+              if (bear) {
+                markers.push({
+                  time: cur.time as UTCTimestamp,
+                  position: "aboveBar",
+                  color: "#ff00f0",
+                  shape: "arrowDown",
+                  size: 2,
+                  text: "F",
+                });
+              } else if (bull) {
+                markers.push({
+                  time: cur.time as UTCTimestamp,
+                  position: "belowBar",
+                  color: "#31c0ff",
+                  shape: "arrowUp",
+                  size: 2,
+                  text: "F",
+                });
+              }
+            }
+          }
+        }
+      } else {
+        cipherSommiHVwapRef.current?.setData([]);
+      }
+
+      // ====== Sommi diamond (needs HA on 2 higher TFs) ======
+      if (cfg.cipherShowSommiDiamond) {
+        const htc1 = heikinAshi(multiTFCandlesRef.current.sommiHTC1);
+        const htc2 = heikinAshi(multiTFCandlesRef.current.sommiHTC2);
+        const lastBodyDir = (arr: Candle[], t: number): boolean | null => {
+          // Find most recent HA candle at or before t and return close>open
+          let lo = 0;
+          let hi = arr.length - 1;
+          let res = -1;
+          while (lo <= hi) {
+            const mid = (lo + hi) >> 1;
+            if (arr[mid].time <= t) {
+              res = mid;
+              lo = mid + 1;
+            } else hi = mid - 1;
+          }
+          if (res < 0) return null;
+          return arr[res].close > arr[res].open;
+        };
+        for (let i = 1; i < wt.length; i++) {
+          const prev = wt[i - 1];
+          const cur = wt[i];
+          const crossDown = prev.wt1 >= prev.wt2 && cur.wt1 < cur.wt2;
+          const crossUp = prev.wt1 <= prev.wt2 && cur.wt1 > cur.wt2;
+          if (!crossDown && !crossUp) continue;
+          const d1 = lastBodyDir(htc1, cur.time);
+          const d2 = lastBodyDir(htc2, cur.time);
+          if (d1 === null || d2 === null) continue;
+          const bear =
+            crossDown &&
+            cur.wt2 >= cfg.cipherSommiDiamondWTBearLevel &&
+            !d1 &&
+            !d2;
+          const bull =
+            crossUp &&
+            cur.wt2 <= cfg.cipherSommiDiamondWTBullLevel &&
+            d1 &&
+            d2;
+          if (bear) {
+            markers.push({
+              time: cur.time as UTCTimestamp,
+              position: "aboveBar",
+              color: "#ff00f0",
+              shape: "square",
+              size: 2,
+              text: "D",
+            });
+          } else if (bull) {
+            markers.push({
+              time: cur.time as UTCTimestamp,
+              position: "belowBar",
+              color: "#31c0ff",
+              shape: "square",
+              size: 2,
+              text: "D",
+            });
+          }
+        }
+      }
+
+      cipherMarkersRef.current.setMarkers(markers);
+    }
+
+    // ====== Schaff Trend Cycle ======
+    if (cfg.cipherShowSchaff) {
+      const stc = schaffTC(
+        c,
+        cfg.cipherSchaffLength,
+        cfg.cipherSchaffFast,
+        cfg.cipherSchaffSlow,
+        cfg.cipherSchaffFactor,
+      );
+      cipherSchaffRef.current?.setData(
+        stc.map((p) => ({ time: p.time as UTCTimestamp, value: p.value })),
+      );
+    } else {
+      cipherSchaffRef.current?.setData([]);
+    }
+
+    // ====== MACD Colors override (global tint on WT areas) ======
+    // Pine does per-bar colors; lightweight-charts AreaSeries is single-color,
+    // so we override the global color according to the *current* macd/mfi regime.
+    if (cfg.cipherShowMacdColors) {
+      const htf = multiTFCandlesRef.current.macdColors;
+      if (htf.length > 0) {
+        const hmfi = mfiArea(
+          htf,
+          cfg.mfiPeriod,
+          cfg.mfiMultiplier,
+          cfg.cipherMfiYPos,
+        );
+        const hmacd = macd(htf, 28, 42, 9);
+        const lastM = hmacd.at(-1);
+        const lastMf = hmfi.at(-1);
+        if (lastM && lastMf) {
+          const macdUp = lastM.macd >= lastM.signal;
+          const mfiPos = lastMf.value > 0;
+          const wt1Color = macdUp
+            ? mfiPos
+              ? "#7ee57e"
+              : "#4caf58"
+            : mfiPos
+              ? "#132213"
+              : "#af4c4c";
+          const wt2Color = macdUp
+            ? mfiPos
+              ? "#305630"
+              : "#310101"
+            : mfiPos
+              ? "#132213"
+              : "#770000";
+          cipherWt1Ref.current?.applyOptions({
+            topFillColor1: `${wt1Color}BF`,
+            topFillColor2: `${wt1Color}30`,
+            topLineColor: wt1Color,
+            bottomFillColor1: `${wt1Color}30`,
+            bottomFillColor2: `${wt1Color}BF`,
+            bottomLineColor: wt1Color,
+          });
+          cipherWt2Ref.current?.applyOptions({
+            topFillColor1: `${wt2Color}BF`,
+            topFillColor2: `${wt2Color}50`,
+            topLineColor: wt2Color,
+            bottomFillColor1: `${wt2Color}50`,
+            bottomFillColor2: `${wt2Color}BF`,
+            bottomLineColor: wt2Color,
+          });
+        }
+      }
+    } else {
+      // Reset to Pine defaults
+      cipherWt1Ref.current?.applyOptions({
+        topFillColor1: "#4994ecB3",
+        topFillColor2: "#4994ec30",
+        topLineColor: "#4994ec",
+        bottomFillColor1: "#4994ec30",
+        bottomFillColor2: "#4994ecB3",
+        bottomLineColor: "#4994ec",
+      });
+      cipherWt2Ref.current?.applyOptions({
+        topFillColor1: "#1f1559BF",
+        topFillColor2: "#1f155950",
+        topLineColor: "#1f1559",
+        bottomFillColor1: "#1f155950",
+        bottomFillColor2: "#1f1559BF",
+        bottomLineColor: "#1f1559",
+      });
+    }
+
+    const last = wt.at(-1);
+    const lastMfi = mfi.at(-1)?.value;
+    const lastSr = sr.at(-1);
+    setLastValues((prev) => ({
+      ...prev,
+      cipherWt1: last?.wt1,
+      cipherWt2: last?.wt2,
+      cipherMfi: lastMfi,
+      cipherStochK: lastSr?.k,
+      cipherStochD: lastSr?.d,
+    }));
+  }
+
   function updateMACD() {
     const c = candlesRef.current;
     if (c.length === 0 || !macdRef.current) return;
@@ -631,7 +1988,8 @@ export function PriceChart({ symbol, timeframe }: Props) {
 
     async function load() {
       try {
-        const klines = await fetchKlines(symbol, timeframe, 1000);
+        const { adapter, symbol: rawSymbol } = getAdapter(symbol);
+        const klines = await adapter.fetchKlines(rawSymbol, timeframe, 1000);
         if (cancelled) return;
         candlesRef.current = klines;
         if (candleSeriesRef.current) {
@@ -657,6 +2015,10 @@ export function PriceChart({ symbol, timeframe }: Props) {
         updateEMAs();
         updateRSI();
         updateMACD();
+        updateBB();
+        updateVWAP();
+        updateStochastic();
+        updateCipher();
         chartRef.current?.timeScale().fitContent();
         requestAnimationFrame(() => recomputePaneOffsets());
 
@@ -669,9 +2031,8 @@ export function PriceChart({ symbol, timeframe }: Props) {
           });
         }
 
-        const ws = getBinanceWS();
-        unsub = ws.subscribeKline({
-          symbol,
+        unsub = adapter.subscribeKline({
+          symbol: rawSymbol,
           interval: timeframe,
           onCandle: (k) => {
             if (!candleSeriesRef.current) return;
@@ -733,6 +2094,13 @@ export function PriceChart({ symbol, timeframe }: Props) {
   // Determine which pane each indicator lives in (based on current layout)
   const rsiPaneIdx = 1;
   const macdPaneIdx = indicators.rsi ? 2 : 1;
+  const stochPaneIdx =
+    1 + (indicators.rsi ? 1 : 0) + (indicators.macd ? 1 : 0);
+  const cipherPaneIdx =
+    1 +
+    (indicators.rsi ? 1 : 0) +
+    (indicators.macd ? 1 : 0) +
+    (indicators.stoch ? 1 : 0);
 
   let measureRender: React.ReactNode = null;
   if (
@@ -793,11 +2161,13 @@ export function PriceChart({ symbol, timeframe }: Props) {
         {/* Row 1: symbol info + OHLC stats inline on hover (fixed height, never wraps) */}
         <div className="flex h-5 flex-nowrap items-center gap-x-3 overflow-hidden whitespace-nowrap">
           <div className="flex shrink-0 items-center gap-2 text-[13px] font-semibold">
-            <span className="text-tv-text">{symbol}</span>
+            <span className="text-tv-text">{parseSymbol(symbol).symbol}</span>
             <span className="text-tv-text-muted">·</span>
             <span className="uppercase text-tv-text-muted">{timeframe}</span>
             <span className="text-tv-text-muted">·</span>
-            <span className="text-tv-text-muted">Binance</span>
+            <span className="text-tv-text-muted">
+              {getAdapter(symbol).adapter.name}
+            </span>
           </div>
           {hover && (
             <div className="flex items-center gap-x-3 text-[11px]">
@@ -887,6 +2257,32 @@ export function PriceChart({ symbol, timeframe }: Props) {
               onRemove={() => removeIndicator("volume")}
             />
           )}
+          {indicators.bb && (
+            <IndicatorPill
+              name={`BB ${config.bbPeriod}, ${config.bbStdDev}`}
+              value={
+                lastValues.bbMiddle !== undefined
+                  ? `${formatPrice(lastValues.bbLower ?? 0)} · ${formatPrice(lastValues.bbMiddle)} · ${formatPrice(lastValues.bbUpper ?? 0)}`
+                  : undefined
+              }
+              color={INDICATOR_COLORS.bb}
+              hidden={hidden.bb}
+              onToggleHide={() => toggleHidden("bb")}
+              onSettings={() => setSettingsTarget("bb")}
+              onRemove={() => removeIndicator("bb")}
+            />
+          )}
+          {indicators.vwap && (
+            <IndicatorPill
+              name="VWAP"
+              value={lastValues.vwap !== undefined ? formatPrice(lastValues.vwap) : undefined}
+              color={INDICATOR_COLORS.vwap}
+              hidden={hidden.vwap}
+              onToggleHide={() => toggleHidden("vwap")}
+              onSettings={() => setSettingsTarget("vwap")}
+              onRemove={() => removeIndicator("vwap")}
+            />
+          )}
         </div>
       </div>
 
@@ -926,6 +2322,50 @@ export function PriceChart({ symbol, timeframe }: Props) {
             onToggleHide={() => toggleHidden("macd")}
             onSettings={() => setSettingsTarget("macd")}
             onRemove={() => removeIndicator("macd")}
+          />
+        </div>
+      )}
+
+      {/* Cipher B pane label */}
+      {indicators.cipher && paneOffsets[cipherPaneIdx] && (
+        <div
+          style={{ top: paneOffsets[cipherPaneIdx].top + 6, left: 12 }}
+          className="pointer-events-none absolute z-10"
+        >
+          <IndicatorPill
+            name="Cipher B"
+            value={
+              lastValues.cipherWt2 !== undefined
+                ? `WT ${lastValues.cipherWt2.toFixed(1)} · MFI ${(lastValues.cipherMfi ?? 0).toFixed(1)}`
+                : undefined
+            }
+            color={INDICATOR_COLORS.cipher}
+            hidden={hidden.cipher}
+            onToggleHide={() => toggleHidden("cipher")}
+            onSettings={() => setSettingsTarget("cipher")}
+            onRemove={() => removeIndicator("cipher")}
+          />
+        </div>
+      )}
+
+      {/* Stochastic pane label */}
+      {indicators.stoch && paneOffsets[stochPaneIdx] && (
+        <div
+          style={{ top: paneOffsets[stochPaneIdx].top + 6, left: 12 }}
+          className="pointer-events-none absolute z-10"
+        >
+          <IndicatorPill
+            name={`Stoch ${config.stochK}, ${config.stochD}, ${config.stochSmooth}`}
+            value={
+              lastValues.stochK !== undefined
+                ? `${lastValues.stochK.toFixed(2)} / ${(lastValues.stochD ?? 0).toFixed(2)}`
+                : undefined
+            }
+            color={INDICATOR_COLORS.stoch}
+            hidden={hidden.stoch}
+            onToggleHide={() => toggleHidden("stoch")}
+            onSettings={() => setSettingsTarget("stoch")}
+            onRemove={() => removeIndicator("stoch")}
           />
         </div>
       )}

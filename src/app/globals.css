@@ -28,7 +28,7 @@
   --color-ring: var(--ring);
 
   /* TradingView signature colors */
-  --color-tv-bg: #131722;
+  --color-tv-bg: #000000;
   --color-tv-panel: #1e222d;
   --color-tv-panel-hover: #2a2e39;
   --color-tv-border: #2a2e39;
@@ -48,7 +48,7 @@
 
 :root {
   /* Force TradingView dark theme as the only theme */
-  --background: #131722;
+  --background: #000000;
   --foreground: #d1d4dc;
   --card: #1e222d;
   --card-foreground: #d1d4dc;
@@ -70,7 +70,7 @@
 }
 
 .dark {
-  --background: #131722;
+  --background: #000000;
   --foreground: #d1d4dc;
   --card: #1e222d;
   --card-foreground: #d1d4dc;
@@ -109,7 +109,7 @@
     height: 8px;
   }
   ::-webkit-scrollbar-track {
-    background: #131722;
+    background: #000000;
   }
   ::-webkit-scrollbar-thumb {
     background: #2a2e39;

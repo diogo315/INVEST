@@ -24,6 +24,10 @@
 .DS_Store
 *.pem
 
+# scratch / leftover nested copy (delete after closing IDE)
+/tradingview-gratis/
+/comenzar.txt
+
 # debug
 npm-debug.log*
 yarn-debug.log*

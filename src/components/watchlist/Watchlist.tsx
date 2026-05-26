@@ -1,16 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { Plus, X } from "lucide-react";
-import { fetchTickers24h } from "@/lib/binance/rest";
-import { getBinanceWS } from "@/lib/binance/ws";
+import { ADAPTERS, parseSymbol } from "@/lib/exchanges";
+import type { ExchangeId } from "@/lib/exchanges";
 import { useChartStore } from "@/lib/store/chart-store";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { formatPrice, formatPct } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 interface Row {
-  symbol: string;
+  qualified: string;
   price: number;
   pct: number;
 }
@@ -24,62 +24,83 @@ export function Watchlist() {
   const [rows, setRows] = useState<Record<string, Row>>({});
   const [flash, setFlash] = useState<Record<string, "up" | "down" | null>>({});
 
+  // Group watchlist symbols by exchange so we make one fetch + one WS sub per exchange.
+  const grouped = useMemo(() => {
+    const out: Record<ExchangeId, string[]> = { BIN: [], BG: [] };
+    for (const q of watchlist) {
+      const { exchange, symbol } = parseSymbol(q);
+      out[exchange].push(symbol);
+    }
+    return out;
+  }, [watchlist]);
+
   useEffect(() => {
     if (watchlist.length === 0) return;
     let cancelled = false;
+    const unsubs: Array<() => void> = [];
 
-    fetchTickers24h(watchlist)
-      .then((tickers) => {
-        if (cancelled) return;
-        const map: Record<string, Row> = {};
-        tickers.forEach((t) => {
-          map[t.symbol] = {
-            symbol: t.symbol,
-            price: t.lastPrice,
-            pct: t.priceChangePercent,
+    for (const [exId, syms] of Object.entries(grouped) as Array<
+      [ExchangeId, string[]]
+    >) {
+      if (syms.length === 0) continue;
+      const adapter = ADAPTERS[exId];
+
+      adapter
+        .fetchTickers24h(syms)
+        .then((tickers) => {
+          if (cancelled) return;
+          setRows((prev) => {
+            const next = { ...prev };
+            for (const t of tickers) {
+              const qualified = `${exId}:${t.symbol}`;
+              next[qualified] = {
+                qualified,
+                price: t.lastPrice,
+                pct: t.priceChangePercent,
+              };
+            }
+            return next;
+          });
+        })
+        .catch(console.error);
+
+      const unsub = adapter.subscribeMiniTickers(syms, (tick) => {
+        const qualified = `${exId}:${tick.symbol}`;
+        setRows((prev) => {
+          const prevRow = prev[qualified];
+          if (prevRow) {
+            if (tick.close > prevRow.price) {
+              setFlash((f) => ({ ...f, [qualified]: "up" }));
+              setTimeout(
+                () => setFlash((f) => ({ ...f, [qualified]: null })),
+                300,
+              );
+            } else if (tick.close < prevRow.price) {
+              setFlash((f) => ({ ...f, [qualified]: "down" }));
+              setTimeout(
+                () => setFlash((f) => ({ ...f, [qualified]: null })),
+                300,
+              );
+            }
+          }
+          return {
+            ...prev,
+            [qualified]: {
+              qualified,
+              price: tick.close,
+              pct: tick.pct,
+            },
           };
         });
-        setRows(map);
-      })
-      .catch(console.error);
-
-    const ws = getBinanceWS();
-    const unsub = ws.subscribeMiniTickers(watchlist, (tick) => {
-      setRows((prev) => {
-        const prevRow = prev[tick.symbol];
-        if (prevRow) {
-          if (tick.close > prevRow.price) {
-            setFlash((f) => ({ ...f, [tick.symbol]: "up" }));
-            setTimeout(
-              () =>
-                setFlash((f) => ({ ...f, [tick.symbol]: null })),
-              300,
-            );
-          } else if (tick.close < prevRow.price) {
-            setFlash((f) => ({ ...f, [tick.symbol]: "down" }));
-            setTimeout(
-              () =>
-                setFlash((f) => ({ ...f, [tick.symbol]: null })),
-              300,
-            );
-          }
-        }
-        return {
-          ...prev,
-          [tick.symbol]: {
-            symbol: tick.symbol,
-            price: tick.close,
-            pct: tick.pct,
-          },
-        };
       });
-    });
+      unsubs.push(unsub);
+    }
 
     return () => {
       cancelled = true;
-      unsub();
+      for (const u of unsubs) u();
     };
-  }, [watchlist]);
+  }, [watchlist, grouped]);
 
   return (
     <div className="flex h-full flex-col">
@@ -103,14 +124,16 @@ export function Watchlist() {
       </div>
       <ScrollArea className="flex-1">
         <div className="flex flex-col">
-          {watchlist.map((s) => {
-            const row = rows[s];
-            const isActive = s === symbol;
-            const f = flash[s];
+          {watchlist.map((q) => {
+            const row = rows[q];
+            const isActive = q === symbol;
+            const f = flash[q];
+            const { exchange, symbol: base } = parseSymbol(q);
+            const display = base.replace("USDT", "");
             return (
               <div
-                key={s}
-                onClick={() => setSymbol(s)}
+                key={q}
+                onClick={() => setSymbol(q)}
                 className={cn(
                   "group grid cursor-pointer grid-cols-[1fr_auto_auto] items-center gap-2 px-3 py-1.5 text-xs transition-colors",
                   "hover:bg-tv-panel-hover",
@@ -118,9 +141,17 @@ export function Watchlist() {
                 )}
               >
                 <div className="flex items-center gap-2">
-                  <span className="font-medium text-tv-text">
-                    {s.replace("USDT", "")}
+                  <span
+                    className={cn(
+                      "rounded px-1 py-0.5 text-[8px] font-bold tracking-wide",
+                      exchange === "BIN"
+                        ? "bg-[#f3ba2f]/20 text-[#f3ba2f]"
+                        : "bg-[#00f0c0]/20 text-[#00f0c0]",
+                    )}
+                  >
+                    {exchange}
                   </span>
+                  <span className="font-medium text-tv-text">{display}</span>
                   <span className="text-[10px] text-tv-text-dim">USDT</span>
                 </div>
                 <span
@@ -149,10 +180,10 @@ export function Watchlist() {
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      removeFromWatchlist(s);
+                      removeFromWatchlist(q);
                     }}
                     className="invisible rounded p-0.5 text-tv-text-muted hover:bg-tv-bg hover:text-tv-red group-hover:visible"
-                    aria-label={`Quitar ${s} del watchlist`}
+                    aria-label={`Quitar ${q} del watchlist`}
                   >
                     <X className="h-3 w-3" />
                   </button>

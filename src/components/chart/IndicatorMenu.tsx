@@ -22,6 +22,11 @@ interface Entry {
     macdFast: number;
     macdSlow: number;
     macdSignal: number;
+    bbPeriod: number;
+    bbStdDev: number;
+    stochK: number;
+    stochD: number;
+    stochSmooth: number;
   }) => string;
   group: string;
 }
@@ -30,6 +35,12 @@ const ENTRIES: Entry[] = [
   { key: "ema20", group: "Medias móviles", label: (c) => `EMA ${c.ema20}` },
   { key: "ema50", group: "Medias móviles", label: (c) => `EMA ${c.ema50}` },
   { key: "ema200", group: "Medias móviles", label: (c) => `EMA ${c.ema200}` },
+  { key: "vwap", group: "Medias móviles", label: () => "VWAP" },
+  {
+    key: "bb",
+    group: "Volatilidad",
+    label: (c) => `Bollinger (${c.bbPeriod}, ${c.bbStdDev})`,
+  },
   { key: "volume", group: "Volumen", label: () => "Volumen" },
   { key: "rsi", group: "Osciladores", label: (c) => `RSI (${c.rsi})` },
   {
@@ -37,6 +48,12 @@ const ENTRIES: Entry[] = [
     group: "Osciladores",
     label: (c) => `MACD (${c.macdFast}, ${c.macdSlow}, ${c.macdSignal})`,
   },
+  {
+    key: "stoch",
+    group: "Osciladores",
+    label: (c) => `Stochastic (${c.stochK}, ${c.stochD}, ${c.stochSmooth})`,
+  },
+  { key: "cipher", group: "VuManChu", label: () => "Cipher B (WaveTrend)" },
 ];
 
 export function IndicatorMenu() {
