@@ -2648,6 +2648,11 @@ export function PriceChart({ symbol, timeframe }: Props) {
           updateStochastic();
           updateStochRsi();
           updateCipher();
+          // Recién acá encuadramos: fitContent() mira TODAS las series, y si
+          // corre antes de recalcular los indicadores todavía quedan puntos
+          // de la temporalidad anterior en la escala de tiempo. Eso dejaba el
+          // gráfico comprimido contra la derecha al cambiar de temporalidad.
+          chartRef.current?.timeScale().fitContent();
           requestAnimationFrame(() => recomputePaneOffsets());
         });
 
