@@ -10,24 +10,15 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useChartStore, type IndicatorKey } from "@/lib/store/chart-store";
+import {
+  useChartStore,
+  type IndicatorConfig,
+  type IndicatorKey,
+} from "@/lib/store/chart-store";
 
 interface Entry {
   key: IndicatorKey;
-  label: (cfg: {
-    ema20: number;
-    ema50: number;
-    ema200: number;
-    rsi: number;
-    macdFast: number;
-    macdSlow: number;
-    macdSignal: number;
-    bbPeriod: number;
-    bbStdDev: number;
-    stochK: number;
-    stochD: number;
-    stochSmooth: number;
-  }) => string;
+  label: (cfg: IndicatorConfig) => string;
   group: string;
 }
 
@@ -35,7 +26,16 @@ const ENTRIES: Entry[] = [
   { key: "ema20", group: "Medias móviles", label: (c) => `EMA ${c.ema20}` },
   { key: "ema50", group: "Medias móviles", label: (c) => `EMA ${c.ema50}` },
   { key: "ema200", group: "Medias móviles", label: (c) => `EMA ${c.ema200}` },
-  { key: "vwap", group: "Medias móviles", label: () => "VWAP" },
+  {
+    key: "vwap",
+    group: "Medias móviles",
+    label: (c) =>
+      `VWAP (${
+        { session: "Sesión", week: "Semana", month: "Mes", quarter: "Trimestre", year: "Año" }[
+          c.vwapAnchor
+        ] ?? c.vwapAnchor
+      })`,
+  },
   {
     key: "bb",
     group: "Volatilidad",
@@ -52,6 +52,12 @@ const ENTRIES: Entry[] = [
     key: "stoch",
     group: "Osciladores",
     label: (c) => `Stochastic (${c.stochK}, ${c.stochD}, ${c.stochSmooth})`,
+  },
+  {
+    key: "srsi",
+    group: "Osciladores",
+    label: (c) =>
+      `Stoch RSI (${c.srsiK}, ${c.srsiD}, ${c.srsiRsiLen}, ${c.srsiStochLen})`,
   },
   { key: "cipher", group: "VuManChu", label: () => "Cipher B (WaveTrend)" },
   { key: "gli", group: "Macro", label: () => "Global Liquidity (M2)" },

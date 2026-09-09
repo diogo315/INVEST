@@ -15,7 +15,8 @@ export type IndicatorKey =
   | "stoch"
   | "vwap"
   | "cipher"
-  | "gli";
+  | "gli"
+  | "srsi";
 
 export type DrawingTool = "cursor" | "hline" | "measure" | "eraser";
 
@@ -38,6 +39,21 @@ export interface IndicatorConfig {
   stochK: number;
   stochD: number;
   stochSmooth: number;
+  // Stoch RSI estándar (TradingView / Pine v6)
+  srsiK: number;
+  srsiD: number;
+  srsiRsiLen: number;
+  srsiStochLen: number;
+  // VWAP anclado + bandas (TradingView / Pine v6)
+  vwapAnchor: string; // session | week | month | quarter | year
+  vwapSource: string; // hlc3 | hl2 | hlcc4 | ohlc4 | close
+  vwapBandsMode: string; // stdev | pct
+  vwapShowBand1: boolean;
+  vwapMult1: number;
+  vwapShowBand2: boolean;
+  vwapMult2: number;
+  vwapShowBand3: boolean;
+  vwapMult3: number;
   // VuManChu Cipher B
   wtChannelLen: number;
   wtAverageLen: number;
@@ -126,6 +142,19 @@ export const DEFAULT_CONFIG: IndicatorConfig = {
   stochK: 14,
   stochD: 3,
   stochSmooth: 3,
+  srsiK: 3,
+  srsiD: 3,
+  srsiRsiLen: 14,
+  srsiStochLen: 14,
+  vwapAnchor: "session",
+  vwapSource: "hlc3",
+  vwapBandsMode: "stdev",
+  vwapShowBand1: true,
+  vwapMult1: 1,
+  vwapShowBand2: false,
+  vwapMult2: 2,
+  vwapShowBand3: false,
+  vwapMult3: 3,
   wtChannelLen: 9,
   wtAverageLen: 12,
   wtMALen: 3,
@@ -203,9 +232,10 @@ export const INDICATOR_COLORS: Record<IndicatorKey, string> = {
   volume: "#787b86",
   bb: "#42a5f5",
   stoch: "#ec407a",
-  vwap: "#ffca28",
+  vwap: "#2962ff", // Pine: plot(vwapValue, color = #2962FF)
   cipher: "#4994ec",
   gli: "#f59e0b",
+  srsi: "#2962ff",
 };
 
 export const DEFAULT_WATCHLIST = [
@@ -278,6 +308,7 @@ export const useChartStore = create<ChartState>()(
         vwap: false,
         cipher: false,
         gli: false,
+        srsi: false,
       },
       hidden: {
         ema20: false,
@@ -291,6 +322,7 @@ export const useChartStore = create<ChartState>()(
         vwap: false,
         cipher: false,
         gli: false,
+        srsi: false,
       },
       config: { ...DEFAULT_CONFIG },
       watchlist: DEFAULT_WATCHLIST,

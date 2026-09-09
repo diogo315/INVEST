@@ -5,8 +5,18 @@ import { LeftSidebar } from "@/components/layout/LeftSidebar";
 import { RightSidebar } from "@/components/layout/RightSidebar";
 import { BottomPanel } from "@/components/layout/BottomPanel";
 import { PriceChart } from "@/components/chart/PriceChart";
-import { IndicatorSettingsDialog } from "@/components/chart/IndicatorSettingsDialog";
+import dynamic from "next/dynamic";
 import { useChartStore } from "@/lib/store/chart-store";
+
+// ~900 líneas de formularios que solo se ven al abrir "configurar" un
+// indicador: fuera del bundle inicial.
+const IndicatorSettingsDialog = dynamic(
+  () =>
+    import("@/components/chart/IndicatorSettingsDialog").then(
+      (m) => m.IndicatorSettingsDialog,
+    ),
+  { ssr: false },
+);
 
 export default function HomePage() {
   const symbol = useChartStore((s) => s.symbol);

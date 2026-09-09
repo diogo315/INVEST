@@ -677,21 +677,125 @@ export function schaffTC(
  * TP = (high + low + close) / 3.
  */
 export function vwap(candles: Candle[]): IndicatorPoint[] {
-  const out: IndicatorPoint[] = [];
-  let cumPV = 0;
-  let cumV = 0;
-  let currentDay = -1;
+  return vwapAnchored(candles, "session", "hlc3", "stdev", [1, 2, 3]).map(
+    (p) => ({ time: p.time, value: p.vwap }),
+  );
+}
+
+export type VwapAnchor =
+  | "session"
+  | "week"
+  | "month"
+  | "quarter"
+  | "year";
+export type VwapSource = "hlc3" | "hl2" | "hlcc4" | "ohlc4" | "close";
+export type VwapBandsMode = "stdev" | "pct";
+
+export interface VwapPoint {
+  time: number;
+  vwap: number;
+  upper: [number, number, number];
+  lower: [number, number, number];
+  /** true en la primera vela de cada período de anclaje (donde reinicia). */
+  isNew: boolean;
+}
+
+function vwapSourceValue(c: Candle, src: VwapSource): number {
+  switch (src) {
+    case "hl2":
+      return (c.high + c.low) / 2;
+    case "hlcc4":
+      return (c.high + c.low + c.close + c.close) / 4;
+    case "ohlc4":
+      return (c.open + c.high + c.low + c.close) / 4;
+    case "close":
+      return c.close;
+    case "hlc3":
+    default:
+      return (c.high + c.low + c.close) / 3;
+  }
+}
+
+/**
+ * Índice del período de anclaje al que pertenece un timestamp (segundos UTC).
+ * Cuando cambia el índice, el VWAP se reinicia. Todo en UTC, que es como
+ * vienen las velas de Binance/Bitget.
+ */
+function vwapAnchorKey(timeSec: number, anchor: VwapAnchor): number {
+  const dayIdx = Math.floor(timeSec / 86400);
+  if (anchor === "session") return dayIdx;
+  // El día 0 del epoch (1970-01-01) fue jueves; el primer lunes es el día 4.
+  if (anchor === "week") return Math.floor((dayIdx - 4) / 7);
+  const d = new Date(timeSec * 1000);
+  const y = d.getUTCFullYear();
+  const m = d.getUTCMonth();
+  if (anchor === "month") return y * 12 + m;
+  if (anchor === "quarter") return y * 4 + Math.floor(m / 3);
+  return y; // "year"
+}
+
+/**
+ * VWAP anclado con bandas, equivalente al indicador VWAP estándar de
+ * TradingView (Pine v6).
+ *
+ * La desviación estándar es **ponderada por volumen** (igual que `ta.vwap`):
+ *   var = Σ(src²·vol)/Σvol − vwap²
+ * En modo "pct" la banda se separa un `mult`% del VWAP en vez de N sigmas.
+ *
+ * Los anclajes "Earnings" / "Dividends" / "Splits" del Pine original no
+ * aplican a cripto: no hay eventos corporativos, así que no se incluyen.
+ */
+export function vwapAnchored(
+  candles: Candle[],
+  anchor: VwapAnchor = "session",
+  source: VwapSource = "hlc3",
+  mode: VwapBandsMode = "stdev",
+  mults: [number, number, number] = [1, 2, 3],
+): VwapPoint[] {
+  const out: VwapPoint[] = [];
+  let sumV = 0;
+  let sumPV = 0;
+  let sumP2V = 0;
+  let currentKey: number | null = null;
+
   for (const c of candles) {
-    const day = Math.floor(c.time / 86400);
-    if (day !== currentDay) {
-      cumPV = 0;
-      cumV = 0;
-      currentDay = day;
+    const key = vwapAnchorKey(c.time, anchor);
+    const isNew = key !== currentKey;
+    if (isNew) {
+      sumV = 0;
+      sumPV = 0;
+      sumP2V = 0;
+      currentKey = key;
     }
-    const tp = (c.high + c.low + c.close) / 3;
-    cumPV += tp * c.volume;
-    cumV += c.volume;
-    out.push({ time: c.time, value: cumV === 0 ? tp : cumPV / cumV });
+    const src = vwapSourceValue(c, source);
+    const vol = c.volume;
+    sumV += vol;
+    sumPV += src * vol;
+    sumP2V += src * src * vol;
+
+    const v = sumV === 0 ? src : sumPV / sumV;
+    let basis: number;
+    if (mode === "pct") {
+      basis = v * 0.01;
+    } else {
+      const variance = sumV === 0 ? 0 : sumP2V / sumV - v * v;
+      basis = Math.sqrt(Math.max(variance, 0));
+    }
+    out.push({
+      time: c.time,
+      vwap: v,
+      upper: [
+        v + basis * mults[0],
+        v + basis * mults[1],
+        v + basis * mults[2],
+      ],
+      lower: [
+        v - basis * mults[0],
+        v - basis * mults[1],
+        v - basis * mults[2],
+      ],
+      isNew,
+    });
   }
   return out;
 }

@@ -1,18 +1,25 @@
 import type { Metadata } from "next";
-import { Inter, JetBrains_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import "./globals.css";
 
-const inter = Inter({
+// Fuentes servidas desde el propio repo (variable, subset latin).
+// Antes esto era `next/font/google`, que descarga las tipografías en tiempo
+// de BUILD: en una red con proxy corporativo Node no lo atraviesa y el build
+// se cae con "Failed to fetch `Inter` from Google Fonts". Con next/font/local
+// el build no necesita internet.
+const inter = localFont({
+  src: "./fonts/inter-latin-wght-normal.woff2",
   variable: "--font-sans",
-  subsets: ["latin"],
   display: "swap",
+  weight: "100 900",
 });
 
-const jetbrains = JetBrains_Mono({
+const jetbrains = localFont({
+  src: "./fonts/jetbrains-mono-latin-wght-normal.woff2",
   variable: "--font-mono",
-  subsets: ["latin"],
   display: "swap",
+  weight: "100 800",
 });
 
 export const metadata: Metadata = {
@@ -32,6 +39,13 @@ export default function RootLayout({
       className={`dark ${inter.variable} ${jetbrains.variable} h-full antialiased`}
     >
       <body className="h-full overflow-hidden bg-tv-bg text-tv-text">
+        {/* React 19 sube estos <link> al <head>. Abren la conexión TLS a los
+            hosts de datos mientras todavía carga el JS, así el primer fetch
+            de velas no paga el handshake completo. */}
+        <link rel="preconnect" href="https://api.binance.com" />
+        <link rel="preconnect" href="https://api.bitget.com" />
+        <link rel="dns-prefetch" href="https://stream.binance.com" />
+        <link rel="dns-prefetch" href="https://ws.bitget.com" />
         <TooltipProvider delay={150}>{children}</TooltipProvider>
       </body>
     </html>

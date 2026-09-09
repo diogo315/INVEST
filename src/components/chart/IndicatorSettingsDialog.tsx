@@ -27,6 +27,7 @@ const TITLES: Record<IndicatorKey, string> = {
   vwap: "VWAP",
   cipher: "VuManChu Cipher B",
   gli: "Global Liquidity (M2)",
+  srsi: "Stoch RSI",
 };
 
 export function IndicatorSettingsDialog() {
@@ -93,6 +94,13 @@ function SettingsForm({ target, config, onApply, onSave, onReset }: FormProps) {
     stochK: config.stochK,
     stochD: config.stochD,
     stochSmooth: config.stochSmooth,
+    srsiK: config.srsiK,
+    srsiD: config.srsiD,
+    srsiRsiLen: config.srsiRsiLen,
+    srsiStochLen: config.srsiStochLen,
+    vwapMult1: config.vwapMult1,
+    vwapMult2: config.vwapMult2,
+    vwapMult3: config.vwapMult3,
     wtChannelLen: config.wtChannelLen,
     wtAverageLen: config.wtAverageLen,
     wtMALen: config.wtMALen,
@@ -120,6 +128,13 @@ function SettingsForm({ target, config, onApply, onSave, onReset }: FormProps) {
       stochK: config.stochK,
       stochD: config.stochD,
       stochSmooth: config.stochSmooth,
+      srsiK: config.srsiK,
+      srsiD: config.srsiD,
+      srsiRsiLen: config.srsiRsiLen,
+      srsiStochLen: config.srsiStochLen,
+      vwapMult1: config.vwapMult1,
+      vwapMult2: config.vwapMult2,
+      vwapMult3: config.vwapMult3,
       wtChannelLen: config.wtChannelLen,
       wtAverageLen: config.wtAverageLen,
       wtMALen: config.wtMALen,
@@ -150,6 +165,13 @@ function SettingsForm({ target, config, onApply, onSave, onReset }: FormProps) {
         bbPeriod: clamp(draft.bbPeriod, 2, 200),
         bbStdDev: clamp(draft.bbStdDev, 1, 10),
       });
+    else if (target === "srsi")
+      onSave({
+        srsiK: clamp(draft.srsiK, 1, 50),
+        srsiD: clamp(draft.srsiD, 1, 50),
+        srsiRsiLen: clamp(draft.srsiRsiLen, 2, 100),
+        srsiStochLen: clamp(draft.srsiStochLen, 2, 100),
+      });
     else if (target === "stoch")
       onSave({
         stochK: clamp(draft.stochK, 2, 100),
@@ -170,7 +192,13 @@ function SettingsForm({ target, config, onApply, onSave, onReset }: FormProps) {
         wtObLevel: clamp(draft.wtObLevel, 1, 200),
         wtOsLevel: clamp(draft.wtOsLevel, -200, -1),
       });
-    else if (target === "volume" || target === "vwap") onSave({});
+    else if (target === "vwap")
+      onSave({
+        vwapMult1: clampF(draft.vwapMult1, 0, 10),
+        vwapMult2: clampF(draft.vwapMult2, 0, 10),
+        vwapMult3: clampF(draft.vwapMult3, 0, 10),
+      });
+    else if (target === "volume") onSave({});
   }
 
   return (
@@ -253,10 +281,122 @@ function SettingsForm({ target, config, onApply, onSave, onReset }: FormProps) {
           />
         </div>
       )}
+      {target === "srsi" && (
+        <div className="flex flex-col gap-3">
+          <div className="grid grid-cols-2 gap-2">
+            <Field
+              label="K"
+              value={draft.srsiK}
+              min={1}
+              max={50}
+              onChange={(n) => setDraft((d) => ({ ...d, srsiK: n }))}
+            />
+            <Field
+              label="D"
+              value={draft.srsiD}
+              min={1}
+              max={50}
+              onChange={(n) => setDraft((d) => ({ ...d, srsiD: n }))}
+            />
+            <Field
+              label="RSI Length"
+              value={draft.srsiRsiLen}
+              min={2}
+              max={100}
+              onChange={(n) => setDraft((d) => ({ ...d, srsiRsiLen: n }))}
+            />
+            <Field
+              label="Stochastic Length"
+              value={draft.srsiStochLen}
+              min={2}
+              max={100}
+              onChange={(n) => setDraft((d) => ({ ...d, srsiStochLen: n }))}
+            />
+          </div>
+          <p className="text-[11px] leading-relaxed text-tv-text-muted">
+            Equivalente al Stoch RSI estándar de TradingView (Pine v6): RSI
+            sobre el cierre, luego estocástico y suavizado SMA en K y D. Bandas
+            en 80 / 50 / 20.
+          </p>
+        </div>
+      )}
       {target === "vwap" && (
-        <p className="text-xs text-tv-text-muted">
-          VWAP se reinicia cada día UTC y no tiene parámetros configurables.
-        </p>
+        <div className="flex flex-col gap-3">
+          <div className="grid grid-cols-2 gap-2">
+            <PlainSelect
+              label="Anchor Period"
+              value={config.vwapAnchor}
+              options={[
+                ["session", "Sesión (día UTC)"],
+                ["week", "Semana"],
+                ["month", "Mes"],
+                ["quarter", "Trimestre"],
+                ["year", "Año"],
+              ]}
+              onChange={(v) => onApply({ vwapAnchor: v })}
+            />
+            <PlainSelect
+              label="Source"
+              value={config.vwapSource}
+              options={[
+                ["hlc3", "hlc3"],
+                ["hl2", "hl2"],
+                ["hlcc4", "hlcc4"],
+                ["ohlc4", "ohlc4"],
+                ["close", "close"],
+              ]}
+              onChange={(v) => onApply({ vwapSource: v })}
+            />
+          </div>
+          <PlainSelect
+            label="Bands Calculation Mode"
+            value={config.vwapBandsMode}
+            options={[
+              ["stdev", "Standard Deviation"],
+              ["pct", "Percentage (mult 1 = 1%)"],
+            ]}
+            onChange={(v) => onApply({ vwapBandsMode: v })}
+          />
+          <div className="flex flex-col gap-2 border-t border-tv-border pt-3">
+            {(
+              [
+                [1, "vwapShowBand1", "vwapMult1", "#4caf50"],
+                [2, "vwapShowBand2", "vwapMult2", "#808000"],
+                [3, "vwapShowBand3", "vwapMult3", "#008080"],
+              ] as const
+            ).map(([n, showKey, multKey, color]) => (
+              <div key={n} className="flex items-center gap-3">
+                <span
+                  className="h-2 w-2 shrink-0 rounded-full"
+                  style={{ background: color }}
+                />
+                <div className="flex-1">
+                  <Toggle
+                    label={`Bands Multiplier #${n}`}
+                    checked={config[showKey]}
+                    onChange={(v) => onApply({ [showKey]: v })}
+                  />
+                </div>
+                <div className="w-24">
+                  <FloatField
+                    label=""
+                    value={draft[multKey]}
+                    step={0.5}
+                    min={0}
+                    max={10}
+                    onChange={(v) => setDraft((d) => ({ ...d, [multKey]: v }))}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="text-[11px] leading-relaxed text-tv-text-muted">
+            Equivalente al VWAP estándar de TradingView (Pine v6): desviación
+            estándar ponderada por volumen y reinicio en cada período de
+            anclaje. Los anclajes Earnings / Dividends / Splits del original no
+            aplican a cripto.
+          </p>
+        </div>
       )}
       {target === "cipher" && (
         <div className="flex max-h-[60vh] flex-col gap-3 overflow-y-auto pr-2">
@@ -900,6 +1040,81 @@ function Toggle({
   );
 }
 
+function PlainSelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: ReadonlyArray<readonly [string, string]>;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="text-[10px] font-semibold uppercase tracking-wider text-tv-text-muted">
+        {label}
+      </span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="rounded border border-tv-border bg-tv-bg px-2 py-1 text-xs text-tv-text"
+      >
+        {options.map(([v, l]) => (
+          <option key={v} value={v}>
+            {l}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+/** Como Field pero acepta decimales (los multiplicadores van de a 0.5). */
+function FloatField({
+  label,
+  value,
+  onChange,
+  min = 0,
+  max = 100,
+  step = 0.5,
+}: {
+  label: string;
+  value: number;
+  onChange: (n: number) => void;
+  min?: number;
+  max?: number;
+  step?: number;
+}) {
+  return (
+    <label className="flex flex-col gap-1">
+      {label !== "" && (
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-tv-text-muted">
+          {label}
+        </span>
+      )}
+      <Input
+        type="number"
+        min={min}
+        max={max}
+        step={step}
+        value={Number.isFinite(value) ? value : ""}
+        onChange={(e) => {
+          const n = parseFloat(e.target.value);
+          if (!isNaN(n)) onChange(n);
+        }}
+        className="bg-tv-bg tabular-nums"
+      />
+    </label>
+  );
+}
+
 function clamp(n: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, n));
+}
+
+/** clamp para decimales (clamp() se usa con enteros en el resto del form). */
+function clampF(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
 }

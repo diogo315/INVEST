@@ -19,6 +19,8 @@ import {
   type UTCTimestamp,
 } from "lightweight-charts";
 import { fetchKlinesCached } from "@/lib/binance/multi-tf";
+import { readCandleCache, writeCandleCache } from "@/lib/binance/candle-cache";
+import { BandFill } from "@/lib/chart/band-fill";
 import { getAdapter, parseSymbol } from "@/lib/exchanges";
 import {
   ema,
@@ -26,7 +28,7 @@ import {
   macd,
   bollinger,
   stochastic,
-  vwap,
+  vwapAnchored,
   wavetrend,
   mfiArea,
   stochRsi,
@@ -36,6 +38,9 @@ import {
   globalLiquidity,
   type DivergenceSegment,
   type IndicatorPoint,
+  type VwapAnchor,
+  type VwapBandsMode,
+  type VwapSource,
 } from "@/lib/indicators";
 import type { Candle, Timeframe } from "@/lib/binance/types";
 import {
@@ -87,6 +92,23 @@ const TV_COLORS = {
   grid: "#15171f",
 };
 
+// Colores de las bandas del VWAP — del Pine: green / olive / teal
+const VWAP_BAND_COLORS = ["#4caf50", "#808000", "#008080"] as const;
+// Pine: fill(..., color.new(<color>, 95)) — 95% transparente = alpha 0.05.
+const VWAP_FILL_COLORS = [
+  "rgba(76, 175, 80, 0.05)",
+  "rgba(128, 128, 0, 0.05)",
+  "rgba(0, 128, 128, 0.05)",
+] as const;
+
+const VWAP_ANCHOR_LABELS: Record<string, string> = {
+  session: "Sesión",
+  week: "Semana",
+  month: "Mes",
+  quarter: "Trimestre",
+  year: "Año",
+};
+
 interface HoverInfo {
   o: number;
   h: number;
@@ -110,9 +132,12 @@ interface LastValues {
   bbMiddle?: number;
   bbLower?: number;
   vwap?: number;
+  vwapBands?: Array<[number, number]>;
   gli?: number;
   stochK?: number;
   stochD?: number;
+  srsiK?: number;
+  srsiD?: number;
   cipherWt1?: number;
   cipherWt2?: number;
   cipherMfi?: number;
@@ -143,11 +168,29 @@ export function PriceChart({ symbol, timeframe }: Props) {
   const bbMiddleRef = useRef<ISeriesApi<"Line"> | null>(null);
   const bbLowerRef = useRef<ISeriesApi<"Line"> | null>(null);
   const vwapRef = useRef<ISeriesApi<"Line"> | null>(null);
+  // Bandas del VWAP: ±mult1 / ±mult2 / ±mult3, todas sobre el pane 0.
+  // Van en un solo ref (no 6 sueltos) para que la identidad sea estable
+  // entre renders y los efectos no las vean como dependencia nueva.
+  const vwapBandsRef = useRef<{
+    upper: Array<ISeriesApi<"Line"> | null>;
+    lower: Array<ISeriesApi<"Line"> | null>;
+    fills: Array<BandFill | null>;
+  }>({
+    upper: [null, null, null],
+    lower: [null, null, null],
+    fills: [null, null, null],
+  });
   const gliRef = useRef<ISeriesApi<"Line"> | null>(null);
   const stochKRef = useRef<ISeriesApi<"Line"> | null>(null);
   const stochDRef = useRef<ISeriesApi<"Line"> | null>(null);
   const stoch20Ref = useRef<ISeriesApi<"Line"> | null>(null);
   const stoch80Ref = useRef<ISeriesApi<"Line"> | null>(null);
+  // Stoch RSI estándar (TradingView) — pane propio, siempre el último
+  const srsiKRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const srsiDRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const srsi20Ref = useRef<ISeriesApi<"Line"> | null>(null);
+  const srsi50Ref = useRef<ISeriesApi<"Line"> | null>(null);
+  const srsi80Ref = useRef<ISeriesApi<"Line"> | null>(null);
   // VuManChu Cipher B series — WT1/WT2 use BaselineSeries so the area
   // is filled relative to zero (so the wave appears both above and below 0).
   const cipherWt1Ref = useRef<ISeriesApi<"Baseline"> | null>(null);
@@ -238,6 +281,22 @@ export function PriceChart({ symbol, timeframe }: Props) {
     setPaneOffsets(offsets);
   }
 
+  // Los osciladores pesados (BB, VWAP, Stoch, Stoch RSI, Cipher B) se
+  // recalculan como mucho 1 vez por segundo mientras llegan ticks del
+  // WebSocket. Recalcularlos en cada tick bloquea el hilo principal.
+  const heavyTimerRef = useRef<number | null>(null);
+  function scheduleHeavyUpdate() {
+    if (heavyTimerRef.current !== null) return;
+    heavyTimerRef.current = window.setTimeout(() => {
+      heavyTimerRef.current = null;
+      updateBB();
+      updateVWAP();
+      updateStochastic();
+      updateStochRsi();
+      updateCipher();
+    }, 1000);
+  }
+
   // Create chart once
   useEffect(() => {
     if (!containerRef.current) return;
@@ -325,12 +384,32 @@ export function PriceChart({ symbol, timeframe }: Props) {
       lastValueVisible: false,
     });
 
-    // VWAP (pane 0)
+    // VWAP (pane 0) — Pine: plot(vwapValue, color = #2962FF)
     vwapRef.current = chart.addSeries(LineSeries, {
       color: INDICATOR_COLORS.vwap,
       lineWidth: 2,
       priceLineVisible: false,
       lastValueVisible: false,
+    });
+
+    // Bandas del VWAP — colores del Pine: green / olive / teal
+    VWAP_BAND_COLORS.forEach((color, i) => {
+      const opts = {
+        color,
+        lineWidth: 1 as const,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        visible: false,
+      };
+      const up = chart.addSeries(LineSeries, opts);
+      const lo = chart.addSeries(LineSeries, opts);
+      vwapBandsRef.current.upper[i] = up;
+      vwapBandsRef.current.lower[i] = lo;
+      // El relleno entre banda superior e inferior (el fill() del Pine).
+      const fill = new BandFill(chart, up, VWAP_FILL_COLORS[i]);
+      fill.setVisible(false);
+      up.attachPrimitive(fill);
+      vwapBandsRef.current.fills[i] = fill;
     });
 
     // Global Liquidity Index — overlay on pane 0 using its own (invisible)
@@ -465,11 +544,25 @@ export function PriceChart({ symbol, timeframe }: Props) {
       bbMiddleRef.current = null;
       bbLowerRef.current = null;
       vwapRef.current = null;
+      vwapBandsRef.current = {
+        upper: [null, null, null],
+        lower: [null, null, null],
+        fills: [null, null, null],
+      };
       gliRef.current = null;
       stochKRef.current = null;
       stochDRef.current = null;
+      if (heavyTimerRef.current !== null) {
+        clearTimeout(heavyTimerRef.current);
+        heavyTimerRef.current = null;
+      }
       stoch20Ref.current = null;
       stoch80Ref.current = null;
+      srsiKRef.current = null;
+      srsiDRef.current = null;
+      srsi20Ref.current = null;
+      srsi50Ref.current = null;
+      srsi80Ref.current = null;
       cipherWt1Ref.current = null;
       cipherWt2Ref.current = null;
       cipherVwapRef.current = null;
@@ -1026,6 +1119,61 @@ export function PriceChart({ symbol, timeframe }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [indicators.stoch, indicators.rsi, indicators.macd]);
 
+  // Stoch RSI pane — SIEMPRE el último pane, así agregarlo no reordena
+  // los índices de RSI / MACD / Stoch / Cipher que ya existen.
+  useEffect(() => {
+    if (!chartRef.current) return;
+    if (indicators.srsi && !srsiKRef.current) {
+      const paneIndex =
+        1 +
+        (indicators.rsi ? 1 : 0) +
+        (indicators.macd ? 1 : 0) +
+        (indicators.stoch ? 1 : 0) +
+        (indicators.cipher ? 1 : 0);
+      const mkLine = (color: string, dashed = false) =>
+        chartRef.current!.addSeries(
+          LineSeries,
+          {
+            color,
+            lineWidth: 1,
+            lineStyle: dashed ? 2 : 0,
+            priceLineVisible: false,
+            lastValueVisible: false,
+          },
+          paneIndex,
+        );
+      // Pine: plot(k, "K", color=#2962FF) / plot(d, "D", color=#FF6D00)
+      srsiKRef.current = mkLine("#2962FF");
+      srsiDRef.current = mkLine("#FF6D00");
+      // hline 80 / 50 / 20 — #787B86 (la del medio más tenue)
+      srsi80Ref.current = mkLine("#787B86", true);
+      srsi50Ref.current = mkLine("#787B8680", true);
+      srsi20Ref.current = mkLine("#787B86", true);
+      try {
+        chartRef.current.panes()[paneIndex]?.setStretchFactor(1);
+        chartRef.current.panes()[0]?.setStretchFactor(3);
+      } catch {}
+      updateStochRsi();
+    } else if (!indicators.srsi && srsiKRef.current && chartRef.current) {
+      for (const r of [srsiKRef, srsiDRef, srsi20Ref, srsi50Ref, srsi80Ref]) {
+        if (r.current) {
+          try {
+            chartRef.current.removeSeries(r.current);
+          } catch {}
+          r.current = null;
+        }
+      }
+    }
+    requestAnimationFrame(() => recomputePaneOffsets());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    indicators.srsi,
+    indicators.rsi,
+    indicators.macd,
+    indicators.stoch,
+    indicators.cipher,
+  ]);
+
   // Visibility — eye toggle (hidden state) + enabled state combined
   useEffect(() => {
     const v = (key: IndicatorKey) => indicators[key] && !hidden[key];
@@ -1043,11 +1191,29 @@ export function PriceChart({ symbol, timeframe }: Props) {
     bbMiddleRef.current?.applyOptions({ visible: v("bb") });
     bbLowerRef.current?.applyOptions({ visible: v("bb") });
     vwapRef.current?.applyOptions({ visible: v("vwap") });
+    {
+      const bandsOn = [
+        config.vwapShowBand1,
+        config.vwapShowBand2,
+        config.vwapShowBand3,
+      ];
+      for (let i = 0; i < 3; i++) {
+        const on = v("vwap") && bandsOn[i];
+        vwapBandsRef.current.upper[i]?.applyOptions({ visible: on });
+        vwapBandsRef.current.lower[i]?.applyOptions({ visible: on });
+        vwapBandsRef.current.fills[i]?.setVisible(on);
+      }
+    }
     gliRef.current?.applyOptions({ visible: v("gli") });
     stochKRef.current?.applyOptions({ visible: v("stoch") });
     stochDRef.current?.applyOptions({ visible: v("stoch") });
     stoch20Ref.current?.applyOptions({ visible: v("stoch") });
     stoch80Ref.current?.applyOptions({ visible: v("stoch") });
+    srsiKRef.current?.applyOptions({ visible: v("srsi") });
+    srsiDRef.current?.applyOptions({ visible: v("srsi") });
+    srsi20Ref.current?.applyOptions({ visible: v("srsi") });
+    srsi50Ref.current?.applyOptions({ visible: v("srsi") });
+    srsi80Ref.current?.applyOptions({ visible: v("srsi") });
     // Cipher B — top-level visibility AND per-sub-feature toggles
     const cipherOn = v("cipher");
     const cfg = config;
@@ -1126,6 +1292,23 @@ export function PriceChart({ symbol, timeframe }: Props) {
   useEffect(() => {
     updateStochastic();
   }, [config.stochK, config.stochD, config.stochSmooth]);
+
+  useEffect(() => {
+    updateStochRsi();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.srsiK, config.srsiD, config.srsiRsiLen, config.srsiStochLen]);
+
+  useEffect(() => {
+    updateVWAP();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    config.vwapAnchor,
+    config.vwapSource,
+    config.vwapBandsMode,
+    config.vwapMult1,
+    config.vwapMult2,
+    config.vwapMult3,
+  ]);
 
   // Multi-TF data fetching for Sommi flag/diamond and MACD colors override.
   // Runs whenever the user enables one of these features or changes the relevant TF.
@@ -1377,11 +1560,45 @@ export function PriceChart({ symbol, timeframe }: Props) {
   function updateVWAP() {
     const c = candlesRef.current;
     if (c.length === 0 || !vwapRef.current) return;
-    const data = vwap(c);
-    vwapRef.current.setData(
-      data.map((p) => ({ time: p.time as UTCTimestamp, value: p.value })),
+    const cfg = configRef.current;
+    const data = vwapAnchored(
+      c,
+      cfg.vwapAnchor as VwapAnchor,
+      cfg.vwapSource as VwapSource,
+      cfg.vwapBandsMode as VwapBandsMode,
+      [cfg.vwapMult1, cfg.vwapMult2, cfg.vwapMult3],
     );
-    setLastValues((prev) => ({ ...prev, vwap: data.at(-1)?.value }));
+    vwapRef.current.setData(
+      data.map((p) => ({ time: p.time as UTCTimestamp, value: p.vwap })),
+    );
+    for (let i = 0; i < 3; i++) {
+      vwapBandsRef.current.upper[i]?.setData(
+        data.map((p) => ({ time: p.time as UTCTimestamp, value: p.upper[i] })),
+      );
+      vwapBandsRef.current.lower[i]?.setData(
+        data.map((p) => ({ time: p.time as UTCTimestamp, value: p.lower[i] })),
+      );
+      vwapBandsRef.current.fills[i]?.setData(
+        data.map((p) => ({
+          time: p.time,
+          upper: p.upper[i],
+          lower: p.lower[i],
+          isNew: p.isNew,
+        })),
+      );
+    }
+    const lastPt = data.at(-1);
+    setLastValues((prev) => ({
+      ...prev,
+      vwap: lastPt?.vwap,
+      vwapBands: lastPt
+        ? ([
+            [lastPt.upper[0], lastPt.lower[0]],
+            [lastPt.upper[1], lastPt.lower[1]],
+            [lastPt.upper[2], lastPt.lower[2]],
+          ] as Array<[number, number]>)
+        : undefined,
+    }));
   }
 
   function updateGLI() {
@@ -1421,6 +1638,44 @@ export function PriceChart({ symbol, timeframe }: Props) {
       stochK: last?.k,
       stochD: last?.d,
     }));
+  }
+
+  // Stoch RSI estándar (Pine v6): RSI(close, rsiLen) -> stoch(stochLen)
+  // -> K = SMA(stoch, smoothK) -> D = SMA(K, smoothD). Sin escala log.
+  function updateStochRsi() {
+    const c = candlesRef.current;
+    if (c.length === 0 || !srsiKRef.current) return;
+    const cfg = configRef.current;
+    const data = stochRsi(
+      c,
+      cfg.srsiStochLen,
+      cfg.srsiRsiLen,
+      cfg.srsiK,
+      cfg.srsiD,
+      false,
+    );
+    srsiKRef.current.setData(
+      data.map((p) => ({ time: p.time as UTCTimestamp, value: p.k })),
+    );
+    srsiDRef.current?.setData(
+      data.map((p) => ({ time: p.time as UTCTimestamp, value: p.d })),
+    );
+    if (data.length > 0) {
+      const first = data[0].time as UTCTimestamp;
+      const last = data[data.length - 1].time as UTCTimestamp;
+      for (const [ref, level] of [
+        [srsi80Ref, 80],
+        [srsi50Ref, 50],
+        [srsi20Ref, 20],
+      ] as const) {
+        ref.current?.setData([
+          { time: first, value: level },
+          { time: last, value: level },
+        ]);
+      }
+    }
+    const last = data.at(-1);
+    setLastValues((prev) => ({ ...prev, srsiK: last?.k, srsiD: last?.d }));
   }
 
   function updateCipher() {
@@ -2019,42 +2274,65 @@ export function PriceChart({ symbol, timeframe }: Props) {
     let unsub: (() => void) | null = null;
     let cancelled = false;
 
+    // Vuelca un set de velas al chart (velas + volumen). Se usa dos veces:
+    // una con lo cacheado (instantáneo) y otra con lo que llega de la API.
+    function paint(klines: Candle[]) {
+      candlesRef.current = klines;
+      if (candleSeriesRef.current) {
+        candleSeriesRef.current.setData(
+          klines.map((k) => ({
+            time: k.time as UTCTimestamp,
+            open: k.open,
+            high: k.high,
+            low: k.low,
+            close: k.close,
+          })),
+        );
+      }
+      if (volumeSeriesRef.current) {
+        volumeSeriesRef.current.setData(
+          klines.map((k) => ({
+            time: k.time as UTCTimestamp,
+            value: k.volume,
+            color:
+              k.close >= k.open ? `${TV_COLORS.green}66` : `${TV_COLORS.red}66`,
+          })),
+        );
+      }
+    }
+
     async function load() {
       try {
         const { adapter, symbol: rawSymbol } = getAdapter(symbol);
+
+        // Pintado optimista desde localStorage: el chart aparece en el primer
+        // frame en vez de esperar el round-trip completo a la API.
+        const cached = readCandleCache(symbol, timeframe);
+        if (cached && cached.length > 0 && !cancelled) {
+          paint(cached);
+          chartRef.current?.timeScale().fitContent();
+        }
+
         const klines = await adapter.fetchKlines(rawSymbol, timeframe, 1000);
         if (cancelled) return;
-        candlesRef.current = klines;
-        if (candleSeriesRef.current) {
-          candleSeriesRef.current.setData(
-            klines.map((k) => ({
-              time: k.time as UTCTimestamp,
-              open: k.open,
-              high: k.high,
-              low: k.low,
-              close: k.close,
-            })),
-          );
-        }
-        if (volumeSeriesRef.current) {
-          volumeSeriesRef.current.setData(
-            klines.map((k) => ({
-              time: k.time as UTCTimestamp,
-              value: k.volume,
-              color: k.close >= k.open ? `${TV_COLORS.green}66` : `${TV_COLORS.red}66`,
-            })),
-          );
-        }
-        updateEMAs();
-        updateRSI();
-        updateMACD();
-        updateBB();
-        updateVWAP();
-        updateGLI();
-        updateStochastic();
-        updateCipher();
+        paint(klines);
+        writeCandleCache(symbol, timeframe, klines);
+        // Pintamos velas + EMAs y recién en el frame siguiente calculamos
+        // los osciladores pesados: el chart aparece sin esperar al cómputo.
         chartRef.current?.timeScale().fitContent();
-        requestAnimationFrame(() => recomputePaneOffsets());
+        updateEMAs();
+        requestAnimationFrame(() => {
+          if (cancelled) return;
+          updateRSI();
+          updateMACD();
+          updateBB();
+          updateVWAP();
+          updateGLI();
+          updateStochastic();
+          updateStochRsi();
+          updateCipher();
+          requestAnimationFrame(() => recomputePaneOffsets());
+        });
 
         if (klines.length > 0) {
           const last = klines[klines.length - 1];
@@ -2097,6 +2375,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
             updateEMAs();
             updateRSI();
             updateMACD();
+            scheduleHeavyUpdate();
             const prev = arr[arr.length - 2] ?? lastCandle;
             setLastPrice({
               value: k.close,
@@ -2115,6 +2394,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
       cancelled = true;
       if (unsub) unsub();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol, timeframe]);
 
   const greenOrRed = (n: number) =>
@@ -2135,6 +2415,12 @@ export function PriceChart({ symbol, timeframe }: Props) {
     (indicators.rsi ? 1 : 0) +
     (indicators.macd ? 1 : 0) +
     (indicators.stoch ? 1 : 0);
+  const srsiPaneIdx =
+    1 +
+    (indicators.rsi ? 1 : 0) +
+    (indicators.macd ? 1 : 0) +
+    (indicators.stoch ? 1 : 0) +
+    (indicators.cipher ? 1 : 0);
 
   let measureRender: React.ReactNode = null;
   if (
@@ -2308,8 +2594,27 @@ export function PriceChart({ symbol, timeframe }: Props) {
           )}
           {indicators.vwap && (
             <IndicatorPill
-              name="VWAP"
-              value={lastValues.vwap !== undefined ? formatPrice(lastValues.vwap) : undefined}
+              name={`VWAP ${VWAP_ANCHOR_LABELS[config.vwapAnchor] ?? config.vwapAnchor}`}
+              value={
+                lastValues.vwap !== undefined
+                  ? [
+                      formatPrice(lastValues.vwap),
+                      ...(
+                        [
+                          config.vwapShowBand1,
+                          config.vwapShowBand2,
+                          config.vwapShowBand3,
+                        ]
+                          .map((on, i) =>
+                            on && lastValues.vwapBands?.[i]
+                              ? `${formatPrice(lastValues.vwapBands[i][0])}/${formatPrice(lastValues.vwapBands[i][1])}`
+                              : null,
+                          )
+                          .filter(Boolean) as string[]
+                      ),
+                    ].join("  ·  ")
+                  : undefined
+              }
               color={INDICATOR_COLORS.vwap}
               hidden={hidden.vwap}
               onToggleHide={() => toggleHidden("vwap")}
@@ -2415,6 +2720,28 @@ export function PriceChart({ symbol, timeframe }: Props) {
             onToggleHide={() => toggleHidden("stoch")}
             onSettings={() => setSettingsTarget("stoch")}
             onRemove={() => removeIndicator("stoch")}
+          />
+        </div>
+      )}
+
+      {/* Stoch RSI pane label */}
+      {indicators.srsi && paneOffsets[srsiPaneIdx] && (
+        <div
+          style={{ top: paneOffsets[srsiPaneIdx].top + 6, left: 12 }}
+          className="pointer-events-none absolute z-10"
+        >
+          <IndicatorPill
+            name={`Stoch RSI ${config.srsiK}, ${config.srsiD}, ${config.srsiRsiLen}, ${config.srsiStochLen}`}
+            value={
+              lastValues.srsiK !== undefined
+                ? `${lastValues.srsiK.toFixed(2)} / ${(lastValues.srsiD ?? 0).toFixed(2)}`
+                : undefined
+            }
+            color={INDICATOR_COLORS.srsi}
+            hidden={hidden.srsi}
+            onToggleHide={() => toggleHidden("srsi")}
+            onSettings={() => setSettingsTarget("srsi")}
+            onRemove={() => removeIndicator("srsi")}
           />
         </div>
       )}
