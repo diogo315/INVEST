@@ -282,6 +282,8 @@ interface ChartState {
   /** Periods and parameters for each indicator */
   config: IndicatorConfig;
   watchlist: string[];
+  /** Panel derecho (watchlist) plegado para dar más ancho al chart */
+  watchlistCollapsed: boolean;
 
   // Ephemeral UI state (not persisted)
   tool: DrawingTool;
@@ -303,6 +305,7 @@ interface ChartState {
   addPriceLine: (price: number, symbol: string) => void;
   clearPriceLines: (symbol?: string) => void;
   setSymbolDialogOpen: (v: boolean) => void;
+  toggleWatchlistCollapsed: () => void;
   setSettingsTarget: (k: IndicatorKey | null) => void;
 }
 
@@ -341,6 +344,7 @@ export const useChartStore = create<ChartState>()(
       },
       config: { ...DEFAULT_CONFIG },
       watchlist: DEFAULT_WATCHLIST,
+      watchlistCollapsed: false,
       tool: "cursor",
       priceLines: [],
       symbolDialogOpen: false,
@@ -403,6 +407,8 @@ export const useChartStore = create<ChartState>()(
             : [],
         })),
       setSymbolDialogOpen: (symbolDialogOpen) => set({ symbolDialogOpen }),
+      toggleWatchlistCollapsed: () =>
+        set((s) => ({ watchlistCollapsed: !s.watchlistCollapsed })),
       setSettingsTarget: (settingsTarget) => set({ settingsTarget }),
     }),
     {
@@ -414,6 +420,7 @@ export const useChartStore = create<ChartState>()(
         hidden: s.hidden,
         config: s.config,
         watchlist: s.watchlist,
+        watchlistCollapsed: s.watchlistCollapsed,
       }),
       // Deep-merge so config/indicators/hidden keys added in newer versions
       // get their defaults instead of staying undefined from older persisted state.

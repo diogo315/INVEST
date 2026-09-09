@@ -568,8 +568,18 @@ export function PriceChart({ symbol, timeframe }: Props) {
     chart.timeScale().subscribeVisibleLogicalRangeChange(logicalRangeHandler);
 
     // ResizeObserver — recompute pane offsets when chart container resizes
+    // Al cambiar el ANCHO (plegar el watchlist, redimensionar la ventana)
+    // lightweight-charts ancla el contenido a la derecha y deja un hueco a la
+    // izquierda. Reencuadramos para que el gráfico use todo el espacio nuevo.
+    let lastWidth = containerRef.current.clientWidth;
     const ro = new ResizeObserver(() => {
-      requestAnimationFrame(() => recomputePaneOffsets());
+      const w = containerRef.current?.clientWidth ?? lastWidth;
+      const widthChanged = w !== lastWidth;
+      lastWidth = w;
+      requestAnimationFrame(() => {
+        if (widthChanged) chartRef.current?.timeScale().fitContent();
+        recomputePaneOffsets();
+      });
     });
     ro.observe(containerRef.current);
     recomputePaneOffsets();

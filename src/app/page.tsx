@@ -27,8 +27,10 @@ export default function HomePage() {
       <Header />
       <div className="flex min-h-0 flex-1">
         <LeftSidebar />
-        <main className="relative flex min-h-0 flex-1 flex-col">
-          <div className="min-h-0 flex-1">
+        {/* min-w-0: sin esto el canvas del chart fija el ancho mínimo del
+            flex item y el área no vuelve a encogerse al reabrir el watchlist. */}
+        <main className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+          <div className="min-h-0 min-w-0 flex-1">
             <PriceChart symbol={symbol} timeframe={timeframe} />
           </div>
         </main>
