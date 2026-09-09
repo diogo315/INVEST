@@ -112,6 +112,20 @@ const VWAP_FILL_COLORS = [
 // "1D o superior" del Pine (timeframe.isdwm): diario, semanal, mensual.
 const DWM_TIMEFRAMES = new Set(["1d", "3d", "1w", "1M"]);
 
+/** Velas de aire que quedan entre la última vela y el borde derecho. */
+const MARGEN_DERECHO = 12;
+
+/**
+ * Encuadra la vista: conserva el zoom que tenga puesto el usuario y ancla la
+ * última vela dejando `MARGEN_DERECHO` velas de aire.
+ *
+ * Reemplaza a `fitContent()`, que metía las 1000 velas dentro del ancho
+ * (velas de ~1,5 px) y dejaba la última pegada al borde derecho.
+ */
+function anclarDerecha(chart: IChartApi | null) {
+  chart?.timeScale().scrollToPosition(MARGEN_DERECHO, false);
+}
+
 // Colores del RSI estándar de TradingView (Pine v6)
 const RSI_COLORS = {
   ma: "#ffeb3b", // color.yellow
@@ -398,7 +412,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
         borderColor: TV_COLORS.border,
         timeVisible: true,
         secondsVisible: false,
-        rightOffset: 12,
+        rightOffset: MARGEN_DERECHO,
         barSpacing: 8,
         tickMarkFormatter: tickMarkFormatter(tzRef.current),
       },
@@ -591,15 +605,15 @@ export function PriceChart({ symbol, timeframe }: Props) {
 
     // ResizeObserver — recompute pane offsets when chart container resizes
     // Al cambiar el ANCHO (plegar el watchlist, redimensionar la ventana)
-    // lightweight-charts ancla el contenido a la derecha y deja un hueco a la
-    // izquierda. Reencuadramos para que el gráfico use todo el espacio nuevo.
+    // hay que volver a anclar a la derecha para que el aire quede del lado
+    // correcto.
     let lastWidth = containerRef.current.clientWidth;
     const ro = new ResizeObserver(() => {
       const w = containerRef.current?.clientWidth ?? lastWidth;
       const widthChanged = w !== lastWidth;
       lastWidth = w;
       requestAnimationFrame(() => {
-        if (widthChanged) chartRef.current?.timeScale().fitContent();
+        if (widthChanged) anclarDerecha(chartRef.current);
         recomputePaneOffsets();
       });
     });
@@ -2660,7 +2674,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
         const cached = readCandleCache(symbol, timeframe);
         if (cached && cached.length > 0 && !cancelled) {
           paint(cached);
-          chartRef.current?.timeScale().fitContent();
+          anclarDerecha(chartRef.current);
         }
 
         const klines = await adapter.fetchKlines(rawSymbol, timeframe, 1000);
@@ -2669,7 +2683,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
         writeCandleCache(symbol, timeframe, klines);
         // Pintamos velas + EMAs y recién en el frame siguiente calculamos
         // los osciladores pesados: el chart aparece sin esperar al cómputo.
-        chartRef.current?.timeScale().fitContent();
+        anclarDerecha(chartRef.current);
         updateEMAs();
         requestAnimationFrame(() => {
           if (cancelled) return;
@@ -2681,11 +2695,10 @@ export function PriceChart({ symbol, timeframe }: Props) {
           updateStochastic();
           updateStochRsi();
           updateCipher();
-          // Recién acá encuadramos: fitContent() mira TODAS las series, y si
-          // corre antes de recalcular los indicadores todavía quedan puntos
-          // de la temporalidad anterior en la escala de tiempo. Eso dejaba el
-          // gráfico comprimido contra la derecha al cambiar de temporalidad.
-          chartRef.current?.timeScale().fitContent();
+          // Recién acá encuadramos: los indicadores ya están recalculados,
+          // así que la última posición de la escala de tiempo es la de esta
+          // temporalidad y no la de la anterior.
+          anclarDerecha(chartRef.current);
           requestAnimationFrame(() => recomputePaneOffsets());
         });
 
