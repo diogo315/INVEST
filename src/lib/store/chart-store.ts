@@ -288,6 +288,8 @@ interface ChartState {
   watchlist: string[];
   /** Panel derecho (watchlist) plegado para dar más ancho al chart */
   watchlistCollapsed: boolean;
+  /** Zona horaria de las etiquetas del chart: UTC o la del navegador. */
+  timezone: "utc" | "local";
   /** Marca de que ya se sembraron los perpetuos en un watchlist viejo. */
   futuresSeeded: boolean;
 
@@ -316,6 +318,7 @@ interface ChartState {
   clearPriceLines: (symbol?: string) => void;
   setSymbolDialogOpen: (v: boolean) => void;
   toggleWatchlistCollapsed: () => void;
+  setTimezone: (tz: "utc" | "local") => void;
   refreshChart: () => void;
   setChartLoading: (v: boolean) => void;
   setSettingsTarget: (k: IndicatorKey | null) => void;
@@ -358,6 +361,7 @@ export const useChartStore = create<ChartState>()(
       watchlist: DEFAULT_WATCHLIST,
       watchlistCollapsed: false,
       futuresSeeded: true,
+      timezone: "utc" as const,
       tool: "cursor",
       priceLines: [],
       symbolDialogOpen: false,
@@ -424,6 +428,7 @@ export const useChartStore = create<ChartState>()(
       setSymbolDialogOpen: (symbolDialogOpen) => set({ symbolDialogOpen }),
       toggleWatchlistCollapsed: () =>
         set((s) => ({ watchlistCollapsed: !s.watchlistCollapsed })),
+      setTimezone: (timezone) => set({ timezone }),
       refreshChart: () => set((s) => ({ refreshNonce: s.refreshNonce + 1 })),
       setChartLoading: (chartLoading) => set({ chartLoading }),
       setSettingsTarget: (settingsTarget) => set({ settingsTarget }),
@@ -439,6 +444,7 @@ export const useChartStore = create<ChartState>()(
         watchlist: s.watchlist,
         watchlistCollapsed: s.watchlistCollapsed,
         futuresSeeded: s.futuresSeeded,
+        timezone: s.timezone,
       }),
       // Deep-merge so config/indicators/hidden keys added in newer versions
       // get their defaults instead of staying undefined from older persisted state.

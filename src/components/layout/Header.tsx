@@ -1,16 +1,19 @@
 "use client";
 
-import { Code2, RefreshCw, Zap } from "lucide-react";
+import { Clock, Code2, RefreshCw, Zap } from "lucide-react";
 import { SymbolSelector } from "@/components/chart/SymbolSelector";
 import { TimeframeSelector } from "@/components/chart/TimeframeSelector";
 import { IndicatorMenu } from "@/components/chart/IndicatorMenu";
 import { Separator } from "@/components/ui/separator";
 import { useChartStore } from "@/lib/store/chart-store";
+import { etiquetaZona } from "@/lib/chart/timezone";
 import { cn } from "@/lib/utils";
 
 export function Header() {
   const refreshChart = useChartStore((s) => s.refreshChart);
   const loading = useChartStore((s) => s.chartLoading);
+  const timezone = useChartStore((s) => s.timezone);
+  const setTimezone = useChartStore((s) => s.setTimezone);
 
   return (
     <header className="flex h-12 items-center justify-between border-b border-tv-border bg-tv-panel px-3">
@@ -29,6 +32,20 @@ export function Header() {
         <TimeframeSelector />
         <Separator orientation="vertical" className="mx-1 h-6 bg-tv-border" />
         <IndicatorMenu />
+        <Separator orientation="vertical" className="mx-1 h-6 bg-tv-border" />
+        <button
+          onClick={() => setTimezone(timezone === "utc" ? "local" : "utc")}
+          title={
+            timezone === "utc"
+              ? "Horario UTC (el de los exchanges). Click para pasar a tu hora local."
+              : "Tu hora local. Click para pasar a UTC."
+          }
+          aria-label="Cambiar zona horaria del gráfico"
+          className="flex items-center gap-1.5 rounded px-2.5 py-1.5 text-xs text-tv-text-muted transition-colors hover:bg-tv-panel-hover hover:text-tv-text"
+        >
+          <Clock className="h-3.5 w-3.5" />
+          <span className="tabular-nums">{etiquetaZona(timezone)}</span>
+        </button>
       </div>
 
       <div className="flex items-center gap-2">

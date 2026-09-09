@@ -22,6 +22,7 @@ import { fetchKlinesCached } from "@/lib/binance/multi-tf";
 import { readCandleCache, writeCandleCache } from "@/lib/binance/candle-cache";
 import { BandFill, ZoneGradientFill } from "@/lib/chart/band-fill";
 import { SegmentsOverlay } from "@/lib/chart/segments";
+import { tickMarkFormatter, timeFormatter } from "@/lib/chart/timezone";
 import { getAdapter, parseSymbol } from "@/lib/exchanges";
 import {
   ema,
@@ -281,6 +282,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
   const removeIndicator = useChartStore((s) => s.removeIndicator);
   const toggleHidden = useChartStore((s) => s.toggleHidden);
   const setSettingsTarget = useChartStore((s) => s.setSettingsTarget);
+  const timezone = useChartStore((s) => s.timezone);
   const refreshNonce = useChartStore((s) => s.refreshNonce);
   const refreshChart = useChartStore((s) => s.refreshChart);
   const setChartLoading = useChartStore((s) => s.setChartLoading);
@@ -322,6 +324,10 @@ export function PriceChart({ symbol, timeframe }: Props) {
   // recalculan como mucho 1 vez por segundo mientras llegan ticks del
   // WebSocket. Recalcularlos en cada tick bloquea el hilo principal.
   const heavyTimerRef = useRef<number | null>(null);
+  // El chart se crea una sola vez; la zona se lee por ref para no
+  // recrearlo, y un efecto aparte reaplica los formateadores.
+  const tzRef = useRef(timezone);
+  tzRef.current = timezone;
   function scheduleHeavyUpdate() {
     if (heavyTimerRef.current !== null) return;
     heavyTimerRef.current = window.setTimeout(() => {
@@ -333,6 +339,15 @@ export function PriceChart({ symbol, timeframe }: Props) {
       updateCipher();
     }, 1000);
   }
+
+  // Cambiar de zona solo reformatea etiquetas: no toca ni un dato, así el
+  // anclaje del VWAP y las divergencias siguen calculándose igual.
+  useEffect(() => {
+    chartRef.current?.applyOptions({
+      timeScale: { tickMarkFormatter: tickMarkFormatter(timezone) },
+      localization: { timeFormatter: timeFormatter(timezone) },
+    });
+  }, [timezone]);
 
   // Fuente configurable de un indicador (Pine: input.source)
   function candleSource(k: Candle, src: string): number {
@@ -385,7 +400,9 @@ export function PriceChart({ symbol, timeframe }: Props) {
         secondsVisible: false,
         rightOffset: 12,
         barSpacing: 8,
+        tickMarkFormatter: tickMarkFormatter(tzRef.current),
       },
+      localization: { timeFormatter: timeFormatter(tzRef.current) },
       autoSize: true,
     });
 
