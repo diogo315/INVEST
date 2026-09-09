@@ -101,6 +101,9 @@ const VWAP_FILL_COLORS = [
   "rgba(0, 128, 128, 0.05)",
 ] as const;
 
+// "1D o superior" del Pine (timeframe.isdwm): diario, semanal, mensual.
+const DWM_TIMEFRAMES = new Set(["1d", "3d", "1w", "1M"]);
+
 const VWAP_ANCHOR_LABELS: Record<string, string> = {
   session: "Sesión",
   week: "Semana",
@@ -1302,12 +1305,15 @@ export function PriceChart({ symbol, timeframe }: Props) {
     updateVWAP();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
+    config.vwapHideOnDWM,
     config.vwapAnchor,
     config.vwapSource,
+    config.vwapOffset,
     config.vwapBandsMode,
     config.vwapMult1,
     config.vwapMult2,
     config.vwapMult3,
+    timeframe,
   ]);
 
   // Multi-TF data fetching for Sommi flag/diamond and MACD colors override.
@@ -1561,6 +1567,22 @@ export function PriceChart({ symbol, timeframe }: Props) {
     const c = candlesRef.current;
     if (c.length === 0 || !vwapRef.current) return;
     const cfg = configRef.current;
+    // Pine: hideonDWM — no dibujar el VWAP en gráficos de 1D o superior.
+    if (cfg.vwapHideOnDWM && DWM_TIMEFRAMES.has(timeframe)) {
+      vwapRef.current.setData([]);
+      for (let i = 0; i < 3; i++) {
+        vwapBandsRef.current.upper[i]?.setData([]);
+        vwapBandsRef.current.lower[i]?.setData([]);
+        vwapBandsRef.current.fills[i]?.setData([]);
+      }
+      setLastValues((prev) => ({
+        ...prev,
+        vwap: undefined,
+        vwapBands: undefined,
+      }));
+      return;
+    }
+
     const data = vwapAnchored(
       c,
       cfg.vwapAnchor as VwapAnchor,
@@ -1568,19 +1590,43 @@ export function PriceChart({ symbol, timeframe }: Props) {
       cfg.vwapBandsMode as VwapBandsMode,
       [cfg.vwapMult1, cfg.vwapMult2, cfg.vwapMult3],
     );
+
+    // Pine: offset — corre el trazado N velas. Positivo lo proyecta hacia el
+    // futuro, así que extrapolamos timestamps con el paso de las velas.
+    const off = Math.round(cfg.vwapOffset || 0);
+    const step =
+      c.length > 1 ? c[c.length - 1].time - c[c.length - 2].time : 0;
+    const timeAt = (i: number): number | null => {
+      const j = i + off;
+      if (j >= 0 && j < c.length) return c[j].time;
+      if (step <= 0) return null;
+      if (j >= c.length) return c[c.length - 1].time + (j - c.length + 1) * step;
+      return c[0].time + j * step; // j < 0
+    };
+
+    const shifted = data
+      .map((p, i) => ({ p, t: timeAt(i) }))
+      .filter((x): x is { p: (typeof data)[number]; t: number } => x.t !== null);
+
     vwapRef.current.setData(
-      data.map((p) => ({ time: p.time as UTCTimestamp, value: p.vwap })),
+      shifted.map(({ p, t }) => ({ time: t as UTCTimestamp, value: p.vwap })),
     );
     for (let i = 0; i < 3; i++) {
       vwapBandsRef.current.upper[i]?.setData(
-        data.map((p) => ({ time: p.time as UTCTimestamp, value: p.upper[i] })),
+        shifted.map(({ p, t }) => ({
+          time: t as UTCTimestamp,
+          value: p.upper[i],
+        })),
       );
       vwapBandsRef.current.lower[i]?.setData(
-        data.map((p) => ({ time: p.time as UTCTimestamp, value: p.lower[i] })),
+        shifted.map(({ p, t }) => ({
+          time: t as UTCTimestamp,
+          value: p.lower[i],
+        })),
       );
       vwapBandsRef.current.fills[i]?.setData(
-        data.map((p) => ({
-          time: p.time,
+        shifted.map(({ p, t }) => ({
+          time: t,
           upper: p.upper[i],
           lower: p.lower[i],
           isNew: p.isNew,

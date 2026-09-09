@@ -101,6 +101,7 @@ function SettingsForm({ target, config, onApply, onSave, onReset }: FormProps) {
     vwapMult1: config.vwapMult1,
     vwapMult2: config.vwapMult2,
     vwapMult3: config.vwapMult3,
+    vwapOffset: config.vwapOffset,
     wtChannelLen: config.wtChannelLen,
     wtAverageLen: config.wtAverageLen,
     wtMALen: config.wtMALen,
@@ -135,6 +136,7 @@ function SettingsForm({ target, config, onApply, onSave, onReset }: FormProps) {
       vwapMult1: config.vwapMult1,
       vwapMult2: config.vwapMult2,
       vwapMult3: config.vwapMult3,
+      vwapOffset: config.vwapOffset,
       wtChannelLen: config.wtChannelLen,
       wtAverageLen: config.wtAverageLen,
       wtMALen: config.wtMALen,
@@ -197,6 +199,7 @@ function SettingsForm({ target, config, onApply, onSave, onReset }: FormProps) {
         vwapMult1: clampF(draft.vwapMult1, 0, 10),
         vwapMult2: clampF(draft.vwapMult2, 0, 10),
         vwapMult3: clampF(draft.vwapMult3, 0, 10),
+        vwapOffset: Math.round(clampF(draft.vwapOffset, -500, 500)),
       });
     else if (target === "volume") onSave({});
   }
@@ -299,14 +302,14 @@ function SettingsForm({ target, config, onApply, onSave, onReset }: FormProps) {
               onChange={(n) => setDraft((d) => ({ ...d, srsiD: n }))}
             />
             <Field
-              label="RSI Length"
+              label="Longitud de RSI"
               value={draft.srsiRsiLen}
               min={2}
               max={100}
               onChange={(n) => setDraft((d) => ({ ...d, srsiRsiLen: n }))}
             />
             <Field
-              label="Stochastic Length"
+              label="Longitud estocástica"
               value={draft.srsiStochLen}
               min={2}
               max={100}
@@ -322,9 +325,14 @@ function SettingsForm({ target, config, onApply, onSave, onReset }: FormProps) {
       )}
       {target === "vwap" && (
         <div className="flex flex-col gap-3">
+          <Toggle
+            label="Ocultar VWAP en 1D o superior"
+            checked={config.vwapHideOnDWM}
+            onChange={(v) => onApply({ vwapHideOnDWM: v })}
+          />
           <div className="grid grid-cols-2 gap-2">
             <PlainSelect
-              label="Anchor Period"
+              label="Periodo de referencia"
               value={config.vwapAnchor}
               options={[
                 ["session", "Sesión (día UTC)"],
@@ -336,7 +344,7 @@ function SettingsForm({ target, config, onApply, onSave, onReset }: FormProps) {
               onChange={(v) => onApply({ vwapAnchor: v })}
             />
             <PlainSelect
-              label="Source"
+              label="Fuente"
               value={config.vwapSource}
               options={[
                 ["hlc3", "hlc3"],
@@ -348,12 +356,22 @@ function SettingsForm({ target, config, onApply, onSave, onReset }: FormProps) {
               onChange={(v) => onApply({ vwapSource: v })}
             />
           </div>
+          <div className="grid grid-cols-2 gap-2">
+            <FloatField
+              label="Compensación"
+              value={draft.vwapOffset}
+              min={-500}
+              max={500}
+              step={1}
+              onChange={(n) => setDraft((d) => ({ ...d, vwapOffset: n }))}
+            />
+          </div>
           <PlainSelect
-            label="Bands Calculation Mode"
+            label="Modo de cálculo de bandas"
             value={config.vwapBandsMode}
             options={[
-              ["stdev", "Standard Deviation"],
-              ["pct", "Percentage (mult 1 = 1%)"],
+              ["stdev", "Desviación estándar"],
+              ["pct", "Porcentaje (mult 1 = 1%)"],
             ]}
             onChange={(v) => onApply({ vwapBandsMode: v })}
           />
@@ -372,7 +390,7 @@ function SettingsForm({ target, config, onApply, onSave, onReset }: FormProps) {
                 />
                 <div className="flex-1">
                   <Toggle
-                    label={`Bands Multiplier #${n}`}
+                    label={`Multiplicador de bandas #${n}`}
                     checked={config[showKey]}
                     onChange={(v) => onApply({ [showKey]: v })}
                   />
@@ -394,7 +412,9 @@ function SettingsForm({ target, config, onApply, onSave, onReset }: FormProps) {
             Equivalente al VWAP estándar de TradingView (Pine v6): desviación
             estándar ponderada por volumen y reinicio en cada período de
             anclaje. Los anclajes Earnings / Dividends / Splits del original no
-            aplican a cripto.
+            aplican a cripto. El bloque «Cálculo» de TradingView (intervalo de
+            tiempo y esperar al cierre) no es del VWAP: es un envoltorio que
+            TradingView aplica a cualquier indicador.
           </p>
         </div>
       )}

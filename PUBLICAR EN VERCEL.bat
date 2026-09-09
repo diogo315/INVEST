@@ -16,20 +16,28 @@ if errorlevel 1 (
 )
 
 echo Consultando GitHub...
-git fetch origin >nul 2>&1
+git fetch origin --prune >nul 2>&1
 
 REM ---------------------------------------------------------------
-REM OJO: la rama de produccion de este repo es MASTER, no main.
-REM Vercel despliega la rama por defecto de GitHub, que es master.
-REM Pushear solo a main NO actualiza la web. Por eso se empujan las
-REM dos: main (donde se trabaja) y master (la que Vercel publica).
+REM Vercel publica la rama POR DEFECTO del repo en GitHub. La leemos
+REM en vivo en vez de asumirla, asi esto sigue funcionando si cambias
+REM el default branch (por ejemplo de master a main).
 REM ---------------------------------------------------------------
+set "PROD="
+for /f "tokens=2 delims=/" %%b in ('git symbolic-ref --short refs/remotes/origin/HEAD 2^>nul') do set "PROD=%%b"
+if "%PROD%"=="" (
+  git remote set-head origin --auto >nul 2>&1
+  for /f "tokens=2 delims=/" %%b in ('git symbolic-ref --short refs/remotes/origin/HEAD 2^>nul') do set "PROD=%%b"
+)
+if "%PROD%"=="" set "PROD=main"
 
-for /f %%i in ('git rev-list --count origin/master..HEAD 2^>nul') do set PEND=%%i
+echo Rama de produccion (la que despliega Vercel): %PROD%
+echo.
+
+for /f %%i in ('git rev-list --count origin/%PROD%..HEAD 2^>nul') do set PEND=%%i
 if "%PEND%"=="" set PEND=0
 
 if "%PEND%"=="0" (
-  echo.
   echo No hay nada pendiente. Vercel ya tiene la ultima version.
   echo   https://invest-topaz-one.vercel.app
   echo.
@@ -37,21 +45,24 @@ if "%PEND%"=="0" (
   exit /b 0
 )
 
-echo.
 echo Commits que le faltan a la web: %PEND%
 echo --------------------------------------------
-git log --oneline origin/master..HEAD
+git log --oneline origin/%PROD%..HEAD
 echo --------------------------------------------
 echo.
 
-echo Subiendo a main...
-git push origin main
+for /f %%b in ('git branch --show-current') do set "ACTUAL=%%b"
+
+echo Subiendo la rama actual (%ACTUAL%)...
+git push origin %ACTUAL%
 if errorlevel 1 goto FALLO
 
-echo.
-echo Subiendo a master (esta es la que despliega Vercel)...
-git push origin HEAD:master
-if errorlevel 1 goto FALLO
+if /i not "%ACTUAL%"=="%PROD%" (
+  echo.
+  echo Subiendo a %PROD% ^(la que despliega Vercel^)...
+  git push origin HEAD:%PROD%
+  if errorlevel 1 goto FALLO
+)
 
 echo.
 echo ============================================

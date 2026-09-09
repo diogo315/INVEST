@@ -45,8 +45,10 @@ export interface IndicatorConfig {
   srsiRsiLen: number;
   srsiStochLen: number;
   // VWAP anclado + bandas (TradingView / Pine v6)
+  vwapHideOnDWM: boolean;
   vwapAnchor: string; // session | week | month | quarter | year
   vwapSource: string; // hlc3 | hl2 | hlcc4 | ohlc4 | close
+  vwapOffset: number;
   vwapBandsMode: string; // stdev | pct
   vwapShowBand1: boolean;
   vwapMult1: number;
@@ -146,8 +148,10 @@ export const DEFAULT_CONFIG: IndicatorConfig = {
   srsiD: 3,
   srsiRsiLen: 14,
   srsiStochLen: 14,
+  vwapHideOnDWM: false,
   vwapAnchor: "session",
   vwapSource: "hlc3",
+  vwapOffset: 0,
   vwapBandsMode: "stdev",
   vwapShowBand1: true,
   vwapMult1: 1,
