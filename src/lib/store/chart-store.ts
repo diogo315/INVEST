@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { Timeframe } from "@/lib/binance/types";
+import { ZONA_POR_DEFECTO, type ChartTimezone } from "@/lib/chart/timezone";
 
 export type IndicatorKey =
   | "ema20"
@@ -288,8 +289,8 @@ interface ChartState {
   watchlist: string[];
   /** Panel derecho (watchlist) plegado para dar más ancho al chart */
   watchlistCollapsed: boolean;
-  /** Zona horaria de las etiquetas del chart: UTC o la del navegador. */
-  timezone: "utc" | "local";
+  /** Zona horaria de las etiquetas del chart ("utc", "local" o un id IANA). */
+  timezone: ChartTimezone;
   /** Marca de que ya se sembraron los perpetuos en un watchlist viejo. */
   futuresSeeded: boolean;
 
@@ -318,7 +319,7 @@ interface ChartState {
   clearPriceLines: (symbol?: string) => void;
   setSymbolDialogOpen: (v: boolean) => void;
   toggleWatchlistCollapsed: () => void;
-  setTimezone: (tz: "utc" | "local") => void;
+  setTimezone: (tz: ChartTimezone) => void;
   refreshChart: () => void;
   setChartLoading: (v: boolean) => void;
   setSettingsTarget: (k: IndicatorKey | null) => void;
@@ -361,7 +362,7 @@ export const useChartStore = create<ChartState>()(
       watchlist: DEFAULT_WATCHLIST,
       watchlistCollapsed: false,
       futuresSeeded: true,
-      timezone: "utc" as const,
+      timezone: ZONA_POR_DEFECTO,
       tool: "cursor",
       priceLines: [],
       symbolDialogOpen: false,
@@ -475,6 +476,10 @@ export const useChartStore = create<ChartState>()(
           ...current,
           ...p,
           futuresSeeded: true,
+          // "utc" era el default viejo, no una eleccion del usuario: pasa a la
+          // zona por defecto actual. Una zona elegida a mano se respeta.
+          timezone:
+            !p.timezone || p.timezone === "utc" ? current.timezone : p.timezone,
           // Migrate legacy unprefixed symbols (pre-Bitget) → "BIN:..."
           symbol: p.symbol ? migrateSymbol(p.symbol) : current.symbol,
           watchlist,
