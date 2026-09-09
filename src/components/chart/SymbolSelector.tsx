@@ -11,7 +11,12 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ALL_EXCHANGES, formatSymbol, parseSymbol } from "@/lib/exchanges";
+import {
+  ALL_EXCHANGES,
+  EXCHANGE_BADGE,
+  formatSymbol,
+  parseSymbol,
+} from "@/lib/exchanges";
 import { useChartStore } from "@/lib/store/chart-store";
 import { cn } from "@/lib/utils";
 import type { SymbolInfo } from "@/lib/binance/types";
@@ -102,7 +107,7 @@ export function SymbolSelector() {
           />
         </div>
         <div className="flex gap-1 border-b border-tv-border px-3 py-2">
-          {(["ALL", "BIN", "BG"] as const).map((id) => (
+          {(["ALL", "BIN", "BINF", "BG"] as const).map((id) => (
             <button
               key={id}
               onClick={() => setFilterEx(id)}
@@ -113,7 +118,13 @@ export function SymbolSelector() {
                   : "bg-tv-bg text-tv-text-muted hover:text-tv-text",
               )}
             >
-              {id === "ALL" ? "Todos" : id === "BIN" ? "Binance" : "Bitget"}
+              {id === "ALL"
+                  ? "Todos"
+                  : id === "BIN"
+                    ? "Binance"
+                    : id === "BINF"
+                      ? "Futuros"
+                      : "Bitget"}
             </button>
           ))}
         </div>
@@ -142,12 +153,10 @@ export function SymbolSelector() {
                   <span
                     className={cn(
                       "rounded px-1 py-0.5 text-[9px] font-bold tracking-wide",
-                      s.exchange === "BIN"
-                        ? "bg-[#f3ba2f]/20 text-[#f3ba2f]"
-                        : "bg-[#00f0c0]/20 text-[#00f0c0]",
+                      EXCHANGE_BADGE[s.exchange].className,
                     )}
                   >
-                    {s.exchange}
+                    {EXCHANGE_BADGE[s.exchange].label}
                   </span>
                   <span className="font-semibold text-tv-text">
                     {s.baseAsset}

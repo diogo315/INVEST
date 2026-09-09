@@ -5,7 +5,8 @@ import type {
   Timeframe,
 } from "@/lib/binance/types";
 
-export type ExchangeId = "BIN" | "BG";
+/** BIN = Binance spot · BINF = Binance futuros (perpetuos USDⓈ-M) · BG = Bitget */
+export type ExchangeId = "BIN" | "BINF" | "BG";
 
 export interface KlineSubscription {
   symbol: string;

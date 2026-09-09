@@ -1,6 +1,7 @@
 import type { Candle, Timeframe } from "./types";
 
-const WS_BASE = "wss://stream.binance.com:9443/stream";
+const WS_SPOT = "wss://stream.binance.com:9443/stream";
+const WS_FUTURES = "wss://fstream.binance.com/stream";
 
 interface KlineMsg {
   stream: string;
@@ -56,6 +57,9 @@ export interface TickerSubscription {
  * Subscriptions can be added/removed at runtime via SUBSCRIBE/UNSUBSCRIBE.
  */
 export class BinanceWS {
+  /** Spot y futuros hablan el mismo protocolo; solo cambia el host. */
+  constructor(private readonly base: string = WS_SPOT) {}
+
   private ws: WebSocket | null = null;
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -67,7 +71,7 @@ export class BinanceWS {
 
   connect() {
     if (this.ws || this.closing) return;
-    this.ws = new WebSocket(WS_BASE);
+    this.ws = new WebSocket(this.base);
 
     this.ws.onopen = () => {
       this.connected = true;
@@ -177,16 +181,24 @@ export class BinanceWS {
   }
 }
 
-// Singleton — only one WS connection per browser tab
-let singleton: BinanceWS | null = null;
+// Singletons — una conexión por host (spot y futuros son WS distintos)
+let spotSingleton: BinanceWS | null = null;
+let futuresSingleton: BinanceWS | null = null;
+
 export function getBinanceWS(): BinanceWS {
-  if (typeof window === "undefined") {
-    // SSR safety: dummy
-    return new BinanceWS();
+  if (typeof window === "undefined") return new BinanceWS(WS_SPOT); // SSR
+  if (!spotSingleton) {
+    spotSingleton = new BinanceWS(WS_SPOT);
+    spotSingleton.connect();
   }
-  if (!singleton) {
-    singleton = new BinanceWS();
-    singleton.connect();
+  return spotSingleton;
+}
+
+export function getBinanceFuturesWS(): BinanceWS {
+  if (typeof window === "undefined") return new BinanceWS(WS_FUTURES); // SSR
+  if (!futuresSingleton) {
+    futuresSingleton = new BinanceWS(WS_FUTURES);
+    futuresSingleton.connect();
   }
-  return singleton;
+  return futuresSingleton;
 }

@@ -253,9 +253,13 @@ export const INDICATOR_COLORS: Record<IndicatorKey, string> = {
   srsi: "#2962ff",
 };
 
+/** Perpetuos que se agregan a todo watchlist (también a los ya guardados). */
+export const DEFAULT_FUTURES = ["BINF:BTCUSDT", "BINF:ETHUSDT"];
+
 export const DEFAULT_WATCHLIST = [
   "BIN:BTCUSDT",
   "BIN:ETHUSDT",
+  ...DEFAULT_FUTURES,
   "BIN:SOLUSDT",
   "BIN:BNBUSDT",
   "BIN:XRPUSDT",
@@ -284,6 +288,8 @@ interface ChartState {
   watchlist: string[];
   /** Panel derecho (watchlist) plegado para dar más ancho al chart */
   watchlistCollapsed: boolean;
+  /** Marca de que ya se sembraron los perpetuos en un watchlist viejo. */
+  futuresSeeded: boolean;
 
   // Ephemeral UI state (not persisted)
   tool: DrawingTool;
@@ -345,6 +351,7 @@ export const useChartStore = create<ChartState>()(
       config: { ...DEFAULT_CONFIG },
       watchlist: DEFAULT_WATCHLIST,
       watchlistCollapsed: false,
+      futuresSeeded: true,
       tool: "cursor",
       priceLines: [],
       symbolDialogOpen: false,
@@ -421,6 +428,7 @@ export const useChartStore = create<ChartState>()(
         config: s.config,
         watchlist: s.watchlist,
         watchlistCollapsed: s.watchlistCollapsed,
+        futuresSeeded: s.futuresSeeded,
       }),
       // Deep-merge so config/indicators/hidden keys added in newer versions
       // get their defaults instead of staying undefined from older persisted state.
@@ -432,14 +440,28 @@ export const useChartStore = create<ChartState>()(
           Object.fromEntries(
             Object.entries(o ?? {}).filter(([, v]) => v !== null && v !== undefined),
           ) as Partial<T>;
+        // Watchlists guardados antes de que existieran los futuros: se les
+        // agregan BTC y ETH perpetuos una sola vez.
+        const persistedList = Array.isArray(p.watchlist)
+          ? p.watchlist.map(migrateSymbol)
+          : null;
+        const needsFutures = persistedList !== null && !p.futuresSeeded;
+        const watchlist = persistedList
+          ? needsFutures
+            ? [
+                ...persistedList,
+                ...DEFAULT_FUTURES.filter((f) => !persistedList.includes(f)),
+              ]
+            : persistedList
+          : current.watchlist;
+
         return {
           ...current,
           ...p,
+          futuresSeeded: true,
           // Migrate legacy unprefixed symbols (pre-Bitget) → "BIN:..."
           symbol: p.symbol ? migrateSymbol(p.symbol) : current.symbol,
-          watchlist: Array.isArray(p.watchlist)
-            ? p.watchlist.map(migrateSymbol)
-            : current.watchlist,
+          watchlist,
           config: { ...DEFAULT_CONFIG, ...stripNullish(p.config) },
           indicators: { ...current.indicators, ...stripNullish(p.indicators) },
           hidden: { ...current.hidden, ...stripNullish(p.hidden) },

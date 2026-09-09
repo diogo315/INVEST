@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { ChevronRight, Plus, X } from "lucide-react";
-import { ADAPTERS, parseSymbol } from "@/lib/exchanges";
+import { ADAPTERS, EXCHANGE_BADGE, parseSymbol } from "@/lib/exchanges";
 import type { ExchangeId } from "@/lib/exchanges";
 import { useChartStore } from "@/lib/store/chart-store";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -27,7 +27,7 @@ export function Watchlist() {
 
   // Group watchlist symbols by exchange so we make one fetch + one WS sub per exchange.
   const grouped = useMemo(() => {
-    const out: Record<ExchangeId, string[]> = { BIN: [], BG: [] };
+    const out: Record<ExchangeId, string[]> = { BIN: [], BINF: [], BG: [] };
     for (const q of watchlist) {
       const { exchange, symbol } = parseSymbol(q);
       out[exchange].push(symbol);
@@ -156,12 +156,10 @@ export function Watchlist() {
                   <span
                     className={cn(
                       "rounded px-1 py-0.5 text-[8px] font-bold tracking-wide",
-                      exchange === "BIN"
-                        ? "bg-[#f3ba2f]/20 text-[#f3ba2f]"
-                        : "bg-[#00f0c0]/20 text-[#00f0c0]",
+                      EXCHANGE_BADGE[exchange].className,
                     )}
                   >
-                    {exchange}
+                    {EXCHANGE_BADGE[exchange].label}
                   </span>
                   <span className="font-medium text-tv-text">{display}</span>
                   <span className="text-[10px] text-tv-text-dim">USDT</span>

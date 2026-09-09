@@ -44,7 +44,9 @@ export default function RootLayout({
             de velas no paga el handshake completo. */}
         <link rel="preconnect" href="https://api.binance.com" />
         <link rel="preconnect" href="https://api.bitget.com" />
+        <link rel="preconnect" href="https://fapi.binance.com" />
         <link rel="dns-prefetch" href="https://stream.binance.com" />
+        <link rel="dns-prefetch" href="https://fstream.binance.com" />
         <link rel="dns-prefetch" href="https://ws.bitget.com" />
         <TooltipProvider delay={150}>{children}</TooltipProvider>
       </body>
