@@ -68,6 +68,9 @@ export class BinanceWS {
   private tickerSubs = new Map<string, (m: MiniTickerMsg["data"]) => void>();
   private connected = false;
   private closing = false;
+  /** Último mensaje recibido. Un socket abierto pero mudo es un zombi. */
+  private lastMessageAt = 0;
+  private watchdog: ReturnType<typeof setInterval> | null = null;
 
   connect() {
     if (this.ws || this.closing) return;
@@ -76,6 +79,8 @@ export class BinanceWS {
     this.ws.onopen = () => {
       this.connected = true;
       this.reconnectAttempts = 0;
+      this.lastMessageAt = Date.now();
+      this.startWatchdog();
       // Re-subscribe everything
       const streams: string[] = [];
       this.klineSubs.forEach((s) => {
@@ -86,6 +91,7 @@ export class BinanceWS {
     };
 
     this.ws.onmessage = (ev) => {
+      this.lastMessageAt = Date.now();
       try {
         const msg = JSON.parse(ev.data) as WSMsg | { result: unknown; id: number };
         if ("stream" in msg) this.dispatch(msg);
@@ -103,6 +109,51 @@ export class BinanceWS {
     this.ws.onerror = () => {
       this.ws?.close();
     };
+  }
+
+  /**
+   * Si la pestaña estuvo en segundo plano, el navegador frena los timers y
+   * el socket puede quedar abierto pero sin recibir nada. Cada 20 s se
+   * comprueba y, si hay suscripciones y no llega nada hace 45 s, se fuerza
+   * la reconexión.
+   */
+  private startWatchdog() {
+    if (this.watchdog) return;
+    this.watchdog = setInterval(() => {
+      if (this.closing) return;
+      const haySubs = this.klineSubs.size > 0 || this.tickerSubs.size > 0;
+      if (!haySubs) return;
+      if (Date.now() - this.lastMessageAt > 45_000) this.reconnectNow();
+    }, 20_000);
+  }
+
+  /** Tira la conexión actual y reconecta enseguida (re-suscribe todo). */
+  reconnectNow() {
+    if (this.closing) return;
+    this.reconnectAttempts = 0;
+    const old = this.ws;
+    this.ws = null;
+    this.connected = false;
+    if (old) {
+      old.onclose = null;
+      old.onerror = null;
+      try {
+        old.close();
+      } catch {
+        // ya estaba cerrado
+      }
+    }
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.connect();
+  }
+
+  /** Segundos desde el último dato recibido (Infinity si nunca llegó nada). */
+  secondsSinceLastMessage(): number {
+    if (this.lastMessageAt === 0) return Infinity;
+    return (Date.now() - this.lastMessageAt) / 1000;
   }
 
   private scheduleReconnect() {
@@ -175,6 +226,10 @@ export class BinanceWS {
 
   close() {
     this.closing = true;
+    if (this.watchdog) {
+      clearInterval(this.watchdog);
+      this.watchdog = null;
+    }
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.ws?.close();
     this.ws = null;
@@ -201,4 +256,10 @@ export function getBinanceFuturesWS(): BinanceWS {
     futuresSingleton.connect();
   }
   return futuresSingleton;
+}
+
+/** Fuerza la reconexión de todas las conexiones vivas (spot y futuros). */
+export function reconnectAllBinanceWS(): void {
+  spotSingleton?.reconnectNow();
+  futuresSingleton?.reconnectNow();
 }

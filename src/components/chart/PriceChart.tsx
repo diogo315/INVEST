@@ -48,6 +48,8 @@ import {
   type MaType,
 } from "@/lib/indicators";
 import type { Candle, Timeframe } from "@/lib/binance/types";
+import { TIMEFRAME_SECONDS } from "@/lib/binance/types";
+import { reconnectAllBinanceWS } from "@/lib/binance/ws";
 import {
   INDICATOR_COLORS,
   useChartStore,
@@ -279,6 +281,9 @@ export function PriceChart({ symbol, timeframe }: Props) {
   const removeIndicator = useChartStore((s) => s.removeIndicator);
   const toggleHidden = useChartStore((s) => s.toggleHidden);
   const setSettingsTarget = useChartStore((s) => s.setSettingsTarget);
+  const refreshNonce = useChartStore((s) => s.refreshNonce);
+  const refreshChart = useChartStore((s) => s.refreshChart);
+  const setChartLoading = useChartStore((s) => s.setChartLoading);
 
   // Refs to avoid recreating subscribeClick on every tool change
   const toolRef = useRef(tool);
@@ -2629,6 +2634,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
     }
 
     async function load() {
+      setChartLoading(true);
       try {
         const { adapter, symbol: rawSymbol } = getAdapter(symbol);
 
@@ -2717,6 +2723,8 @@ export function PriceChart({ symbol, timeframe }: Props) {
         });
       } catch (e) {
         console.error("Failed to load chart data:", e);
+      } finally {
+        if (!cancelled) setChartLoading(false);
       }
     }
 
@@ -2727,7 +2735,32 @@ export function PriceChart({ symbol, timeframe }: Props) {
       if (unsub) unsub();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol, timeframe]);
+  }, [symbol, timeframe, refreshNonce]);
+
+  // Recuperación automática: al volver a la pestaña (o al recuperar la red)
+  // el navegador pudo haber frenado el WebSocket y quedan velas sin llegar.
+  // Si el último dato está viejo para la temporalidad, se recarga solo.
+  useEffect(() => {
+    const stale = () => {
+      const arr = candlesRef.current;
+      if (arr.length === 0) return true;
+      const step = TIMEFRAME_SECONDS[timeframe] ?? 900;
+      const edad = Date.now() / 1000 - arr[arr.length - 1].time;
+      return edad > step * 1.5;
+    };
+    const revisar = () => {
+      if (document.visibilityState !== "visible") return;
+      reconnectAllBinanceWS();
+      if (stale()) refreshChart();
+    };
+    document.addEventListener("visibilitychange", revisar);
+    window.addEventListener("online", revisar);
+    return () => {
+      document.removeEventListener("visibilitychange", revisar);
+      window.removeEventListener("online", revisar);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeframe]);
 
   const greenOrRed = (n: number) =>
     n >= 0 ? "text-tv-green" : "text-tv-red";

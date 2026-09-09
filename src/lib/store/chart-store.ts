@@ -295,6 +295,10 @@ interface ChartState {
   tool: DrawingTool;
   priceLines: PriceLine[];
   symbolDialogOpen: boolean;
+  /** Se incrementa para forzar una recarga de datos del chart. */
+  refreshNonce: number;
+  /** El chart está pidiendo datos (para el spinner del botón). */
+  chartLoading: boolean;
   /** Which indicator's settings dialog is open (null = closed) */
   settingsTarget: IndicatorKey | null;
 
@@ -312,6 +316,8 @@ interface ChartState {
   clearPriceLines: (symbol?: string) => void;
   setSymbolDialogOpen: (v: boolean) => void;
   toggleWatchlistCollapsed: () => void;
+  refreshChart: () => void;
+  setChartLoading: (v: boolean) => void;
   setSettingsTarget: (k: IndicatorKey | null) => void;
 }
 
@@ -355,6 +361,8 @@ export const useChartStore = create<ChartState>()(
       tool: "cursor",
       priceLines: [],
       symbolDialogOpen: false,
+      refreshNonce: 0,
+      chartLoading: false,
       settingsTarget: null,
 
       setSymbol: (symbol) => set({ symbol: migrateSymbol(symbol) }),
@@ -416,6 +424,8 @@ export const useChartStore = create<ChartState>()(
       setSymbolDialogOpen: (symbolDialogOpen) => set({ symbolDialogOpen }),
       toggleWatchlistCollapsed: () =>
         set((s) => ({ watchlistCollapsed: !s.watchlistCollapsed })),
+      refreshChart: () => set((s) => ({ refreshNonce: s.refreshNonce + 1 })),
+      setChartLoading: (chartLoading) => set({ chartLoading }),
       setSettingsTarget: (settingsTarget) => set({ settingsTarget }),
     }),
     {
