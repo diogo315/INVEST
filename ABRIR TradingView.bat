@@ -10,7 +10,7 @@ REM que no estan en GitHub, la web sigue mostrando la version vieja.
 git rev-parse --git-dir >nul 2>&1
 if not errorlevel 1 (
   git fetch origin >nul 2>&1
-  for /f %%i in ('git rev-list --count origin/main..HEAD 2^>nul') do set PEND=%%i
+  for /f %%i in ('git rev-list --count origin/master..HEAD 2^>nul') do set PEND=%%i
   if "!PEND!"=="" set PEND=0
   if not "!PEND!"=="0" (
     echo ============================================
@@ -18,11 +18,12 @@ if not errorlevel 1 (
     echo   invest-topaz-one.vercel.app sigue mostrando
     echo   la version anterior hasta que los subas.
     echo ============================================
-    git log --oneline origin/main..HEAD
+    git log --oneline origin/master..HEAD
     echo.
     set /p PUB="Publicarlos ahora en Vercel? (S/N): "
     if /i "!PUB!"=="S" (
       git push origin main
+      git push origin HEAD:master
       if errorlevel 1 (
         echo.
         echo El push fallo. Segui igual con la app local.

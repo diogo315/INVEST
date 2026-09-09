@@ -18,39 +18,40 @@ if errorlevel 1 (
 echo Consultando GitHub...
 git fetch origin >nul 2>&1
 
-for /f %%i in ('git rev-list --count origin/main..HEAD 2^>nul') do set PEND=%%i
+REM ---------------------------------------------------------------
+REM OJO: la rama de produccion de este repo es MASTER, no main.
+REM Vercel despliega la rama por defecto de GitHub, que es master.
+REM Pushear solo a main NO actualiza la web. Por eso se empujan las
+REM dos: main (donde se trabaja) y master (la que Vercel publica).
+REM ---------------------------------------------------------------
+
+for /f %%i in ('git rev-list --count origin/master..HEAD 2^>nul') do set PEND=%%i
 if "%PEND%"=="" set PEND=0
 
 if "%PEND%"=="0" (
   echo.
-  echo No hay commits pendientes. Vercel ya tiene la ultima version.
+  echo No hay nada pendiente. Vercel ya tiene la ultima version.
   echo   https://invest-topaz-one.vercel.app
-  echo.
-  git status --porcelain >nul 2>&1
-  echo Si hiciste cambios y no los ves aca, es que faltan commitear.
   echo.
   pause
   exit /b 0
 )
 
 echo.
-echo Commits pendientes de publicar: %PEND%
+echo Commits que le faltan a la web: %PEND%
 echo --------------------------------------------
-git log --oneline origin/main..HEAD
+git log --oneline origin/master..HEAD
 echo --------------------------------------------
 echo.
 
+echo Subiendo a main...
 git push origin main
-if errorlevel 1 (
-  echo.
-  echo EL PUSH FALLO. Revisa el error de arriba.
-  echo Si pide usuario y clave, abri GitHub Desktop una vez para
-  echo guardar las credenciales, o corre:
-  echo   git config --global credential.helper manager
-  echo.
-  pause
-  exit /b 1
-)
+if errorlevel 1 goto FALLO
+
+echo.
+echo Subiendo a master (esta es la que despliega Vercel)...
+git push origin HEAD:master
+if errorlevel 1 goto FALLO
 
 echo.
 echo ============================================
@@ -63,3 +64,14 @@ echo   https://vercel.com/diogo3155-6639s-projects/invest
 echo ============================================
 echo.
 pause
+exit /b 0
+
+:FALLO
+echo.
+echo EL PUSH FALLO. Revisa el error de arriba.
+echo Si pide usuario y clave, abri GitHub Desktop una vez para
+echo guardar las credenciales, o corre:
+echo   git config --global credential.helper manager
+echo.
+pause
+exit /b 1
