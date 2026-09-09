@@ -294,6 +294,223 @@ export function rsi(candles: Candle[], period = 14): IndicatorPoint[] {
  * MACD — fast EMA, slow EMA, signal EMA of the MACD line.
  * Defaults: 12 / 26 / 9.
  */
+/** Tipos de media para el suavizado del RSI (Pine: maTypeInput). */
+export type MaType =
+  | "None"
+  | "SMA"
+  | "SMA + Bollinger Bands"
+  | "EMA"
+  | "SMMA (RMA)"
+  | "WMA"
+  | "VWMA";
+
+/** SMA sobre una serie de puntos ya calculada (no sobre velas). */
+function smaPoints(pts: IndicatorPoint[], period: number): IndicatorPoint[] {
+  const out: IndicatorPoint[] = [];
+  if (period < 1 || pts.length < period) return out;
+  let sum = 0;
+  for (let i = 0; i < pts.length; i++) {
+    sum += pts[i].value;
+    if (i >= period) sum -= pts[i - period].value;
+    if (i >= period - 1) out.push({ time: pts[i].time, value: sum / period });
+  }
+  return out;
+}
+
+/**
+ * Media móvil sobre una serie de puntos, con los tipos que ofrece el RSI de
+ * TradingView. `volumes` solo hace falta para VWMA.
+ */
+export function maOverPoints(
+  pts: IndicatorPoint[],
+  period: number,
+  type: MaType,
+  volumes?: Map<number, number>,
+): IndicatorPoint[] {
+  if (type === "None" || pts.length === 0 || period < 1) return [];
+  if (type === "SMA" || type === "SMA + Bollinger Bands")
+    return smaPoints(pts, period);
+
+  if (type === "EMA" || type === "SMMA (RMA)") {
+    // EMA: k = 2/(n+1). RMA (SMMA de Wilder): k = 1/n. Ambas se siembran
+    // con la SMA de los primeros n valores, como hace Pine.
+    const k = type === "EMA" ? 2 / (period + 1) : 1 / period;
+    if (pts.length < period) return [];
+    let seed = 0;
+    for (let i = 0; i < period; i++) seed += pts[i].value;
+    let prev = seed / period;
+    const out: IndicatorPoint[] = [
+      { time: pts[period - 1].time, value: prev },
+    ];
+    for (let i = period; i < pts.length; i++) {
+      prev = pts[i].value * k + prev * (1 - k);
+      out.push({ time: pts[i].time, value: prev });
+    }
+    return out;
+  }
+
+  if (type === "WMA") {
+    const out: IndicatorPoint[] = [];
+    const denom = (period * (period + 1)) / 2;
+    for (let i = period - 1; i < pts.length; i++) {
+      let acc = 0;
+      for (let j = 0; j < period; j++) acc += pts[i - period + 1 + j].value * (j + 1);
+      out.push({ time: pts[i].time, value: acc / denom });
+    }
+    return out;
+  }
+
+  // VWMA
+  const out: IndicatorPoint[] = [];
+  for (let i = period - 1; i < pts.length; i++) {
+    let num = 0;
+    let den = 0;
+    for (let j = i - period + 1; j <= i; j++) {
+      const v = volumes?.get(pts[j].time) ?? 0;
+      num += pts[j].value * v;
+      den += v;
+    }
+    out.push({
+      time: pts[i].time,
+      value: den === 0 ? pts[i].value : num / den,
+    });
+  }
+  return out;
+}
+
+/** Desviación estándar móvil sobre una serie de puntos (Pine: ta.stdev). */
+export function stdevPoints(
+  pts: IndicatorPoint[],
+  period: number,
+): IndicatorPoint[] {
+  const out: IndicatorPoint[] = [];
+  if (period < 1 || pts.length < period) return out;
+  for (let i = period - 1; i < pts.length; i++) {
+    let sum = 0;
+    for (let j = i - period + 1; j <= i; j++) sum += pts[j].value;
+    const mean = sum / period;
+    let acc = 0;
+    for (let j = i - period + 1; j <= i; j++) {
+      const d = pts[j].value - mean;
+      acc += d * d;
+    }
+    out.push({ time: pts[i].time, value: Math.sqrt(acc / period) });
+  }
+  return out;
+}
+
+export interface RsiDivergence {
+  kind: "bull" | "bear";
+  fromTime: number;
+  fromValue: number;
+  toTime: number;
+  toValue: number;
+}
+
+/**
+ * Divergencias regulares del RSI de TradingView (Pine v6).
+ *
+ * Pivote: `ta.pivotlow/pivothigh(rsi, 5, 5)` — un máximo/mínimo local con 5
+ * velas a cada lado. Se confirma 5 velas después, por eso el Pine dibuja con
+ * `offset = -lookbackRight`.
+ *
+ * Alcista regular: precio hace mínimo más bajo y el RSI mínimo más alto.
+ * Bajista regular: precio hace máximo más alto y el RSI máximo más bajo.
+ *
+ * `_inRange` exige que entre un pivote y el anterior haya entre `rangeLower`
+ * y `rangeUpper` velas: divergencias demasiado juntas o demasiado separadas
+ * no cuentan.
+ */
+export function rsiDivergences(
+  rsiPts: IndicatorPoint[],
+  candles: Candle[],
+  lookbackLeft = 5,
+  lookbackRight = 5,
+  rangeLower = 5,
+  rangeUpper = 60,
+): RsiDivergence[] {
+  const out: RsiDivergence[] = [];
+  const n = rsiPts.length;
+  if (n < lookbackLeft + lookbackRight + 2) return out;
+
+  const highByTime = new Map<number, number>();
+  const lowByTime = new Map<number, number>();
+  for (const c of candles) {
+    highByTime.set(c.time, c.high);
+    lowByTime.set(c.time, c.low);
+  }
+
+  const isPivotLow = (i: number): boolean => {
+    const v = rsiPts[i].value;
+    for (let j = i - lookbackLeft; j < i; j++) if (rsiPts[j].value <= v) return false;
+    for (let j = i + 1; j <= i + lookbackRight; j++) if (rsiPts[j].value < v) return false;
+    return true;
+  };
+  const isPivotHigh = (i: number): boolean => {
+    const v = rsiPts[i].value;
+    for (let j = i - lookbackLeft; j < i; j++) if (rsiPts[j].value >= v) return false;
+    for (let j = i + 1; j <= i + lookbackRight; j++) if (rsiPts[j].value > v) return false;
+    return true;
+  };
+
+  let prevLow: { i: number; time: number; rsi: number; price: number } | null = null;
+  let prevHigh: { i: number; time: number; rsi: number; price: number } | null = null;
+
+  for (let i = lookbackLeft; i < n - lookbackRight; i++) {
+    const t = rsiPts[i].time;
+    const rsiVal = rsiPts[i].value;
+
+    if (isPivotLow(i)) {
+      const priceLow = lowByTime.get(t);
+      if (priceLow !== undefined) {
+        if (prevLow) {
+          const gap = i - prevLow.i;
+          if (
+            gap >= rangeLower &&
+            gap <= rangeUpper &&
+            rsiVal > prevLow.rsi &&
+            priceLow < prevLow.price
+          ) {
+            out.push({
+              kind: "bull",
+              fromTime: prevLow.time,
+              fromValue: prevLow.rsi,
+              toTime: t,
+              toValue: rsiVal,
+            });
+          }
+        }
+        prevLow = { i, time: t, rsi: rsiVal, price: priceLow };
+      }
+    }
+
+    if (isPivotHigh(i)) {
+      const priceHigh = highByTime.get(t);
+      if (priceHigh !== undefined) {
+        if (prevHigh) {
+          const gap = i - prevHigh.i;
+          if (
+            gap >= rangeLower &&
+            gap <= rangeUpper &&
+            rsiVal < prevHigh.rsi &&
+            priceHigh > prevHigh.price
+          ) {
+            out.push({
+              kind: "bear",
+              fromTime: prevHigh.time,
+              fromValue: prevHigh.rsi,
+              toTime: t,
+              toValue: rsiVal,
+            });
+          }
+        }
+        prevHigh = { i, time: t, rsi: rsiVal, price: priceHigh };
+      }
+    }
+  }
+  return out;
+}
+
 export function macd(
   candles: Candle[],
   fast = 12,

@@ -86,6 +86,8 @@ function SettingsForm({ target, config, onApply, onSave, onReset }: FormProps) {
     ema50: config.ema50,
     ema200: config.ema200,
     rsi: config.rsi,
+    rsiMaLength: config.rsiMaLength,
+    rsiBbMult: config.rsiBbMult,
     macdFast: config.macdFast,
     macdSlow: config.macdSlow,
     macdSignal: config.macdSignal,
@@ -121,6 +123,8 @@ function SettingsForm({ target, config, onApply, onSave, onReset }: FormProps) {
       ema50: config.ema50,
       ema200: config.ema200,
       rsi: config.rsi,
+      rsiMaLength: config.rsiMaLength,
+      rsiBbMult: config.rsiBbMult,
       macdFast: config.macdFast,
       macdSlow: config.macdSlow,
       macdSignal: config.macdSignal,
@@ -155,7 +159,12 @@ function SettingsForm({ target, config, onApply, onSave, onReset }: FormProps) {
     if (target === "ema20") onSave({ ema20: clamp(draft.ema20, 2, 500) });
     else if (target === "ema50") onSave({ ema50: clamp(draft.ema50, 2, 500) });
     else if (target === "ema200") onSave({ ema200: clamp(draft.ema200, 2, 500) });
-    else if (target === "rsi") onSave({ rsi: clamp(draft.rsi, 2, 100) });
+    else if (target === "rsi")
+      onSave({
+        rsi: clamp(draft.rsi, 2, 100),
+        rsiMaLength: clamp(draft.rsiMaLength, 1, 500),
+        rsiBbMult: clampF(draft.rsiBbMult, 0.001, 50),
+      });
     else if (target === "macd")
       onSave({
         macdFast: clamp(draft.macdFast, 2, 100),
@@ -214,11 +223,80 @@ function SettingsForm({ target, config, onApply, onSave, onReset }: FormProps) {
         />
       )}
       {target === "rsi" && (
-        <Field
-          label="Período"
-          value={draft.rsi}
-          onChange={(n) => setDraft((d) => ({ ...d, rsi: n }))}
-        />
+        <div className="flex max-h-[60vh] flex-col gap-3 overflow-y-auto pr-2">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-tv-text-dim">
+            Configuración de RSI
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Field
+              label="Longitud de RSI"
+              value={draft.rsi}
+              min={1}
+              max={100}
+              onChange={(n) => setDraft((d) => ({ ...d, rsi: n }))}
+            />
+            <PlainSelect
+              label="Fuente"
+              value={config.rsiSource}
+              options={[
+                ["close", "close"],
+                ["open", "open"],
+                ["high", "high"],
+                ["low", "low"],
+                ["hl2", "hl2"],
+                ["hlc3", "hlc3"],
+                ["ohlc4", "ohlc4"],
+              ]}
+              onChange={(v) => onApply({ rsiSource: v })}
+            />
+          </div>
+          <Toggle
+            label="Calcular divergencia"
+            checked={config.rsiCalcDivergence}
+            onChange={(v) => onApply({ rsiCalcDivergence: v })}
+          />
+
+          <div className="border-t border-tv-border pt-3 text-[10px] font-semibold uppercase tracking-wider text-tv-text-dim">
+            Suavizado
+          </div>
+          <PlainSelect
+            label="Tipo"
+            value={config.rsiMaType}
+            options={[
+              ["None", "Ninguno"],
+              ["SMA", "SMA"],
+              ["SMA + Bollinger Bands", "SMA + Bandas de Bollinger"],
+              ["EMA", "EMA"],
+              ["SMMA (RMA)", "SMMA (RMA)"],
+              ["WMA", "WMA"],
+              ["VWMA", "VWMA"],
+            ]}
+            onChange={(v) => onApply({ rsiMaType: v })}
+          />
+          <div className="grid grid-cols-2 gap-2">
+            <Field
+              label="Longitud"
+              value={draft.rsiMaLength}
+              min={1}
+              max={500}
+              onChange={(n) => setDraft((d) => ({ ...d, rsiMaLength: n }))}
+            />
+            <FloatField
+              label="Desv. est. BB"
+              value={draft.rsiBbMult}
+              min={0.001}
+              max={50}
+              step={0.5}
+              onChange={(n) => setDraft((d) => ({ ...d, rsiBbMult: n }))}
+            />
+          </div>
+          <p className="text-[11px] leading-relaxed text-tv-text-muted">
+            «Desv. est. BB» solo aplica con «SMA + Bandas de Bollinger»:
+            determina la distancia entre la SMA y las bandas. Las divergencias
+            regulares usan pivotes de 5 velas a cada lado y separación de entre
+            5 y 60 velas, igual que el Pine.
+          </p>
+        </div>
       )}
       {target === "macd" && (
         <div className="grid grid-cols-3 gap-2">

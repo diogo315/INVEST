@@ -31,6 +31,12 @@ export interface IndicatorConfig {
   ema50: number;
   ema200: number;
   rsi: number;
+  // RSI — resto de entradas del indicador estándar de TradingView
+  rsiSource: string; // close | open | high | low | hl2 | hlc3 | ohlc4
+  rsiCalcDivergence: boolean;
+  rsiMaType: string; // None | SMA | SMA + Bollinger Bands | EMA | SMMA (RMA) | WMA | VWMA
+  rsiMaLength: number;
+  rsiBbMult: number;
   macdFast: number;
   macdSlow: number;
   macdSignal: number;
@@ -136,6 +142,11 @@ export const DEFAULT_CONFIG: IndicatorConfig = {
   ema50: 50,
   ema200: 200,
   rsi: 14,
+  rsiSource: "close",
+  rsiCalcDivergence: true,
+  rsiMaType: "SMA",
+  rsiMaLength: 14,
+  rsiBbMult: 2,
   macdFast: 12,
   macdSlow: 26,
   macdSignal: 9,

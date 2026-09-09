@@ -20,11 +20,15 @@ import {
 } from "lightweight-charts";
 import { fetchKlinesCached } from "@/lib/binance/multi-tf";
 import { readCandleCache, writeCandleCache } from "@/lib/binance/candle-cache";
-import { BandFill } from "@/lib/chart/band-fill";
+import { BandFill, ZoneGradientFill } from "@/lib/chart/band-fill";
+import { SegmentsOverlay } from "@/lib/chart/segments";
 import { getAdapter, parseSymbol } from "@/lib/exchanges";
 import {
   ema,
   rsi,
+  rsiDivergences,
+  maOverPoints,
+  stdevPoints,
   macd,
   bollinger,
   stochastic,
@@ -41,6 +45,7 @@ import {
   type VwapAnchor,
   type VwapBandsMode,
   type VwapSource,
+  type MaType,
 } from "@/lib/indicators";
 import type { Candle, Timeframe } from "@/lib/binance/types";
 import {
@@ -104,6 +109,16 @@ const VWAP_FILL_COLORS = [
 // "1D o superior" del Pine (timeframe.isdwm): diario, semanal, mensual.
 const DWM_TIMEFRAMES = new Set(["1d", "3d", "1w", "1M"]);
 
+// Colores del RSI estándar de TradingView (Pine v6)
+const RSI_COLORS = {
+  ma: "#ffeb3b", // color.yellow
+  bb: "#4caf50", // color.green
+  bbFill: "rgba(76, 175, 80, 0.10)",
+  bgFill: "rgba(126, 87, 194, 0.10)", // color.rgb(126, 87, 194, 90)
+  bull: "#4caf50",
+  bear: "#f23645",
+};
+
 const VWAP_ANCHOR_LABELS: Record<string, string> = {
   session: "Sesión",
   week: "Semana",
@@ -164,6 +179,20 @@ export function PriceChart({ symbol, timeframe }: Props) {
   const rsiRef = useRef<ISeriesApi<"Line"> | null>(null);
   const rsi30Ref = useRef<ISeriesApi<"Line"> | null>(null);
   const rsi70Ref = useRef<ISeriesApi<"Line"> | null>(null);
+  const rsi50Ref = useRef<ISeriesApi<"Line"> | null>(null);
+  const rsiMaRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const rsiBbUpRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const rsiBbLoRef = useRef<ISeriesApi<"Line"> | null>(null);
+  // Primitives del pane de RSI: fondo 70-30, degradados de sobrecompra /
+  // sobreventa, relleno de las Bollinger y los marcadores Bull / Bear.
+  const rsiFillsRef = useRef<{
+    bg: BandFill | null;
+    ob: ZoneGradientFill | null;
+    os: ZoneGradientFill | null;
+    bb: BandFill | null;
+    divs: SegmentsOverlay | null;
+    markers: ISeriesMarkersPluginApi<Time> | null;
+  }>({ bg: null, ob: null, os: null, bb: null, divs: null, markers: null });
   const macdRef = useRef<ISeriesApi<"Line"> | null>(null);
   const macdSignalRef = useRef<ISeriesApi<"Line"> | null>(null);
   const macdHistRef = useRef<ISeriesApi<"Histogram"> | null>(null);
@@ -298,6 +327,26 @@ export function PriceChart({ symbol, timeframe }: Props) {
       updateStochRsi();
       updateCipher();
     }, 1000);
+  }
+
+  // Fuente configurable de un indicador (Pine: input.source)
+  function candleSource(k: Candle, src: string): number {
+    switch (src) {
+      case "open":
+        return k.open;
+      case "high":
+        return k.high;
+      case "low":
+        return k.low;
+      case "hl2":
+        return (k.high + k.low) / 2;
+      case "hlc3":
+        return (k.high + k.low + k.close) / 3;
+      case "ohlc4":
+        return (k.open + k.high + k.low + k.close) / 4;
+      default:
+        return k.close;
+    }
   }
 
   // Create chart once
@@ -540,6 +589,18 @@ export function PriceChart({ symbol, timeframe }: Props) {
       rsiRef.current = null;
       rsi30Ref.current = null;
       rsi70Ref.current = null;
+      rsi50Ref.current = null;
+      rsiMaRef.current = null;
+      rsiBbUpRef.current = null;
+      rsiBbLoRef.current = null;
+      rsiFillsRef.current = {
+        bg: null,
+        ob: null,
+        os: null,
+        bb: null,
+        divs: null,
+        markers: null,
+      };
       macdRef.current = null;
       macdSignalRef.current = null;
       macdHistRef.current = null;
@@ -641,6 +702,12 @@ export function PriceChart({ symbol, timeframe }: Props) {
           lineWidth: 1,
           priceLineVisible: false,
           lastValueVisible: false,
+          // El RSI vive entre 0 y 100: fijamos la escala del pane para que
+          // las bandas 70/30 queden siempre en el mismo lugar, como en
+          // TradingView. Las demás series del pane no aportan a la escala.
+          autoscaleInfoProvider: () => ({
+            priceRange: { minValue: 0, maxValue: 100 },
+          }),
         },
         paneIndex,
       );
@@ -652,6 +719,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
           lineStyle: 2,
           priceLineVisible: false,
           lastValueVisible: false,
+          autoscaleInfoProvider: () => null,
         },
         paneIndex,
       );
@@ -663,24 +731,126 @@ export function PriceChart({ symbol, timeframe }: Props) {
           lineStyle: 2,
           priceLineVisible: false,
           lastValueVisible: false,
+          autoscaleInfoProvider: () => null,
         },
         paneIndex,
       );
+      // Línea media 50, más tenue que las bandas (Pine: color.new(#787B86, 50))
+      const r50 = chartRef.current.addSeries(
+        LineSeries,
+        {
+          color: "#787B8680",
+          lineWidth: 1,
+          lineStyle: 2,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          autoscaleInfoProvider: () => null,
+        },
+        paneIndex,
+      );
+      // MA de suavizado del RSI (Pine: "RSI-based MA", amarilla)
+      const rma = chartRef.current.addSeries(
+        LineSeries,
+        {
+          color: RSI_COLORS.ma,
+          lineWidth: 1,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          autoscaleInfoProvider: () => null,
+        },
+        paneIndex,
+      );
+      const mkBb = () =>
+        chartRef.current!.addSeries(
+          LineSeries,
+          {
+            color: RSI_COLORS.bb,
+            lineWidth: 1,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            visible: false,
+            autoscaleInfoProvider: () => null,
+          },
+          paneIndex,
+        );
+      const bbUp = mkBb();
+      const bbLo = mkBb();
       rsiRef.current = r;
       rsi30Ref.current = r30;
       rsi70Ref.current = r70;
+      rsi50Ref.current = r50;
+      rsiMaRef.current = rma;
+      rsiBbUpRef.current = bbUp;
+      rsiBbLoRef.current = bbLo;
+
+      // Fondo entre 70 y 30, degradados de sobrecompra/sobreventa y
+      // relleno de las Bollinger.
+      const bg = new BandFill(chartRef.current, r, RSI_COLORS.bgFill);
+      r.attachPrimitive(bg);
+      const ob = new ZoneGradientFill(
+        chartRef.current,
+        r,
+        50,
+        100,
+        "rgba(76, 175, 80, 1)",
+        70,
+        "rgba(76, 175, 80, 0)",
+      );
+      r.attachPrimitive(ob);
+      const os = new ZoneGradientFill(
+        chartRef.current,
+        r,
+        50,
+        30,
+        "rgba(242, 54, 69, 0)",
+        0,
+        "rgba(242, 54, 69, 1)",
+      );
+      r.attachPrimitive(os);
+      const bbFill = new BandFill(chartRef.current, bbUp, RSI_COLORS.bbFill);
+      bbFill.setVisible(false);
+      bbUp.attachPrimitive(bbFill);
+      const divOverlay = new SegmentsOverlay(chartRef.current, r, 2);
+      r.attachPrimitive(divOverlay);
+      rsiFillsRef.current = {
+        bg,
+        ob,
+        os,
+        bb: bbFill,
+        divs: divOverlay,
+        markers: createSeriesMarkers(r, []),
+      };
+
       try {
         chartRef.current.panes()[1]?.setStretchFactor(1);
         chartRef.current.panes()[0]?.setStretchFactor(3);
       } catch {}
       updateRSI();
     } else if (!indicators.rsi && rsiRef.current && chartRef.current) {
-      chartRef.current.removeSeries(rsiRef.current);
-      if (rsi30Ref.current) chartRef.current.removeSeries(rsi30Ref.current);
-      if (rsi70Ref.current) chartRef.current.removeSeries(rsi70Ref.current);
-      rsiRef.current = null;
-      rsi30Ref.current = null;
-      rsi70Ref.current = null;
+      for (const ref of [
+        rsiRef,
+        rsi30Ref,
+        rsi70Ref,
+        rsi50Ref,
+        rsiMaRef,
+        rsiBbUpRef,
+        rsiBbLoRef,
+      ]) {
+        if (ref.current) {
+          try {
+            chartRef.current.removeSeries(ref.current);
+          } catch {}
+          ref.current = null;
+        }
+      }
+      rsiFillsRef.current = {
+        bg: null,
+        ob: null,
+        os: null,
+        bb: null,
+        divs: null,
+        markers: null,
+      };
     }
     requestAnimationFrame(() => recomputePaneOffsets());
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1297,6 +1467,18 @@ export function PriceChart({ symbol, timeframe }: Props) {
   }, [config.stochK, config.stochD, config.stochSmooth]);
 
   useEffect(() => {
+    updateRSI();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    config.rsi,
+    config.rsiSource,
+    config.rsiCalcDivergence,
+    config.rsiMaType,
+    config.rsiMaLength,
+    config.rsiBbMult,
+  ]);
+
+  useEffect(() => {
     updateStochRsi();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config.srsiK, config.srsiD, config.srsiRsiLen, config.srsiStochLen]);
@@ -1522,21 +1704,110 @@ export function PriceChart({ symbol, timeframe }: Props) {
     const c = candlesRef.current;
     if (c.length === 0 || !rsiRef.current) return;
     const cfg = configRef.current;
-    const data = rsi(c, cfg.rsi).map((p) => ({
+
+    // Pine: input.source(close) — el RSI puede calcularse sobre otra fuente.
+    const srcCandles =
+      cfg.rsiSource === "close"
+        ? c
+        : c.map((k) => ({ ...k, close: candleSource(k, cfg.rsiSource) }));
+    const raw = rsi(srcCandles, cfg.rsi);
+    const data = raw.map((p) => ({
       time: p.time as UTCTimestamp,
       value: p.value,
     }));
     rsiRef.current.setData(data);
-    if (rsi30Ref.current && data.length > 0)
-      rsi30Ref.current.setData([
-        { time: data[0].time, value: 30 },
-        { time: data[data.length - 1].time, value: 30 },
-      ]);
-    if (rsi70Ref.current && data.length > 0)
-      rsi70Ref.current.setData([
-        { time: data[0].time, value: 70 },
-        { time: data[data.length - 1].time, value: 70 },
-      ]);
+
+    const first = data[0]?.time;
+    const last = data[data.length - 1]?.time;
+    const level = (v: number) =>
+      first !== undefined && last !== undefined
+        ? [
+            { time: first, value: v },
+            { time: last, value: v },
+          ]
+        : [];
+    rsi30Ref.current?.setData(level(30));
+    rsi70Ref.current?.setData(level(70));
+    rsi50Ref.current?.setData(level(50));
+
+    // Fondo entre las bandas 70 y 30 + degradados de sobrecompra/sobreventa
+    rsiFillsRef.current.bg?.setData(
+      raw.map((p) => ({ time: p.time, upper: 70, lower: 30 })),
+    );
+    const zone = raw.map((p) => ({ time: p.time, value: p.value }));
+    rsiFillsRef.current.ob?.setData(zone);
+    rsiFillsRef.current.os?.setData(zone);
+
+    // MA de suavizado (+ Bollinger cuando corresponde)
+    const maType = cfg.rsiMaType as MaType;
+    const isBB = maType === "SMA + Bollinger Bands";
+    if (maType === "None") {
+      rsiMaRef.current?.setData([]);
+      rsiMaRef.current?.applyOptions({ visible: false });
+    } else {
+      const volumes = new Map(c.map((k) => [k.time, k.volume]));
+      const ma = maOverPoints(raw, cfg.rsiMaLength, maType, volumes);
+      rsiMaRef.current?.applyOptions({ visible: true });
+      rsiMaRef.current?.setData(
+        ma.map((p) => ({ time: p.time as UTCTimestamp, value: p.value })),
+      );
+      if (isBB) {
+        const sd = stdevPoints(raw, cfg.rsiMaLength);
+        const sdByTime = new Map(sd.map((p) => [p.time, p.value]));
+        const up = ma.map((p) => ({
+          time: p.time as UTCTimestamp,
+          value: p.value + (sdByTime.get(p.time) ?? 0) * cfg.rsiBbMult,
+        }));
+        const lo = ma.map((p) => ({
+          time: p.time as UTCTimestamp,
+          value: p.value - (sdByTime.get(p.time) ?? 0) * cfg.rsiBbMult,
+        }));
+        rsiBbUpRef.current?.setData(up);
+        rsiBbLoRef.current?.setData(lo);
+        rsiFillsRef.current.bb?.setData(
+          ma.map((p) => ({
+            time: p.time,
+            upper: p.value + (sdByTime.get(p.time) ?? 0) * cfg.rsiBbMult,
+            lower: p.value - (sdByTime.get(p.time) ?? 0) * cfg.rsiBbMult,
+          })),
+        );
+      } else {
+        rsiBbUpRef.current?.setData([]);
+        rsiBbLoRef.current?.setData([]);
+        rsiFillsRef.current.bb?.setData([]);
+      }
+    }
+    rsiBbUpRef.current?.applyOptions({ visible: isBB });
+    rsiBbLoRef.current?.applyOptions({ visible: isBB });
+    rsiFillsRef.current.bb?.setVisible(isBB);
+
+    // Divergencias regulares + etiquetas Bull / Bear
+    if (!cfg.rsiCalcDivergence) {
+      rsiFillsRef.current.divs?.setData([]);
+      rsiFillsRef.current.markers?.setMarkers([]);
+    } else {
+      const divs = rsiDivergences(raw, c);
+      // Una serie por tipo, con whitespace entre segmentos para cortarlos.
+      rsiFillsRef.current.divs?.setData(
+        divs.map((d) => ({
+          fromTime: d.fromTime,
+          fromValue: d.fromValue,
+          toTime: d.toTime,
+          toValue: d.toValue,
+          color: d.kind === "bull" ? RSI_COLORS.bull : RSI_COLORS.bear,
+        })),
+      );
+      rsiFillsRef.current.markers?.setMarkers(
+        divs.map((d) => ({
+          time: d.toTime as UTCTimestamp,
+          position: d.kind === "bull" ? "belowBar" : "aboveBar",
+          shape: d.kind === "bull" ? "arrowUp" : "arrowDown",
+          color: d.kind === "bull" ? RSI_COLORS.bull : RSI_COLORS.bear,
+          text: d.kind === "bull" ? "Bull" : "Bear",
+        })),
+      );
+    }
+
     setLastValues((prev) => ({ ...prev, rsi: data.at(-1)?.value }));
   }
 
