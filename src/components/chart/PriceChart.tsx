@@ -21,7 +21,7 @@ import {
 import { fetchKlinesCached } from "@/lib/binance/multi-tf";
 import { readCandleCache, writeCandleCache } from "@/lib/binance/candle-cache";
 import { BandFill, ZoneGradientFill } from "@/lib/chart/band-fill";
-import { SegmentsOverlay } from "@/lib/chart/segments";
+import { SegmentsOverlay, type Segment } from "@/lib/chart/segments";
 import { tickMarkFormatter, timeFormatter } from "@/lib/chart/timezone";
 import { getAdapter, parseSymbol } from "@/lib/exchanges";
 import {
@@ -102,6 +102,28 @@ const TV_COLORS = {
 };
 
 // Colores de las bandas del VWAP — del Pine: green / olive / teal
+/**
+ * Filas de puntos de señal del Cipher B, a altura fija y fuera del rango de la
+ * onda: es lo que en TradingView se ve como los puntitos arriba y abajo del
+ * oscilador. Medidos sobre la captura de TradingView: +106 y −106.
+ */
+const CIPHER_FILA_VENTA = 106;
+const CIPHER_FILA_COMPRA = -106;
+
+/**
+ * Tamaños de los puntos del Cipher B.
+ *
+ * `size: 1` de lightweight-charts NO es un píxel: el radio base sale de
+ * `clamp(barSpacing, 12, 30)`, así que 1 ya da un círculo de ~13 px. En la
+ * captura de TradingView los puntos sobre la onda miden ~8 px, de ahí los
+ * multiplicadores fraccionarios.
+ */
+const PUNTO_CRUCE = 0.6;
+const PUNTO_SENAL = 0.8;
+const PUNTO_DIVERGENCIA = 1;
+const PUNTO_FILA = 0.5;
+const PUNTO_FILA_FUERTE = 1;
+
 const VWAP_BAND_COLORS = ["#4caf50", "#808000", "#008080"] as const;
 // Pine: fill(..., color.new(<color>, 95)) — 95% transparente = alpha 0.05.
 const VWAP_FILL_COLORS = [
@@ -273,20 +295,14 @@ export function PriceChart({ symbol, timeframe }: Props) {
   const cipherZeroRef = useRef<ISeriesApi<"Line"> | null>(null);
   const cipherRsiRef = useRef<ISeriesApi<"Line"> | null>(null);
   const cipherStochFillRef = useRef<ISeriesApi<"Area"> | null>(null);
-  // Divergence series — each one renders multiple discontinuous segments
-  // (gaps via whitespace data points). Naming: <source><kind>DivRef.
-  const wtBearDivRef = useRef<ISeriesApi<"Line"> | null>(null);
-  const wtBullDivRef = useRef<ISeriesApi<"Line"> | null>(null);
-  const wtBearHidDivRef = useRef<ISeriesApi<"Line"> | null>(null);
-  const wtBullHidDivRef = useRef<ISeriesApi<"Line"> | null>(null);
-  const wtBearDiv2Ref = useRef<ISeriesApi<"Line"> | null>(null);
-  const wtBullDiv2Ref = useRef<ISeriesApi<"Line"> | null>(null);
-  const rsiBearDivRef = useRef<ISeriesApi<"Line"> | null>(null);
-  const rsiBullDivRef = useRef<ISeriesApi<"Line"> | null>(null);
-  const rsiBearHidDivRef = useRef<ISeriesApi<"Line"> | null>(null);
-  const rsiBullHidDivRef = useRef<ISeriesApi<"Line"> | null>(null);
-  const stochBearDivRef = useRef<ISeriesApi<"Line"> | null>(null);
-  const stochBullDivRef = useRef<ISeriesApi<"Line"> | null>(null);
+  /**
+   * Divergencias del Cipher: UN overlay con todos los tramos.
+   *
+   * Antes eran 12 series de líneas con whitespace entre tramo y tramo, pero
+   * lightweight-charts une el final de un tramo con el inicio del siguiente:
+   * salían líneas rectas falsas cruzando el gráfico entero.
+   */
+  const cipherDivsRef = useRef<SegmentsOverlay | null>(null);
   // Schaff Trend Cycle line
   const cipherSchaffRef = useRef<ISeriesApi<"Line"> | null>(null);
   // Sommi higher-timeframe VWAP line (smoothed)
@@ -717,18 +733,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
       cipherOs3Ref.current = null;
       cipherZeroRef.current = null;
       cipherMarkersRef.current = null;
-      wtBearDivRef.current = null;
-      wtBullDivRef.current = null;
-      wtBearHidDivRef.current = null;
-      wtBullHidDivRef.current = null;
-      wtBearDiv2Ref.current = null;
-      wtBullDiv2Ref.current = null;
-      rsiBearDivRef.current = null;
-      rsiBullDivRef.current = null;
-      rsiBearHidDivRef.current = null;
-      rsiBullHidDivRef.current = null;
-      stochBearDivRef.current = null;
-      stochBullDivRef.current = null;
+      cipherDivsRef.current = null;
       cipherSchaffRef.current = null;
       cipherSommiHVwapRef.current = null;
     };
@@ -1003,6 +1008,20 @@ export function PriceChart({ symbol, timeframe }: Props) {
           lineWidth: 1,
           priceLineVisible: false,
           lastValueVisible: false,
+          // Las filas de señal viven a ±106, fuera del rango de la onda, y los
+          // marcadores NO alimentan el autoescalado: sin esto la fila de abajo
+          // quedaba recortada por el borde del panel.
+          autoscaleInfoProvider: (original: () => {
+            priceRange: { minValue: number; maxValue: number } | null;
+          } | null) => {
+            const base = original()?.priceRange;
+            return {
+              priceRange: {
+                minValue: Math.min(base?.minValue ?? 0, CIPHER_FILA_COMPRA - 8),
+                maxValue: Math.max(base?.maxValue ?? 0, CIPHER_FILA_VENTA + 8),
+              },
+            };
+          },
         },
         paneIndex,
       );
@@ -1179,30 +1198,9 @@ export function PriceChart({ symbol, timeframe }: Props) {
         },
         paneIndex,
       );
-      // Divergence line series — render as 2px-wide segments. Colors from Pine.
-      const makeDivSeries = (color: string, width = 2) =>
-        chartRef.current!.addSeries(
-          LineSeries,
-          {
-            color,
-            lineWidth: width as 1 | 2 | 3 | 4,
-            priceLineVisible: false,
-            lastValueVisible: false,
-          },
-          paneIndex,
-        );
-      wtBearDivRef.current = makeDivSeries("#e60000");
-      wtBullDivRef.current = makeDivSeries("#00e676");
-      wtBearHidDivRef.current = makeDivSeries("#e60000");
-      wtBullHidDivRef.current = makeDivSeries("#00e676");
-      wtBearDiv2Ref.current = makeDivSeries("#e6000099");
-      wtBullDiv2Ref.current = makeDivSeries("#00e67699");
-      rsiBearDivRef.current = makeDivSeries("#e60000", 1);
-      rsiBullDivRef.current = makeDivSeries("#38ff42", 1);
-      rsiBearHidDivRef.current = makeDivSeries("#e60000", 1);
-      rsiBullHidDivRef.current = makeDivSeries("#38ff42", 1);
-      stochBearDivRef.current = makeDivSeries("#e60000", 1);
-      stochBullDivRef.current = makeDivSeries("#38ff42", 1);
+      // Divergencias: tramos sueltos sobre wt2, cada uno con su color y grosor.
+      cipherDivsRef.current = new SegmentsOverlay(chartRef.current, wt2, 2);
+      wt2.attachPrimitive(cipherDivsRef.current);
 
       // Schaff Trend Cycle — soft purple line
       cipherSchaffRef.current = chartRef.current.addSeries(
@@ -1267,18 +1265,6 @@ export function PriceChart({ symbol, timeframe }: Props) {
         cipherOs2Ref,
         cipherOs3Ref,
         cipherZeroRef,
-        wtBearDivRef,
-        wtBullDivRef,
-        wtBearHidDivRef,
-        wtBullHidDivRef,
-        wtBearDiv2Ref,
-        wtBullDiv2Ref,
-        rsiBearDivRef,
-        rsiBullDivRef,
-        rsiBearHidDivRef,
-        rsiBullHidDivRef,
-        stochBearDivRef,
-        stochBullDivRef,
         cipherSchaffRef,
         cipherSommiHVwapRef,
       ]) {
@@ -1289,6 +1275,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
           r.current = null;
         }
       }
+      cipherDivsRef.current = null;
     }
     requestAnimationFrame(() => recomputePaneOffsets());
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1480,25 +1467,9 @@ export function PriceChart({ symbol, timeframe }: Props) {
     ]) {
       r.current?.applyOptions({ visible: cipherOn });
     }
-    // Divergence series visibility
-    const wtDivOn = cipherOn && cfg.cipherShowWTDivergences;
-    const wtHidOn = cipherOn && cfg.cipherShowWTDivergencesHidden;
-    const wtDiv2On = cipherOn && cfg.cipherShowWTDivergences2;
-    const rsiDivOn = cipherOn && cfg.cipherShowRSIDivergences;
-    const rsiHidOn = cipherOn && cfg.cipherShowRSIDivergencesHidden;
-    const stDivOn = cipherOn && cfg.cipherShowStochDivergences;
-    wtBearDivRef.current?.applyOptions({ visible: wtDivOn });
-    wtBullDivRef.current?.applyOptions({ visible: wtDivOn });
-    wtBearHidDivRef.current?.applyOptions({ visible: wtHidOn });
-    wtBullHidDivRef.current?.applyOptions({ visible: wtHidOn });
-    wtBearDiv2Ref.current?.applyOptions({ visible: wtDiv2On });
-    wtBullDiv2Ref.current?.applyOptions({ visible: wtDiv2On });
-    rsiBearDivRef.current?.applyOptions({ visible: rsiDivOn });
-    rsiBullDivRef.current?.applyOptions({ visible: rsiDivOn });
-    rsiBearHidDivRef.current?.applyOptions({ visible: rsiHidOn });
-    rsiBullHidDivRef.current?.applyOptions({ visible: rsiHidOn });
-    stochBearDivRef.current?.applyOptions({ visible: stDivOn });
-    stochBullDivRef.current?.applyOptions({ visible: stDivOn });
+    // Las divergencias van todas en un overlay; qué tipos entran se filtra en
+    // updateCipher(), acá solo se prende o apaga el conjunto.
+    cipherDivsRef.current?.setVisible(cipherOn);
     cipherSchaffRef.current?.applyOptions({
       visible: cipherOn && cfg.cipherShowSchaff,
     });
@@ -1654,8 +1625,12 @@ export function PriceChart({ symbol, timeframe }: Props) {
     config.cipherShowCrossDots,
     config.cipherShowDivDots,
     config.cipherShowWTDivergences,
+    config.cipherShowWTDivergencesHidden,
     config.cipherShowWTDivergences2,
     config.cipherShowRSIDivergences,
+    config.cipherShowRSIDivergencesHidden,
+    config.cipherShowStochDivergences,
+    config.cipherShowStochDivergencesHidden,
     config.cipherNotApplyOBOSOnHidden,
     config.cipherWtDivOBLevel,
     config.cipherWtDivOSLevel,
@@ -2193,64 +2168,52 @@ export function PriceChart({ symbol, timeframe }: Props) {
     );
     const stochDivs = findDivergences(stochPoints, c, null, null);
 
-    // Convert segments to a discontinuous LineSeries dataset (whitespace gaps).
-    const segmentsToLineData = (
+    // Todas las divergencias en un solo overlay de tramos sueltos. Los flags
+    // de configuración filtran acá (el overlay solo se prende o se apaga).
+    const tramos: Segment[] = [];
+    const agregarTramos = (
       segs: DivergenceSegment[],
-      filterKind: DivergenceSegment["kind"][],
+      kinds: DivergenceSegment["kind"][],
+      color: string,
+      width: number,
     ) => {
-      const filtered = segs
-        .filter((s) => filterKind.includes(s.kind))
-        .sort((a, b) => a.fromTime - b.fromTime);
-      const data: Array<
-        { time: UTCTimestamp; value: number } | { time: UTCTimestamp }
-      > = [];
-      let lastTime = -Infinity;
-      for (const s of filtered) {
-        // ensure strictly increasing times; skip overlapping segments
-        if (s.fromTime <= lastTime) continue;
-        data.push({ time: s.fromTime as UTCTimestamp, value: s.fromValue });
-        data.push({ time: s.toTime as UTCTimestamp, value: s.toValue });
-        lastTime = s.toTime;
+      for (const seg of segs) {
+        if (!kinds.includes(seg.kind)) continue;
+        tramos.push({
+          fromTime: seg.fromTime,
+          fromValue: seg.fromValue,
+          toTime: seg.toTime,
+          toValue: seg.toValue,
+          color,
+          width,
+        });
       }
-      return data;
     };
-
-    wtBearDivRef.current?.setData(
-      segmentsToLineData(wtDivs, ["bearRegular"]) as never,
-    );
-    wtBullDivRef.current?.setData(
-      segmentsToLineData(wtDivs, ["bullRegular"]) as never,
-    );
-    wtBearHidDivRef.current?.setData(
-      segmentsToLineData(wtDivsHidden, ["bearHidden"]) as never,
-    );
-    wtBullHidDivRef.current?.setData(
-      segmentsToLineData(wtDivsHidden, ["bullHidden"]) as never,
-    );
-    wtBearDiv2Ref.current?.setData(
-      segmentsToLineData(wtDivs2, ["bearRegular"]) as never,
-    );
-    wtBullDiv2Ref.current?.setData(
-      segmentsToLineData(wtDivs2, ["bullRegular"]) as never,
-    );
-    rsiBearDivRef.current?.setData(
-      segmentsToLineData(rsiDivs, ["bearRegular"]) as never,
-    );
-    rsiBullDivRef.current?.setData(
-      segmentsToLineData(rsiDivs, ["bullRegular"]) as never,
-    );
-    rsiBearHidDivRef.current?.setData(
-      segmentsToLineData(rsiDivsHidden, ["bearHidden"]) as never,
-    );
-    rsiBullHidDivRef.current?.setData(
-      segmentsToLineData(rsiDivsHidden, ["bullHidden"]) as never,
-    );
-    stochBearDivRef.current?.setData(
-      segmentsToLineData(stochDivs, ["bearRegular"]) as never,
-    );
-    stochBullDivRef.current?.setData(
-      segmentsToLineData(stochDivs, ["bullRegular"]) as never,
-    );
+    if (cfg.cipherShowWTDivergences) {
+      agregarTramos(wtDivs, ["bearRegular"], "#e60000", 2);
+      agregarTramos(wtDivs, ["bullRegular"], "#00e676", 2);
+    }
+    if (cfg.cipherShowWTDivergencesHidden) {
+      agregarTramos(wtDivsHidden, ["bearHidden"], "#e60000", 2);
+      agregarTramos(wtDivsHidden, ["bullHidden"], "#00e676", 2);
+    }
+    if (cfg.cipherShowWTDivergences2) {
+      agregarTramos(wtDivs2, ["bearRegular"], "#e6000099", 2);
+      agregarTramos(wtDivs2, ["bullRegular"], "#00e67699", 2);
+    }
+    if (cfg.cipherShowRSIDivergences) {
+      agregarTramos(rsiDivs, ["bearRegular"], "#e60000", 1);
+      agregarTramos(rsiDivs, ["bullRegular"], "#38ff42", 1);
+    }
+    if (cfg.cipherShowRSIDivergencesHidden) {
+      agregarTramos(rsiDivsHidden, ["bearHidden"], "#e60000", 1);
+      agregarTramos(rsiDivsHidden, ["bullHidden"], "#38ff42", 1);
+    }
+    if (cfg.cipherShowStochDivergences) {
+      agregarTramos(stochDivs, ["bearRegular"], "#e60000", 1);
+      agregarTramos(stochDivs, ["bullRegular"], "#38ff42", 1);
+    }
+    cipherDivsRef.current?.setData(tramos);
 
     // Markers — crosses + buy/sell/gold circles, placed at wt2 in the cipher pane
     if (cipherMarkersRef.current) {
@@ -2290,7 +2253,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
           price: oscVal,
           color: "#3fff00",
           shape: "circle",
-          size: 3,
+          size: PUNTO_DIVERGENCIA,
         });
       }
       for (const t of bearDivAtTime) {
@@ -2302,7 +2265,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
           price: oscVal,
           color: "#ff0000",
           shape: "circle",
-          size: 3,
+          size: PUNTO_DIVERGENCIA,
         });
       }
       for (let i = 1; i < wt.length; i++) {
@@ -2314,6 +2277,28 @@ export function PriceChart({ symbol, timeframe }: Props) {
         const isOversold = cur.wt2 <= cfg.wtOsLevel;
         const isOverbought = cur.wt2 >= cfg.wtObLevel;
         const rsiHere = rsiByTime.get(cur.time);
+        // Punto sobre la onda (al valor de wt2) y, además, punto en la fila
+        // fija de señales. En TradingView se ven las dos cosas: el círculo
+        // sobre la onda y el puntito arriba/abajo del oscilador.
+        const sobreLaOnda = (color: string, size: number) =>
+          markers.push({
+            time: cur.time as UTCTimestamp,
+            position: "atPriceMiddle" as const,
+            price: cur.wt2,
+            color,
+            shape: "circle" as const,
+            size,
+          });
+        const enLaFila = (precio: number, color: string, size: number) =>
+          markers.push({
+            time: cur.time as UTCTimestamp,
+            position: "atPriceMiddle" as const,
+            price: precio,
+            color,
+            shape: "circle" as const,
+            size,
+          });
+
         // Gold buy — oversold extreme cross-up with RSI < 30
         if (
           cfg.cipherShowGoldDots &&
@@ -2324,44 +2309,26 @@ export function PriceChart({ symbol, timeframe }: Props) {
           cur.wt2 - prev.wt2 >= 0 &&
           cur.wt2 > cfg.wtOsLevel3 - 5
         ) {
-          markers.push({
-            time: cur.time as UTCTimestamp,
-            position: "atPriceMiddle",
-            price: cur.wt2,
-            color: "#e2a400",
-            shape: "circle",
-            size: 2,
-          });
+          sobreLaOnda("#e2a400", PUNTO_SENAL);
+          enLaFila(CIPHER_FILA_COMPRA, "#e2a400", PUNTO_FILA_FUERTE);
           continue;
         }
         if (cfg.cipherShowBuyDots && crossUp && isOversold) {
-          markers.push({
-            time: cur.time as UTCTimestamp,
-            position: "atPriceMiddle",
-            price: cur.wt2,
-            color: "#3fff00",
-            shape: "circle",
-            size: 2,
-          });
+          sobreLaOnda("#3fff00", PUNTO_SENAL);
+          // Chico y translúcido para la señal normal; encima, grande y opaco
+          // cuando el cruce pasa el segundo nivel de sobreventa.
+          enLaFila(CIPHER_FILA_COMPRA, "#3fff0088", PUNTO_FILA);
+          if (cur.wt2 <= cfg.wtOsLevel2) {
+            enLaFila(CIPHER_FILA_COMPRA, "#3fff00", PUNTO_FILA_FUERTE);
+          }
         } else if (cfg.cipherShowSellDots && crossDown && isOverbought) {
-          markers.push({
-            time: cur.time as UTCTimestamp,
-            position: "atPriceMiddle",
-            price: cur.wt2,
-            color: "#ff0000",
-            shape: "circle",
-            size: 2,
-          });
+          sobreLaOnda("#ff0000", PUNTO_SENAL);
+          enLaFila(CIPHER_FILA_VENTA, "#ff000088", PUNTO_FILA);
+          if (cur.wt2 >= cfg.wtObLevel2) {
+            enLaFila(CIPHER_FILA_VENTA, "#ff0000", PUNTO_FILA_FUERTE);
+          }
         } else if (cfg.cipherShowCrossDots) {
-          // small neutral cross marker
-          markers.push({
-            time: cur.time as UTCTimestamp,
-            position: "atPriceMiddle",
-            price: cur.wt2,
-            color: crossUp ? "#00e676" : "#ff5252",
-            shape: "circle",
-            size: 1,
-          });
+          sobreLaOnda(crossUp ? "#00e676" : "#ff5252", PUNTO_CRUCE);
         }
       }
       // ====== Sommi flag (needs higher-TF WaveTrend VWAP) ======
@@ -2519,6 +2486,10 @@ export function PriceChart({ symbol, timeframe }: Props) {
         }
       }
 
+      // Las filas de señal y los círculos de divergencia se empujan en otro
+      // orden que el recorrido de velas: lightweight-charts espera los
+      // marcadores ordenados por tiempo.
+      markers.sort((a, b) => (a.time as number) - (b.time as number));
       cipherMarkersRef.current.setMarkers(markers);
     }
 

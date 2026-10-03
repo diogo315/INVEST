@@ -139,6 +139,12 @@ export function findDivergences(
 ): DivergenceSegment[] {
   const out: DivergenceSegment[] = [];
   if (values.length < 5) return out;
+  // Separación válida entre los dos pivotes de una divergencia, en velas.
+  // Sin este tope el pivote "anterior" podía quedar a cientos de velas y la
+  // línea cruzaba el gráfico entero. En TradingView el tramo más largo que se
+  // ve es de ~60 velas.
+  const RANGO_MIN = 5;
+  const RANGO_MAX = 60;
   // Align candles by time for fast lookup
   const highByTime = new Map<number, number>();
   const lowByTime = new Map<number, number>();
@@ -147,8 +153,22 @@ export function findDivergences(
     lowByTime.set(c.time, c.low);
   }
   // Track the previous confirmed top / bottom pivot (osc value + candle high/low)
-  let prevTop: { time: number; osc: number; price: number } | null = null;
-  let prevBot: { time: number; osc: number; price: number } | null = null;
+  let prevTop: {
+    time: number;
+    osc: number;
+    price: number;
+    idx: number;
+  } | null = null;
+  let prevBot: {
+    time: number;
+    osc: number;
+    price: number;
+    idx: number;
+  } | null = null;
+  const enRango = (desde: number, hasta: number) => {
+    const d = hasta - desde;
+    return d >= RANGO_MIN && d <= RANGO_MAX;
+  };
   for (let i = 4; i < values.length; i++) {
     const p0 = values[i - 4].value;
     const p1 = values[i - 3].value;
@@ -163,7 +183,7 @@ export function findDivergences(
       const passesLimit = obLimit === null || pivot.value >= obLimit;
       if (passesLimit) {
         const highHere = highByTime.get(pivot.time);
-        if (highHere !== undefined && prevTop) {
+        if (highHere !== undefined && prevTop && enRango(prevTop.idx, i - 2)) {
           // Regular bear: HH price + LH osc
           if (highHere > prevTop.price && pivot.value < prevTop.osc) {
             out.push({
@@ -186,7 +206,12 @@ export function findDivergences(
           }
         }
         if (highHere !== undefined) {
-          prevTop = { time: pivot.time, osc: pivot.value, price: highHere };
+          prevTop = {
+            time: pivot.time,
+            osc: pivot.value,
+            price: highHere,
+            idx: i - 2,
+          };
         }
       }
     }
@@ -195,7 +220,7 @@ export function findDivergences(
       const passesLimit = osLimit === null || pivot.value <= osLimit;
       if (passesLimit) {
         const lowHere = lowByTime.get(pivot.time);
-        if (lowHere !== undefined && prevBot) {
+        if (lowHere !== undefined && prevBot && enRango(prevBot.idx, i - 2)) {
           // Regular bull: LL price + HL osc
           if (lowHere < prevBot.price && pivot.value > prevBot.osc) {
             out.push({
@@ -218,7 +243,12 @@ export function findDivergences(
           }
         }
         if (lowHere !== undefined) {
-          prevBot = { time: pivot.time, osc: pivot.value, price: lowHere };
+          prevBot = {
+            time: pivot.time,
+            osc: pivot.value,
+            price: lowHere,
+            idx: i - 2,
+          };
         }
       }
     }

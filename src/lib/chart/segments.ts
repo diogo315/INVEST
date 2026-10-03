@@ -15,6 +15,8 @@ export interface Segment {
   toTime: number;
   toValue: number;
   color: string;
+  /** Grosor de este tramo; si falta se usa el del overlay. */
+  width?: number;
 }
 
 /**
@@ -64,9 +66,9 @@ export class SegmentsOverlay implements ISeriesPrimitive<Time> {
       const ts = this._chart.timeScale();
       const series = this._series;
       ctx.save();
-      ctx.lineWidth = this._lineWidth;
       ctx.lineCap = "round";
       for (const s of this._segments) {
+        ctx.lineWidth = s.width ?? this._lineWidth;
         const x1 = ts.timeToCoordinate(s.fromTime as unknown as Time);
         const x2 = ts.timeToCoordinate(s.toTime as unknown as Time);
         const y1 = series.priceToCoordinate(s.fromValue);
