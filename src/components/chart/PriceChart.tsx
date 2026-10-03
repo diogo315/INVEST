@@ -2213,6 +2213,8 @@ export function PriceChart({ symbol, timeframe }: Props) {
       agregarTramos(stochDivs, ["bearRegular"], "#e60000", 1);
       agregarTramos(stochDivs, ["bullRegular"], "#38ff42", 1);
     }
+    // DEBUG SOLO EN EL CONTENEDOR — no commitear
+    (window as unknown as Record<string, unknown>).__divs = tramos;
     cipherDivsRef.current?.setData(tramos);
 
     // Markers — crosses + buy/sell/gold circles, placed at wt2 in the cipher pane
@@ -2622,6 +2624,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
   // Load historical data + subscribe live
   useEffect(() => {
     let unsub: (() => void) | null = null;
+    let unsubTicker: (() => void) | null = null;
     let cancelled = false;
 
     // Vuelca un set de velas al chart (velas + volumen). Se usa dos veces:
@@ -2655,6 +2658,25 @@ export function PriceChart({ symbol, timeframe }: Props) {
       setChartLoading(true);
       try {
         const { adapter, symbol: rawSymbol } = getAdapter(symbol);
+
+        // El precio y el % de la cabecera salen del MISMO ticker de 24 h que
+        // alimenta el watchlist. Antes el % era la variación de la última vela
+        // de la temporalidad: en 1W era la variación semanal y no coincidía
+        // con la columna 24H del watchlist —en el mismo instante podían tener
+        // hasta signo distinto—, y el precio venía de la vela, que es otra
+        // lectura del mismo exchange.
+        adapter
+          .fetchTickers24h([rawSymbol])
+          .then((ts) => {
+            const t = ts[0];
+            if (cancelled || !t) return;
+            setLastPrice({ value: t.lastPrice, pct: t.priceChangePercent });
+          })
+          .catch(() => {});
+        unsubTicker = adapter.subscribeMiniTickers([rawSymbol], (tick) => {
+          if (cancelled) return;
+          setLastPrice({ value: tick.close, pct: tick.pct });
+        });
 
         // Pintado optimista desde localStorage: el chart aparece en el primer
         // frame en vez de esperar el round-trip completo a la API.
@@ -2690,12 +2712,10 @@ export function PriceChart({ symbol, timeframe }: Props) {
         });
 
         if (klines.length > 0) {
+          // Solo como respaldo hasta que llegue el ticker de 24 h (o si el
+          // exchange no lo soporta): nunca pisa un valor ya publicado.
           const last = klines[klines.length - 1];
-          const prev = klines[klines.length - 2] ?? last;
-          setLastPrice({
-            value: last.close,
-            pct: prev.close === 0 ? 0 : ((last.close - prev.close) / prev.close) * 100,
-          });
+          setLastPrice((prev) => prev ?? { value: last.close, pct: 0 });
         }
 
         unsub = adapter.subscribeKline({
@@ -2731,11 +2751,6 @@ export function PriceChart({ symbol, timeframe }: Props) {
             updateRSI();
             updateMACD();
             scheduleHeavyUpdate();
-            const prev = arr[arr.length - 2] ?? lastCandle;
-            setLastPrice({
-              value: k.close,
-              pct: prev && prev.close !== 0 ? ((k.close - prev.close) / prev.close) * 100 : 0,
-            });
           },
         });
       } catch (e) {
@@ -2750,6 +2765,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
     return () => {
       cancelled = true;
       if (unsub) unsub();
+      if (unsubTicker) unsubTicker();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol, timeframe, refreshNonce]);

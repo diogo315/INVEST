@@ -24,6 +24,25 @@ export function Watchlist() {
   const toggleCollapsed = useChartStore((s) => s.toggleWatchlistCollapsed);
   const [rows, setRows] = useState<Record<string, Row>>({});
   const [flash, setFlash] = useState<Record<string, "up" | "down" | null>>({});
+  // Se incrementa al volver a la pestaña para rehacer el snapshot de 24 h.
+  const [revision, setRevision] = useState(0);
+
+  // Recuperación, igual que el chart: en segundo plano el navegador frena el
+  // WebSocket y los precios quedan congelados sin aviso. Al volver se vuelve a
+  // pedir el snapshot por REST y se rehace la suscripción. (La reconexión del
+  // WS la dispara el chart en este mismo evento.)
+  useEffect(() => {
+    const revisar = () => {
+      if (document.visibilityState !== "visible") return;
+      setRevision((n) => n + 1);
+    };
+    document.addEventListener("visibilitychange", revisar);
+    window.addEventListener("online", revisar);
+    return () => {
+      document.removeEventListener("visibilitychange", revisar);
+      window.removeEventListener("online", revisar);
+    };
+  }, []);
 
   // Group watchlist symbols by exchange so we make one fetch + one WS sub per exchange.
   const grouped = useMemo(() => {
@@ -101,7 +120,7 @@ export function Watchlist() {
       cancelled = true;
       for (const u of unsubs) u();
     };
-  }, [watchlist, grouped]);
+  }, [watchlist, grouped, revision]);
 
   return (
     <div className="flex h-full flex-col">
