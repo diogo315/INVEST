@@ -53,6 +53,7 @@ import { TIMEFRAME_SECONDS } from "@/lib/binance/types";
 import { reconnectAllBinanceWS } from "@/lib/binance/ws";
 import {
   INDICATOR_COLORS,
+  MAX_PANELES_INDICADOR,
   useChartStore,
   type IndicatorKey,
 } from "@/lib/store/chart-store";
@@ -111,6 +112,21 @@ const VWAP_FILL_COLORS = [
 
 // "1D o superior" del Pine (timeframe.isdwm): diario, semanal, mensual.
 const DWM_TIMEFRAMES = new Set(["1d", "3d", "1w", "1M"]);
+
+/**
+ * Índice del panel donde vive una serie, preguntándoselo al chart en vez de
+ * recalcularlo a mano desde qué indicadores están prendidos. Devuelve -1 si
+ * la serie no existe.
+ */
+function paneDeSerie(
+  serie: { getPane: () => { paneIndex: () => number } } | null,
+): number {
+  try {
+    return serie ? serie.getPane().paneIndex() : -1;
+  } catch {
+    return -1;
+  }
+}
 
 /** Velas de aire que quedan entre la última vela y el borde derecho. */
 const MARGEN_DERECHO = 12;
@@ -319,6 +335,18 @@ export function PriceChart({ symbol, timeframe }: Props) {
   const [renderTick, setRenderTick] = useState(0);
   const measureRef = useRef(measure);
   measureRef.current = measure;
+
+  /**
+   * Índice del panel nuevo para un indicador: SIEMPRE al final, así agregar
+   * uno no puede caer encima de otro que ya existe. `null` cuando se llegó
+   * al tope de paneles.
+   */
+  function nuevoPane(): number | null {
+    const chart = chartRef.current;
+    if (!chart) return null;
+    const n = chart.panes().length; // 1 (precio) + paneles de indicadores
+    return n > MAX_PANELES_INDICADOR ? null : n;
+  }
 
   // Helper — compute pane top offsets from chart layout
   function recomputePaneOffsets() {
@@ -740,7 +768,8 @@ export function PriceChart({ symbol, timeframe }: Props) {
   useEffect(() => {
     if (!chartRef.current) return;
     if (indicators.rsi && !rsiRef.current) {
-      const paneIndex = 1;
+      const paneIndex = nuevoPane();
+      if (paneIndex === null) return;
       const r = chartRef.current.addSeries(
         LineSeries,
         {
@@ -906,7 +935,8 @@ export function PriceChart({ symbol, timeframe }: Props) {
   useEffect(() => {
     if (!chartRef.current) return;
     if (indicators.macd && !macdRef.current) {
-      const paneIndex = indicators.rsi ? 2 : 1;
+      const paneIndex = nuevoPane();
+      if (paneIndex === null) return;
       const m = chartRef.current.addSeries(
         LineSeries,
         {
@@ -950,17 +980,14 @@ export function PriceChart({ symbol, timeframe }: Props) {
     }
     requestAnimationFrame(() => recomputePaneOffsets());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [indicators.macd, indicators.rsi]);
+  }, [indicators.macd]);
 
-  // Cipher B pane — appended after RSI/MACD/Stoch if those are active
+  // Cipher B pane — se agrega al final
   useEffect(() => {
     if (!chartRef.current) return;
     if (indicators.cipher && !cipherWt1Ref.current) {
-      const paneIndex =
-        1 +
-        (indicators.rsi ? 1 : 0) +
-        (indicators.macd ? 1 : 0) +
-        (indicators.stoch ? 1 : 0);
+      const paneIndex = nuevoPane();
+      if (paneIndex === null) return;
       // WT1 baseline area — same color above & below 0 to draw a sinusoidal
       // wave that crosses zero (Pine: #4994ec light blue).
       const wt1 = chartRef.current.addSeries(
@@ -1265,14 +1292,14 @@ export function PriceChart({ symbol, timeframe }: Props) {
     }
     requestAnimationFrame(() => recomputePaneOffsets());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [indicators.cipher, indicators.rsi, indicators.macd, indicators.stoch]);
+  }, [indicators.cipher]);
 
-  // Stochastic pane — appended after RSI/MACD if those are active
+  // Stochastic pane — se agrega al final
   useEffect(() => {
     if (!chartRef.current) return;
     if (indicators.stoch && !stochKRef.current) {
-      const paneIndex =
-        1 + (indicators.rsi ? 1 : 0) + (indicators.macd ? 1 : 0);
+      const paneIndex = nuevoPane();
+      if (paneIndex === null) return;
       const k = chartRef.current.addSeries(
         LineSeries,
         {
@@ -1336,19 +1363,14 @@ export function PriceChart({ symbol, timeframe }: Props) {
     }
     requestAnimationFrame(() => recomputePaneOffsets());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [indicators.stoch, indicators.rsi, indicators.macd]);
+  }, [indicators.stoch]);
 
-  // Stoch RSI pane — SIEMPRE el último pane, así agregarlo no reordena
-  // los índices de RSI / MACD / Stoch / Cipher que ya existen.
+  // Stoch RSI pane — se agrega al final
   useEffect(() => {
     if (!chartRef.current) return;
     if (indicators.srsi && !srsiKRef.current) {
-      const paneIndex =
-        1 +
-        (indicators.rsi ? 1 : 0) +
-        (indicators.macd ? 1 : 0) +
-        (indicators.stoch ? 1 : 0) +
-        (indicators.cipher ? 1 : 0);
+      const paneIndex = nuevoPane();
+      if (paneIndex === null) return;
       const mkLine = (color: string, dashed = false) =>
         chartRef.current!.addSeries(
           LineSeries,
@@ -1385,13 +1407,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
     }
     requestAnimationFrame(() => recomputePaneOffsets());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    indicators.srsi,
-    indicators.rsi,
-    indicators.macd,
-    indicators.stoch,
-    indicators.cipher,
-  ]);
+  }, [indicators.srsi]);
 
   // Visibility — eye toggle (hidden state) + enabled state combined
   useEffect(() => {
@@ -2801,21 +2817,14 @@ export function PriceChart({ symbol, timeframe }: Props) {
   void isShown;
 
   // Determine which pane each indicator lives in (based on current layout)
-  const rsiPaneIdx = 1;
-  const macdPaneIdx = indicators.rsi ? 2 : 1;
-  const stochPaneIdx =
-    1 + (indicators.rsi ? 1 : 0) + (indicators.macd ? 1 : 0);
-  const cipherPaneIdx =
-    1 +
-    (indicators.rsi ? 1 : 0) +
-    (indicators.macd ? 1 : 0) +
-    (indicators.stoch ? 1 : 0);
-  const srsiPaneIdx =
-    1 +
-    (indicators.rsi ? 1 : 0) +
-    (indicators.macd ? 1 : 0) +
-    (indicators.stoch ? 1 : 0) +
-    (indicators.cipher ? 1 : 0);
+  // Dónde va la etiqueta de cada indicador: se lo preguntamos a su propia
+  // serie. Apagar un panel del medio corre los de abajo, y así las etiquetas
+  // lo siguen sin que haya que recalcular nada a mano.
+  const rsiPaneIdx = paneDeSerie(rsiRef.current);
+  const macdPaneIdx = paneDeSerie(macdRef.current);
+  const stochPaneIdx = paneDeSerie(stochKRef.current);
+  const cipherPaneIdx = paneDeSerie(cipherWt1Ref.current);
+  const srsiPaneIdx = paneDeSerie(srsiKRef.current);
 
   let measureRender: React.ReactNode = null;
   if (

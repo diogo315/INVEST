@@ -11,6 +11,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
+  INDICADORES_CON_PANEL,
+  MAX_PANELES_INDICADOR,
+  panelesActivos,
   useChartStore,
   type IndicatorConfig,
   type IndicatorKey,
@@ -74,6 +77,11 @@ export function IndicatorMenu() {
   }, {});
 
   const activeCount = Object.values(indicators).filter(Boolean).length;
+  const paneles = panelesActivos(indicators);
+  const enElTope = paneles >= MAX_PANELES_INDICADOR;
+  /** Un indicador con panel propio no se puede prender si ya hay 3 abiertos. */
+  const bloqueado = (key: IndicatorKey) =>
+    enElTope && INDICADORES_CON_PANEL.includes(key) && !indicators[key];
 
   return (
     <DropdownMenu>
@@ -97,7 +105,13 @@ export function IndicatorMenu() {
               <DropdownMenuItem
                 key={i.key}
                 closeOnClick={false}
+                disabled={bloqueado(i.key)}
                 onClick={() => toggle(i.key)}
+                title={
+                  bloqueado(i.key)
+                    ? `Máximo ${MAX_PANELES_INDICADOR} paneles de indicadores: apagá uno para poder agregar este`
+                    : undefined
+                }
                 className="flex items-center justify-between text-xs"
               >
                 <span>{i.label(config)}</span>
@@ -106,6 +120,10 @@ export function IndicatorMenu() {
             ))}
           </DropdownMenuGroup>
         ))}
+        <DropdownMenuSeparator />
+        <div className="px-2 py-1.5 text-[10px] text-tv-text-muted">
+          Paneles: {paneles}/{MAX_PANELES_INDICADOR}
+        </div>
       </DropdownMenuContent>
     </DropdownMenu>
   );

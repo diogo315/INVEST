@@ -257,6 +257,26 @@ export const INDICATOR_COLORS: Record<IndicatorKey, string> = {
 /** Perpetuos que se agregan a todo watchlist (también a los ya guardados). */
 export const DEFAULT_FUTURES = ["BINF:BTCUSDT", "BINF:ETHUSDT"];
 
+/**
+ * Indicadores que se dibujan en su propio panel debajo del gráfico del
+ * activo (el resto son superposiciones sobre las velas).
+ */
+export const INDICADORES_CON_PANEL: IndicatorKey[] = [
+  "rsi",
+  "macd",
+  "stoch",
+  "cipher",
+  "srsi",
+];
+
+/** Máximo de paneles de indicadores simultáneos. */
+export const MAX_PANELES_INDICADOR = 3;
+
+/** Cuántos paneles de indicadores hay prendidos. */
+export function panelesActivos(ind: Record<IndicatorKey, boolean>): number {
+  return INDICADORES_CON_PANEL.filter((k) => ind[k]).length;
+}
+
 export const DEFAULT_WATCHLIST = [
   "BIN:BTCUSDT",
   "BIN:ETHUSDT",
@@ -373,13 +393,23 @@ export const useChartStore = create<ChartState>()(
       setSymbol: (symbol) => set({ symbol: migrateSymbol(symbol) }),
       setTimeframe: (timeframe) => set({ timeframe }),
       toggleIndicator: (key) =>
-        set((s) => ({
-          indicators: { ...s.indicators, [key]: !s.indicators[key] },
-          // When re-adding, ensure not hidden
-          hidden: !s.indicators[key]
-            ? { ...s.hidden, [key]: false }
-            : s.hidden,
-        })),
+        set((s) => {
+          const prendiendo = !s.indicators[key];
+          // Tope de paneles: no se pueden tener más de
+          // MAX_PANELES_INDICADOR osciladores abiertos a la vez.
+          if (
+            prendiendo &&
+            INDICADORES_CON_PANEL.includes(key) &&
+            panelesActivos(s.indicators) >= MAX_PANELES_INDICADOR
+          ) {
+            return {};
+          }
+          return {
+            indicators: { ...s.indicators, [key]: prendiendo },
+            // When re-adding, ensure not hidden
+            hidden: prendiendo ? { ...s.hidden, [key]: false } : s.hidden,
+          };
+        }),
       removeIndicator: (key) =>
         set((s) => ({
           indicators: { ...s.indicators, [key]: false },
