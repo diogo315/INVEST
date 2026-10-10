@@ -516,17 +516,19 @@ export const useChartStore = create<ChartState>()(
             periodo,
             s.medias.map((m) => m.color),
           );
-          // Ordenadas por período: así la leyenda se lee de rápida a lenta.
-          const medias = [...s.medias, media].sort(
-            (a, b) => a.periodo - b.periodo,
-          );
-          return { medias, indicators: { ...s.indicators, medias: true } };
+          // Se agrega al final y NO se reordena: si la lista se reacomoda
+          // sola, al escribir un período la fila se mueve y el cursor salta
+          // a otra — es justo lo que pasaba.
+          return {
+            medias: [...s.medias, media],
+            indicators: { ...s.indicators, medias: true },
+          };
         }),
       editarMedia: (id, patch) =>
         set((s) => ({
-          medias: s.medias
-            .map((m) => (m.id === id ? { ...m, ...patch } : m))
-            .sort((a, b) => a.periodo - b.periodo),
+          // Sin reordenar: la fila que se está editando tiene que quedarse
+          // donde está mientras se escribe.
+          medias: s.medias.map((m) => (m.id === id ? { ...m, ...patch } : m)),
         })),
       quitarMedia: (id) =>
         set((s) => ({ medias: s.medias.filter((m) => m.id !== id) })),

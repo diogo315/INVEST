@@ -15,6 +15,7 @@ import {
   DEFAULT_CONFIG,
   MAX_MEDIAS,
   type IndicatorKey,
+  type MediaMovil,
 } from "@/lib/store/chart-store";
 
 const TITLES: Record<IndicatorKey, string> = {
@@ -1252,77 +1253,7 @@ function EditorMedias() {
           </p>
         )}
         {medias.map((m) => (
-          <div
-            key={m.id}
-            className="flex items-center gap-2 rounded border border-tv-border bg-tv-bg px-2 py-1.5"
-          >
-            <input
-              type="color"
-              value={m.color}
-              onChange={(e) => editar(m.id, { color: e.target.value })}
-              title="Color de la línea"
-              aria-label={`Color de la media de ${m.periodo}`}
-              className="h-5 w-5 shrink-0 cursor-pointer rounded border-0 bg-transparent p-0"
-            />
-            <select
-              value={m.tipo}
-              onChange={(e) =>
-                editar(m.id, { tipo: e.target.value === "SMA" ? "SMA" : "EMA" })
-              }
-              aria-label="Tipo de media"
-              className="shrink-0 rounded bg-tv-panel px-1 py-0.5 text-[11px] text-tv-text outline-none"
-            >
-              <option value="EMA">EMA</option>
-              <option value="SMA">SMA</option>
-            </select>
-            <Input
-              type="number"
-              min={1}
-              max={2000}
-              value={m.periodo}
-              onChange={(e) => {
-                const n = parseInt(e.target.value, 10);
-                if (Number.isFinite(n) && n >= 1) editar(m.id, { periodo: n });
-              }}
-              aria-label={`Período de la media ${m.tipo}`}
-              className="h-7 w-20 bg-tv-panel tabular-nums"
-            />
-            <select
-              value={m.grosor}
-              onChange={(e) => editar(m.id, { grosor: Number(e.target.value) })}
-              aria-label="Grosor de la línea"
-              className="shrink-0 rounded bg-tv-panel px-1 py-0.5 text-[11px] text-tv-text outline-none"
-            >
-              <option value={1}>Fina</option>
-              <option value={2}>Gruesa</option>
-            </select>
-            <button
-              type="button"
-              onClick={() => editar(m.id, { visible: !m.visible })}
-              title={m.visible ? "Ocultar esta línea" : "Mostrar esta línea"}
-              aria-label={
-                m.visible
-                  ? `Ocultar la media de ${m.periodo}`
-                  : `Mostrar la media de ${m.periodo}`
-              }
-              className="ml-auto rounded p-1 text-tv-text-dim hover:bg-tv-panel-hover hover:text-tv-text"
-            >
-              {m.visible ? (
-                <Eye className="h-3.5 w-3.5" />
-              ) : (
-                <EyeOff className="h-3.5 w-3.5" />
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={() => quitar(m.id)}
-              title="Quitar esta línea"
-              aria-label={`Quitar la media de ${m.periodo}`}
-              className="rounded p-1 text-tv-text-dim hover:bg-tv-panel-hover hover:text-tv-red"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
-          </div>
+          <FilaMedia key={m.id} media={m} editar={editar} quitar={quitar} />
         ))}
       </div>
 
@@ -1332,12 +1263,11 @@ function EditorMedias() {
             Nueva media (período)
           </span>
           <Input
-            type="number"
-            min={1}
-            max={2000}
+            type="text"
+            inputMode="numeric"
             placeholder={String(sugerido())}
             value={nuevo}
-            onChange={(e) => setNuevo(e.target.value)}
+            onChange={(e) => setNuevo(e.target.value.replace(/\D/g, "").slice(0, 4))}
             onKeyDown={(e) => {
               if (e.key === "Enter" && puedeAgregar) {
                 agregar(sugerido());
@@ -1369,6 +1299,113 @@ function EditorMedias() {
         activo: el período es en velas, así que una EMA 50 en 4H son 50 velas
         de 4 horas.
       </p>
+    </div>
+  );
+}
+
+/**
+ * Una línea de la lista. El período se guarda como **texto local** mientras
+ * se escribe: con `value={m.periodo}` el campo no deja borrar el número
+ * (un campo vacío no es un número y volvía al valor anterior) y cada tecla
+ * reordenaba la lista, así que el cursor saltaba a otra fila.
+ */
+function FilaMedia({
+  media: m,
+  editar,
+  quitar,
+}: {
+  media: MediaMovil;
+  editar: (id: string, patch: Partial<MediaMovil>) => void;
+  quitar: (id: string) => void;
+}) {
+  const [texto, setTexto] = useState(String(m.periodo));
+
+  const confirmar = () => {
+    const n = parseInt(texto, 10);
+    const limpio = Number.isFinite(n) ? clamp(n, 1, 2000) : m.periodo;
+    setTexto(String(limpio));
+    if (limpio !== m.periodo) editar(m.id, { periodo: limpio });
+  };
+
+  return (
+    <div className="flex items-center gap-2 rounded border border-tv-border bg-tv-bg px-2 py-1.5">
+      <input
+        type="color"
+        value={m.color}
+        onChange={(e) => editar(m.id, { color: e.target.value })}
+        title="Color de la línea"
+        aria-label={`Color de la media de ${m.periodo}`}
+        className="h-5 w-5 shrink-0 cursor-pointer rounded border-0 bg-transparent p-0"
+      />
+      <select
+        value={m.tipo}
+        onChange={(e) =>
+          editar(m.id, { tipo: e.target.value === "SMA" ? "SMA" : "EMA" })
+        }
+        aria-label="Tipo de media"
+        className="shrink-0 rounded bg-tv-panel px-1 py-0.5 text-[11px] text-tv-text outline-none"
+      >
+        <option value="EMA">EMA</option>
+        <option value="SMA">SMA</option>
+      </select>
+      <Input
+        type="text"
+        inputMode="numeric"
+        value={texto}
+        onChange={(e) => {
+          // Solo dígitos, y hasta cuatro: así no hay que pelear con el
+          // campo mientras se borra y se vuelve a escribir.
+          const v = e.target.value.replace(/\D/g, "").slice(0, 4);
+          setTexto(v);
+          const n = parseInt(v, 10);
+          // Se aplica en vivo solo si ya es un número usable; mientras el
+          // campo está vacío o en "0" la línea se queda como estaba.
+          if (Number.isFinite(n) && n >= 1 && n <= 2000) {
+            editar(m.id, { periodo: n });
+          }
+        }}
+        onBlur={confirmar}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        }}
+        aria-label={`Período de la media ${m.tipo}`}
+        className="h-7 w-16 bg-tv-panel text-center tabular-nums"
+      />
+      <select
+        value={m.grosor}
+        onChange={(e) => editar(m.id, { grosor: Number(e.target.value) })}
+        aria-label="Grosor de la línea"
+        className="shrink-0 rounded bg-tv-panel px-1 py-0.5 text-[11px] text-tv-text outline-none"
+      >
+        <option value={1}>Fina</option>
+        <option value={2}>Gruesa</option>
+      </select>
+      <button
+        type="button"
+        onClick={() => editar(m.id, { visible: !m.visible })}
+        title={m.visible ? "Ocultar esta línea" : "Mostrar esta línea"}
+        aria-label={
+          m.visible
+            ? `Ocultar la media de ${m.periodo}`
+            : `Mostrar la media de ${m.periodo}`
+        }
+        className="ml-auto rounded p-1 text-tv-text-dim hover:bg-tv-panel-hover hover:text-tv-text"
+      >
+        {m.visible ? (
+          <Eye className="h-3.5 w-3.5" />
+        ) : (
+          <EyeOff className="h-3.5 w-3.5" />
+        )}
+      </button>
+      <button
+        type="button"
+        onClick={() => quitar(m.id)}
+        title="Quitar esta línea"
+        aria-label={`Quitar la media de ${m.periodo}`}
+        className="rounded p-1 text-tv-text-dim hover:bg-tv-panel-hover hover:text-tv-red"
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+      </button>
     </div>
   );
 }
