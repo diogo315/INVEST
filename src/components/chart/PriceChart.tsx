@@ -18,6 +18,8 @@ import {
   type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
+import { Maximize2, Minimize2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { fetchKlinesCached } from "@/lib/binance/multi-tf";
 import { readCandleCache, writeCandleCache } from "@/lib/binance/candle-cache";
 import { BandFill, ZoneGradientFill } from "@/lib/chart/band-fill";
@@ -358,6 +360,21 @@ export function PriceChart({ symbol, timeframe }: Props) {
   // las curvas del símbolo anterior.
   const [sinDatos, setSinDatos] = useState(false);
   const [paneOffsets, setPaneOffsets] = useState<PaneOffset[]>([]);
+  // Ancho de la escala de precios: las chapas de maximizar van a su
+  // izquierda, si no quedan encima de los números.
+  const [anchoEscala, setAnchoEscala] = useState(70);
+  /** Panel maximizado (índice), o null si están todos en su tamaño. */
+  const [paneMaximizado, setPaneMaximizado] = useState<number | null>(null);
+  /**
+   * Con un panel maximizado, los demás quedan en 14 px: sus leyendas se
+   * amontonarían arriba de todo, una encima de otra. Solo se muestra la
+   * del panel que se está viendo.
+   */
+  const verPane = (i: number) => paneMaximizado === null || paneMaximizado === i;
+  /** Proporciones antes de maximizar, para poder volver a dejarlas igual. */
+  const factoresPreviosRef = useRef<number[] | null>(null);
+  const maximizadoRef = useRef<number | null>(null);
+  maximizadoRef.current = paneMaximizado;
   const [measure, setMeasure] = useState<MeasureState>(INITIAL_MEASURE);
   const [renderTick, setRenderTick] = useState(0);
   const measureRef = useRef(measure);
@@ -379,6 +396,15 @@ export function PriceChart({ symbol, timeframe }: Props) {
   function recomputePaneOffsets() {
     if (!chartRef.current) return;
     const panes = chartRef.current.panes();
+    // Si se quitó el indicador que estaba maximizado, su panel ya no
+    // existe: se vuelve a proporciones normales en vez de dejar el chart
+    // deformado y sin botón para restaurar.
+    if (maximizadoRef.current !== null && maximizadoRef.current >= panes.length) {
+      panes.forEach((p, i) => p.setStretchFactor(i === 0 ? 3 : 1));
+      factoresPreviosRef.current = null;
+      maximizadoRef.current = null;
+      setPaneMaximizado(null);
+    }
     let top = 0;
     const offsets: PaneOffset[] = panes.map((p) => {
       const h = p.getHeight();
@@ -387,6 +413,39 @@ export function PriceChart({ symbol, timeframe }: Props) {
       return o;
     });
     setPaneOffsets(offsets);
+    try {
+      setAnchoEscala(chartRef.current.priceScale("right").width());
+    } catch {
+      // Escala no lista todavía: queda el valor anterior.
+    }
+  }
+
+  /**
+   * Maximiza un panel (el del precio o el de cualquier indicador) estirando
+   * su proporción y achicando las demás. lightweight-charts no sabe ocultar
+   * un panel, así que "maximizado" es el que se lleva casi todo el alto.
+   */
+  function maximizarPane(indice: number | null) {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const panes = chart.panes();
+    if (indice !== null) {
+      // Se guardan las proporciones actuales una sola vez, para restaurarlas
+      // tal cual estaban (cada indicador tiene la suya).
+      factoresPreviosRef.current ??= panes.map((p) => p.getStretchFactor());
+      panes.forEach((p, i) => p.setStretchFactor(i === indice ? 60 : 1));
+    } else {
+      const previos = factoresPreviosRef.current;
+      panes.forEach((p, i) => p.setStretchFactor(previos?.[i] ?? (i === 0 ? 3 : 1)));
+      factoresPreviosRef.current = null;
+    }
+    setPaneMaximizado(indice);
+    // El relayout del chart no es inmediato: las chapas se reubican recién
+    // en el frame siguiente.
+    requestAnimationFrame(() => {
+      recomputePaneOffsets();
+      requestAnimationFrame(() => recomputePaneOffsets());
+    });
   }
 
   // Los osciladores pesados (BB, VWAP, Stoch, Stoch RSI, Cipher B) se
@@ -1473,6 +1532,17 @@ export function PriceChart({ symbol, timeframe }: Props) {
       visible: cipherOn && cfg.cipherShowSommiFastWave,
     });
   }, [indicators, hidden, config]);
+
+  // Escape también restaura: es lo que uno intenta primero.
+  useEffect(() => {
+    if (paneMaximizado === null) return;
+    const alTeclear = (e: KeyboardEvent) => {
+      if (e.key === "Escape") maximizarPane(null);
+    };
+    window.addEventListener("keydown", alTeclear);
+    return () => window.removeEventListener("keydown", alTeclear);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paneMaximizado]);
 
   // Las medias se recalculan cuando cambia la lista (períodos, tipo…).
   useEffect(() => {
@@ -2924,8 +2994,39 @@ export function PriceChart({ symbol, timeframe }: Props) {
         </div>
       )}
 
+      {/* Maximizar / restaurar: una chapa por panel, arriba a la derecha,
+          a la izquierda de la escala de precios. Solo tiene sentido cuando
+          hay más de un panel. */}
+      {paneOffsets.length > 1 &&
+        paneOffsets.map((o, i) => {
+          if (paneMaximizado !== null && paneMaximizado !== i) return null;
+          const activo = paneMaximizado === i;
+          const nombre = i === 0 ? "el gráfico" : "este indicador";
+          return (
+            <button
+              key={`max-${i}`}
+              onClick={() => maximizarPane(activo ? null : i)}
+              title={activo ? `Restaurar ${nombre}` : `Maximizar ${nombre}`}
+              aria-label={activo ? `Restaurar ${nombre}` : `Maximizar ${nombre}`}
+              aria-pressed={activo}
+              style={{ top: o.top + 6, right: anchoEscala + 8 }}
+              className={cn(
+                "absolute z-10 rounded bg-tv-panel/90 p-1 text-tv-text-dim opacity-40 shadow-sm ring-1 ring-tv-border backdrop-blur transition-opacity hover:text-tv-text hover:opacity-100",
+                activo && "text-tv-blue opacity-100",
+              )}
+            >
+              {activo ? (
+                <Minimize2 className="h-3.5 w-3.5" />
+              ) : (
+                <Maximize2 className="h-3.5 w-3.5" />
+              )}
+            </button>
+          );
+        })}
+
       {/* Top-left of main pane: symbol info + OHLC + Volume pill + EMA pills */}
       <div
+        hidden={!verPane(0)}
         style={{ top: (paneOffsets[0]?.top ?? 0) + 12, left: 12 }}
         className="pointer-events-none absolute z-10 flex flex-col gap-1 text-xs tabular-nums"
       >
@@ -3078,7 +3179,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
       </div>
 
       {/* RSI pane label */}
-      {indicators.rsi && paneOffsets[rsiPaneIdx] && (
+      {indicators.rsi && paneOffsets[rsiPaneIdx] && verPane(rsiPaneIdx) && (
         <div
           style={{ top: paneOffsets[rsiPaneIdx].top + 6, left: 12 }}
           className="pointer-events-none absolute z-10"
@@ -3096,7 +3197,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
       )}
 
       {/* MACD pane label */}
-      {indicators.macd && paneOffsets[macdPaneIdx] && (
+      {indicators.macd && paneOffsets[macdPaneIdx] && verPane(macdPaneIdx) && (
         <div
           style={{ top: paneOffsets[macdPaneIdx].top + 6, left: 12 }}
           className="pointer-events-none absolute z-10"
@@ -3118,7 +3219,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
       )}
 
       {/* Cipher B pane label */}
-      {indicators.cipher && paneOffsets[cipherPaneIdx] && (
+      {indicators.cipher && paneOffsets[cipherPaneIdx] && verPane(cipherPaneIdx) && (
         <div
           style={{ top: paneOffsets[cipherPaneIdx].top + 6, left: 12 }}
           className="pointer-events-none absolute z-10"
@@ -3140,7 +3241,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
       )}
 
       {/* Stochastic pane label */}
-      {indicators.stoch && paneOffsets[stochPaneIdx] && (
+      {indicators.stoch && paneOffsets[stochPaneIdx] && verPane(stochPaneIdx) && (
         <div
           style={{ top: paneOffsets[stochPaneIdx].top + 6, left: 12 }}
           className="pointer-events-none absolute z-10"
@@ -3162,7 +3263,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
       )}
 
       {/* Stoch RSI pane label */}
-      {indicators.srsi && paneOffsets[srsiPaneIdx] && (
+      {indicators.srsi && paneOffsets[srsiPaneIdx] && verPane(srsiPaneIdx) && (
         <div
           style={{ top: paneOffsets[srsiPaneIdx].top + 6, left: 12 }}
           className="pointer-events-none absolute z-10"
