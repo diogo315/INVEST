@@ -171,6 +171,27 @@ export async function traerCadena(
   };
 }
 
+export interface Sugerencia {
+  /** Ticker. */
+  s: string;
+  /** Nombre de la empresa. */
+  n: string;
+  /** Mercado donde cotiza. */
+  e: string;
+}
+
+/**
+ * Autocompletado de tickers. Busca por símbolo y por nombre de la empresa,
+ * así "amazon" encuentra AMZN. El catálogo lo cachea el servidor.
+ */
+export async function buscarSimbolos(q: string): Promise<Sugerencia[]> {
+  if (!q.trim()) return [];
+  const d = (await pedir({ recurso: "buscar", q })) as {
+    resultados?: Sugerencia[];
+  };
+  return d?.resultados ?? [];
+}
+
 /** Días calendario que faltan hasta una fecha YYYY-MM-DD. */
 export function diasHasta(fecha: string): number {
   const [a, m, d] = fecha.split("-").map(Number);

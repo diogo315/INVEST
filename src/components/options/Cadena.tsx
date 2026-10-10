@@ -1,13 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Download, Plus, RefreshCw } from "lucide-react";
 import {
+  buscarSimbolos,
   diasHasta,
   traerCadena,
   traerPrecioAccion,
   type Cadena as CadenaDatos,
   type Contrato,
+  type Sugerencia,
 } from "@/lib/options/alpaca";
 import { MULTIPLICADOR_EEUU, useOptionsStore } from "@/lib/store/options-store";
 import { Tarjeta } from "./ui";
@@ -26,8 +28,8 @@ export function Cadena() {
   );
   const [todos, setTodos] = useState(false);
 
-  const traer = async () => {
-    const sim = ticker.trim().toUpperCase();
+  const traer = async (simbolo?: string) => {
+    const sim = (simbolo ?? ticker).trim().toUpperCase();
     if (!sim) return;
     setCargando(true);
     setError(null);
@@ -113,19 +115,16 @@ export function Cadena() {
       subtitulo="Datos de Alpaca. El plan gratis entrega el feed «indicative» de opciones y acciones por IEX: sirve para estudiar y simular, no para pasar órdenes."
     >
       <div className="flex flex-wrap items-end gap-2">
-        <label className="flex flex-col gap-1">
-          <span className="text-[10px] uppercase tracking-wider text-tv-text-muted">
-            Ticker
-          </span>
-          <input
-            value={ticker}
-            onChange={(e) => setTicker(e.target.value.toUpperCase())}
-            onKeyDown={(e) => e.key === "Enter" && traer()}
-            className="w-28 rounded border border-tv-border bg-tv-bg px-2 py-1.5 text-xs font-semibold text-tv-text outline-none focus:border-tv-blue"
-          />
-        </label>
+        <BuscadorTicker
+          valor={ticker}
+          onCambio={setTicker}
+          onElegir={(sim) => {
+            setTicker(sim);
+            traer(sim);
+          }}
+        />
         <button
-          onClick={traer}
+          onClick={() => traer()}
           disabled={cargando}
           className="flex items-center gap-1.5 rounded bg-tv-blue/20 px-3 py-1.5 text-xs font-medium text-tv-blue transition-colors hover:bg-tv-blue/30 disabled:opacity-50"
         >
@@ -320,5 +319,151 @@ function LadoBotones({
         <Plus className="inline h-3 w-3" />
       </button>
     </td>
+  );
+}
+
+/**
+ * Autocompletado de tickers: busca por símbolo y por nombre de la empresa,
+ * así "amazon" encuentra AMZN. Escribir el nombre completo y que no exista el
+ * ticker era justo el tropiezo que había.
+ */
+function BuscadorTicker({
+  valor,
+  onCambio,
+  onElegir,
+}: {
+  valor: string;
+  onCambio: (v: string) => void;
+  onElegir: (simbolo: string) => void;
+}) {
+  const [sugerencias, setSugerencias] = useState<Sugerencia[]>([]);
+  const [abierto, setAbierto] = useState(false);
+  const [activo, setActivo] = useState(0);
+  const [buscando, setBuscando] = useState(false);
+  const contenedor = useRef<HTMLDivElement | null>(null);
+  // Si el usuario ya eligió, no se vuelve a buscar con ese mismo texto. Se
+  // arranca con el valor inicial para no disparar una búsqueda al cargar la
+  // página solo porque el campo viene con el último ticker guardado.
+  const elegido = useRef<string | null>(valor);
+
+  useEffect(() => {
+    // Todo adentro del timeout: no se llama a setState en el cuerpo del
+    // efecto (la regla react-hooks/set-state-in-effect lo marca como error).
+    const t = setTimeout(async () => {
+      const q = valor.trim();
+      if (!q || q === elegido.current) {
+        setSugerencias([]);
+        setAbierto(false);
+        return;
+      }
+      setBuscando(true);
+      try {
+        const r = await buscarSimbolos(q);
+        setSugerencias(r);
+        setActivo(0);
+        setAbierto(r.length > 0);
+      } catch {
+        setSugerencias([]);
+        setAbierto(false);
+      } finally {
+        setBuscando(false);
+      }
+    }, 250);
+    return () => clearTimeout(t);
+  }, [valor]);
+
+  // Cerrar al hacer clic afuera.
+  useEffect(() => {
+    const fuera = (e: MouseEvent) => {
+      if (!contenedor.current?.contains(e.target as Node)) setAbierto(false);
+    };
+    document.addEventListener("mousedown", fuera);
+    return () => document.removeEventListener("mousedown", fuera);
+  }, []);
+
+  const elegir = (s: Sugerencia) => {
+    elegido.current = s.s;
+    setAbierto(false);
+    setSugerencias([]);
+    onElegir(s.s);
+  };
+
+  const teclas = (e: React.KeyboardEvent) => {
+    if (!abierto || sugerencias.length === 0) {
+      if (e.key === "Enter") onElegir(valor.trim().toUpperCase());
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActivo((i) => (i + 1) % sugerencias.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActivo((i) => (i - 1 + sugerencias.length) % sugerencias.length);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      elegir(sugerencias[activo]);
+    } else if (e.key === "Escape") {
+      setAbierto(false);
+    }
+  };
+
+  return (
+    <div ref={contenedor} className="relative flex flex-col gap-1">
+      <span className="text-[10px] uppercase tracking-wider text-tv-text-muted">
+        Ticker o nombre
+      </span>
+      <input
+        value={valor}
+        onChange={(e) => {
+          elegido.current = null;
+          onCambio(e.target.value);
+        }}
+        onFocus={() => sugerencias.length > 0 && setAbierto(true)}
+        onKeyDown={teclas}
+        placeholder="AMZN o Amazon"
+        autoComplete="off"
+        role="combobox"
+        aria-expanded={abierto}
+        aria-controls="lista-tickers"
+        className="w-56 rounded border border-tv-border bg-tv-bg px-2 py-1.5 text-xs font-semibold text-tv-text outline-none placeholder:font-normal placeholder:text-tv-text-dim focus:border-tv-blue"
+      />
+      {buscando && (
+        <span className="absolute right-2 top-[26px] text-[10px] text-tv-text-dim">
+          …
+        </span>
+      )}
+      {abierto && sugerencias.length > 0 && (
+        <ul
+          id="lista-tickers"
+          role="listbox"
+          className="absolute left-0 top-full z-20 mt-1 max-h-72 w-[26rem] overflow-y-auto rounded-lg border border-tv-border bg-tv-panel py-1 shadow-xl"
+        >
+          {sugerencias.map((s, i) => (
+            <li key={s.s}>
+              <button
+                role="option"
+                aria-selected={i === activo}
+                onMouseEnter={() => setActivo(i)}
+                onClick={() => elegir(s)}
+                className={cn(
+                  "flex w-full items-baseline gap-2 px-2.5 py-1.5 text-left text-xs",
+                  i === activo ? "bg-tv-panel-hover" : "",
+                )}
+              >
+                <span className="w-14 shrink-0 font-semibold text-tv-text">
+                  {s.s}
+                </span>
+                <span className="flex-1 truncate text-tv-text-muted">
+                  {s.n || "—"}
+                </span>
+                <span className="shrink-0 text-[10px] text-tv-text-dim">
+                  {s.e}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
