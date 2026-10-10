@@ -6,6 +6,11 @@ import { cn } from "@/lib/utils";
 interface Props {
   name: string;
   value?: string;
+  /**
+   * Varios valores en una sola píldora, cada uno con su color. Lo usa el
+   * indicador de medias móviles, que es una lista de líneas y no una sola.
+   */
+  valores?: Array<{ texto: string; color: string; apagada?: boolean }>;
   color: string;
   hidden: boolean;
   onToggleHide: () => void;
@@ -16,6 +21,7 @@ interface Props {
 export function IndicatorPill({
   name,
   value,
+  valores,
   color,
   hidden,
   onToggleHide,
@@ -37,6 +43,15 @@ export function IndicatorPill({
       {value !== undefined && (
         <span className="tabular-nums text-tv-text-muted">{value}</span>
       )}
+      {valores?.map((v, i) => (
+        <span
+          key={i}
+          className={cn("tabular-nums", v.apagada && "opacity-40 line-through")}
+          style={{ color: v.color }}
+        >
+          {v.texto}
+        </span>
+      ))}
       <div className="ml-1 flex items-center gap-0.5">
         <button
           onClick={onToggleHide}

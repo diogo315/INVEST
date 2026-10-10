@@ -26,6 +26,7 @@ import { tickMarkFormatter, timeFormatter } from "@/lib/chart/timezone";
 import { getAdapter, parseSymbol } from "@/lib/exchanges";
 import {
   ema,
+  sma,
   rsi,
   rsiDivergences,
   maOverPoints,
@@ -193,9 +194,8 @@ interface HoverInfo {
 }
 
 interface LastValues {
-  ema20?: number;
-  ema50?: number;
-  ema200?: number;
+  /** Último valor de cada media móvil, por id de línea. */
+  medias?: Record<string, number>;
   rsi?: number;
   macd?: number;
   macdSignal?: number;
@@ -228,9 +228,9 @@ export function PriceChart({ symbol, timeframe }: Props) {
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
-  const ema20Ref = useRef<ISeriesApi<"Line"> | null>(null);
-  const ema50Ref = useRef<ISeriesApi<"Line"> | null>(null);
-  const ema200Ref = useRef<ISeriesApi<"Line"> | null>(null);
+  // Una serie por línea de media móvil, indexada por el id de la línea: la
+  // lista es variable (se agregan y se quitan desde el diálogo).
+  const mediasRef = useRef<Map<string, ISeriesApi<"Line">>>(new Map());
   const rsiRef = useRef<ISeriesApi<"Line"> | null>(null);
   const rsi30Ref = useRef<ISeriesApi<"Line"> | null>(null);
   const rsi70Ref = useRef<ISeriesApi<"Line"> | null>(null);
@@ -322,6 +322,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
   const indicators = useChartStore((s) => s.indicators);
   const hidden = useChartStore((s) => s.hidden);
   const config = useChartStore((s) => s.config);
+  const medias = useChartStore((s) => s.medias);
   const tool = useChartStore((s) => s.tool);
   const priceLines = useChartStore((s) => s.priceLines);
   const addPriceLine = useChartStore((s) => s.addPriceLine);
@@ -342,6 +343,13 @@ export function PriceChart({ symbol, timeframe }: Props) {
   symbolRef.current = symbol;
   const configRef = useRef(config);
   configRef.current = config;
+  // La lista de medias, para leerla desde los callbacks que no son reactivos.
+  const listaMediasRef = useRef(medias);
+  listaMediasRef.current = medias;
+  const indicatorsRef = useRef(indicators);
+  indicatorsRef.current = indicators;
+  const hiddenRef = useRef(hidden);
+  hiddenRef.current = hidden;
 
   const [hover, setHover] = useState<HoverInfo | null>(null);
   const [lastPrice, setLastPrice] = useState<{ value: number; pct: number } | null>(null);
@@ -477,25 +485,6 @@ export function PriceChart({ symbol, timeframe }: Props) {
       wickDownColor: TV_COLORS.red,
       priceLineColor: TV_COLORS.textMuted,
       priceLineStyle: 2,
-    });
-
-    ema20Ref.current = chart.addSeries(LineSeries, {
-      color: INDICATOR_COLORS.ema20,
-      lineWidth: 1,
-      priceLineVisible: false,
-      lastValueVisible: false,
-    });
-    ema50Ref.current = chart.addSeries(LineSeries, {
-      color: INDICATOR_COLORS.ema50,
-      lineWidth: 1,
-      priceLineVisible: false,
-      lastValueVisible: false,
-    });
-    ema200Ref.current = chart.addSeries(LineSeries, {
-      color: INDICATOR_COLORS.ema200,
-      lineWidth: 2,
-      priceLineVisible: false,
-      lastValueVisible: false,
     });
 
     // Bollinger Bands — upper / middle / lower (pane 0, hidden by default)
@@ -666,6 +655,9 @@ export function PriceChart({ symbol, timeframe }: Props) {
     });
     ro.observe(containerRef.current);
     recomputePaneOffsets();
+    // Las medias son series dinámicas: hay que crearlas cada vez que nace
+    // un chart nuevo, no solo cuando cambia la lista.
+    sincronizarMedias();
 
     return () => {
       chart.timeScale().unsubscribeVisibleTimeRangeChange(tsRangeHandler);
@@ -676,9 +668,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
       candleSeriesRef.current = null;
       volumeSeriesRef.current = null;
       priceLinesMapRef.current.clear();
-      ema20Ref.current = null;
-      ema50Ref.current = null;
-      ema200Ref.current = null;
+      mediasRef.current.clear();
       rsiRef.current = null;
       rsi30Ref.current = null;
       rsi70Ref.current = null;
@@ -1402,9 +1392,12 @@ export function PriceChart({ symbol, timeframe }: Props) {
   // Visibility — eye toggle (hidden state) + enabled state combined
   useEffect(() => {
     const v = (key: IndicatorKey) => indicators[key] && !hidden[key];
-    ema20Ref.current?.applyOptions({ visible: v("ema20") });
-    ema50Ref.current?.applyOptions({ visible: v("ema50") });
-    ema200Ref.current?.applyOptions({ visible: v("ema200") });
+    // Cada media tiene además su propio ojo dentro del indicador.
+    for (const m of listaMediasRef.current) {
+      mediasRef.current
+        .get(m.id)
+        ?.applyOptions({ visible: v("medias") && m.visible });
+    }
     if (rsiRef.current) rsiRef.current.applyOptions({ visible: v("rsi") });
     if (rsi30Ref.current) rsi30Ref.current.applyOptions({ visible: v("rsi") });
     if (rsi70Ref.current) rsi70Ref.current.applyOptions({ visible: v("rsi") });
@@ -1481,10 +1474,12 @@ export function PriceChart({ symbol, timeframe }: Props) {
     });
   }, [indicators, hidden, config]);
 
-  // Recompute indicators when config changes (periods)
+  // Las medias se recalculan cuando cambia la lista (períodos, tipo…).
   useEffect(() => {
+    sincronizarMedias();
     updateEMAs();
-  }, [config.ema20, config.ema50, config.ema200]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [medias]);
 
   useEffect(() => {
     updateRSI();
@@ -1701,43 +1696,64 @@ export function PriceChart({ symbol, timeframe }: Props) {
     if (tool !== "measure") setMeasure(INITIAL_MEASURE);
   }, [tool]);
 
+  /**
+   * Crea las series que falten y borra las que sobren, para que el gráfico
+   * tenga exactamente una línea por media configurada. Se llama cada vez
+   * que cambia la lista; al cambiar de temporalidad o de activo las series
+   * se quedan como están y solo se recalculan los datos.
+   */
+  function sincronizarMedias() {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const lista = listaMediasRef.current;
+    const vivos = new Set(lista.map((m) => m.id));
+
+    for (const [id, serie] of mediasRef.current) {
+      if (vivos.has(id)) continue;
+      try {
+        chart.removeSeries(serie);
+      } catch {
+        // Ya removida con el chart: no pasa nada.
+      }
+      mediasRef.current.delete(id);
+    }
+
+    const prendido = indicatorsRef.current.medias && !hiddenRef.current.medias;
+    for (const m of lista) {
+      const opciones = {
+        color: m.color,
+        lineWidth: (m.grosor === 2 ? 2 : 1) as 1 | 2,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        visible: prendido && m.visible,
+      };
+      const existente = mediasRef.current.get(m.id);
+      if (existente) existente.applyOptions(opciones);
+      else {
+        // Las medias van en el pane del precio, que siempre es el 0.
+        mediasRef.current.set(m.id, chart.addSeries(LineSeries, opciones, 0));
+      }
+    }
+  }
+
   function updateEMAs() {
     const c = candlesRef.current;
     if (c.length === 0) return;
-    const cfg = configRef.current;
-    let last20: number | undefined;
-    let last50: number | undefined;
-    let last200: number | undefined;
+    const ultimos: Record<string, number> = {};
 
-    if (ema20Ref.current) {
-      const data = ema(c, cfg.ema20);
-      ema20Ref.current.setData(
+    for (const m of listaMediasRef.current) {
+      const serie = mediasRef.current.get(m.id);
+      if (!serie) continue;
+      const data = m.tipo === "SMA" ? sma(c, m.periodo) : ema(c, m.periodo);
+      serie.setData(
         data.map((p) => ({ time: p.time as UTCTimestamp, value: p.value })),
       );
-      last20 = data.at(-1)?.value;
+      const ultimo = data.at(-1)?.value;
+      if (ultimo !== undefined) ultimos[m.id] = ultimo;
     }
-    if (ema50Ref.current) {
-      const data = ema(c, cfg.ema50);
-      ema50Ref.current.setData(
-        data.map((p) => ({ time: p.time as UTCTimestamp, value: p.value })),
-      );
-      last50 = data.at(-1)?.value;
-    }
-    if (ema200Ref.current) {
-      const data = ema(c, cfg.ema200);
-      ema200Ref.current.setData(
-        data.map((p) => ({ time: p.time as UTCTimestamp, value: p.value })),
-      );
-      last200 = data.at(-1)?.value;
-    }
+
     const lastVol = c.at(-1)?.volume;
-    setLastValues((prev) => ({
-      ...prev,
-      ema20: last20,
-      ema50: last50,
-      ema200: last200,
-      volume: lastVol,
-    }));
+    setLastValues((prev) => ({ ...prev, medias: ultimos, volume: lastVol }));
   }
 
   function updateRSI() {
@@ -2722,6 +2738,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
         // Pintamos velas + EMAs y recién en el frame siguiente calculamos
         // los osciladores pesados: el chart aparece sin esperar al cómputo.
         anclarDerecha(chartRef.current);
+        sincronizarMedias();
         updateEMAs();
         requestAnimationFrame(() => {
           if (cancelled) return;
@@ -2967,37 +2984,23 @@ export function PriceChart({ symbol, timeframe }: Props) {
 
         {/* Indicator pills for the main pane (fixed position below price) */}
         <div className="mt-1 flex flex-col items-start gap-1">
-          {indicators.ema20 && (
+          {indicators.medias && medias.length > 0 && (
             <IndicatorPill
-              name={`EMA ${config.ema20}`}
-              value={lastValues.ema20 !== undefined ? formatPrice(lastValues.ema20) : undefined}
-              color={INDICATOR_COLORS.ema20}
-              hidden={hidden.ema20}
-              onToggleHide={() => toggleHidden("ema20")}
-              onSettings={() => setSettingsTarget("ema20")}
-              onRemove={() => removeIndicator("ema20")}
-            />
-          )}
-          {indicators.ema50 && (
-            <IndicatorPill
-              name={`EMA ${config.ema50}`}
-              value={lastValues.ema50 !== undefined ? formatPrice(lastValues.ema50) : undefined}
-              color={INDICATOR_COLORS.ema50}
-              hidden={hidden.ema50}
-              onToggleHide={() => toggleHidden("ema50")}
-              onSettings={() => setSettingsTarget("ema50")}
-              onRemove={() => removeIndicator("ema50")}
-            />
-          )}
-          {indicators.ema200 && (
-            <IndicatorPill
-              name={`EMA ${config.ema200}`}
-              value={lastValues.ema200 !== undefined ? formatPrice(lastValues.ema200) : undefined}
-              color={INDICATOR_COLORS.ema200}
-              hidden={hidden.ema200}
-              onToggleHide={() => toggleHidden("ema200")}
-              onSettings={() => setSettingsTarget("ema200")}
-              onRemove={() => removeIndicator("ema200")}
+              name="Medias"
+              color={medias[0]?.color ?? INDICATOR_COLORS.medias}
+              valores={medias.map((m) => ({
+                texto: `${m.tipo === "SMA" ? "SMA" : "EMA"} ${m.periodo}${
+                  lastValues.medias?.[m.id] !== undefined
+                    ? ` ${formatPrice(lastValues.medias[m.id])}`
+                    : ""
+                }`,
+                color: m.color,
+                apagada: !m.visible,
+              }))}
+              hidden={hidden.medias}
+              onToggleHide={() => toggleHidden("medias")}
+              onSettings={() => setSettingsTarget("medias")}
+              onRemove={() => removeIndicator("medias")}
             />
           )}
           {indicators.volume && (

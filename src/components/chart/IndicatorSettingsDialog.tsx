@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Eye, EyeOff, Plus, Trash2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -12,13 +13,12 @@ import { Button } from "@/components/ui/button";
 import {
   useChartStore,
   DEFAULT_CONFIG,
+  MAX_MEDIAS,
   type IndicatorKey,
 } from "@/lib/store/chart-store";
 
 const TITLES: Record<IndicatorKey, string> = {
-  ema20: "EMA — Slot 1",
-  ema50: "EMA — Slot 2",
-  ema200: "EMA — Slot 3",
+  medias: "Medias móviles",
   rsi: "RSI",
   macd: "MACD",
   volume: "Volumen",
@@ -82,9 +82,6 @@ interface FormProps {
 function SettingsForm({ target, config, onApply, onSave, onReset }: FormProps) {
   // Local draft state to avoid recalculating chart on every keystroke
   const [draft, setDraft] = useState({
-    ema20: config.ema20,
-    ema50: config.ema50,
-    ema200: config.ema200,
     rsi: config.rsi,
     rsiMaLength: config.rsiMaLength,
     rsiBbMult: config.rsiBbMult,
@@ -119,9 +116,6 @@ function SettingsForm({ target, config, onApply, onSave, onReset }: FormProps) {
 
   useEffect(() => {
     setDraft({
-      ema20: config.ema20,
-      ema50: config.ema50,
-      ema200: config.ema200,
       rsi: config.rsi,
       rsiMaLength: config.rsiMaLength,
       rsiBbMult: config.rsiBbMult,
@@ -156,10 +150,7 @@ function SettingsForm({ target, config, onApply, onSave, onReset }: FormProps) {
   }, [config, target]);
 
   function save() {
-    if (target === "ema20") onSave({ ema20: clamp(draft.ema20, 2, 500) });
-    else if (target === "ema50") onSave({ ema50: clamp(draft.ema50, 2, 500) });
-    else if (target === "ema200") onSave({ ema200: clamp(draft.ema200, 2, 500) });
-    else if (target === "rsi")
+    if (target === "rsi")
       onSave({
         rsi: clamp(draft.rsi, 2, 100),
         rsiMaLength: clamp(draft.rsiMaLength, 1, 500),
@@ -215,13 +206,7 @@ function SettingsForm({ target, config, onApply, onSave, onReset }: FormProps) {
 
   return (
     <div className="flex flex-col gap-3">
-      {(target === "ema20" || target === "ema50" || target === "ema200") && (
-        <Field
-          label="Período"
-          value={draft[target]}
-          onChange={(n) => setDraft((d) => ({ ...d, [target]: n }))}
-        />
-      )}
+      {target === "medias" && <EditorMedias />}
       {target === "rsi" && (
         <div className="flex max-h-[60vh] flex-col gap-3 overflow-y-auto pr-2">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-tv-text-dim">
@@ -1022,19 +1007,33 @@ function SettingsForm({ target, config, onApply, onSave, onReset }: FormProps) {
         </div>
       )}
 
-      <div className="mt-2 flex items-center justify-between">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onReset}
-          className="text-tv-text-muted hover:text-tv-text"
-        >
-          Reset defaults
-        </Button>
-        <Button size="sm" onClick={save} className="bg-tv-blue hover:bg-tv-blue/90">
-          Aplicar
-        </Button>
-      </div>
+      {/* Las medias se aplican al instante: no tiene sentido un "Aplicar"
+          que no aplica nada. */}
+      {target === "medias" ? (
+        <div className="mt-2 flex justify-end">
+          <Button
+            size="sm"
+            onClick={() => onSave({})}
+            className="bg-tv-blue hover:bg-tv-blue/90"
+          >
+            Listo
+          </Button>
+        </div>
+      ) : (
+        <div className="mt-2 flex items-center justify-between">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onReset}
+            className="text-tv-text-muted hover:text-tv-text"
+          >
+            Reset defaults
+          </Button>
+          <Button size="sm" onClick={save} className="bg-tv-blue hover:bg-tv-blue/90">
+            Aplicar
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -1215,4 +1214,161 @@ function clamp(n: number, min: number, max: number): number {
 /** clamp para decimales (clamp() se usa con enteros en el resto del form). */
 function clampF(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
+}
+
+/**
+ * Editor del indicador de medias móviles: una fila por línea, con su tipo,
+ * período, color y ojo, más el botón para agregar otra. Los cambios se
+ * aplican al instante (no hay "Guardar" para esta parte) porque cada uno es
+ * una línea distinta y se ve enseguida en el gráfico.
+ */
+function EditorMedias() {
+  const medias = useChartStore((s) => s.medias);
+  const agregar = useChartStore((s) => s.agregarMedia);
+  const editar = useChartStore((s) => s.editarMedia);
+  const quitar = useChartStore((s) => s.quitarMedia);
+  const [nuevo, setNuevo] = useState("");
+
+  const sugerido = () => {
+    const n = parseInt(nuevo, 10);
+    if (Number.isFinite(n) && n >= 1) return n;
+    // Sin nada escrito, propone el doble de la más lenta.
+    const mayor = medias.reduce((m, x) => Math.max(m, x.periodo), 0);
+    return Math.min(2000, mayor > 0 ? mayor * 2 : 20);
+  };
+
+  const puedeAgregar = medias.length < MAX_MEDIAS;
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="text-[10px] font-semibold uppercase tracking-wider text-tv-text-dim">
+        Líneas ({medias.length} de {MAX_MEDIAS})
+      </div>
+
+      <div className="flex max-h-[45vh] flex-col gap-1.5 overflow-y-auto pr-1">
+        {medias.length === 0 && (
+          <p className="py-2 text-xs text-tv-text-muted">
+            No hay ninguna media. Agregá la primera abajo.
+          </p>
+        )}
+        {medias.map((m) => (
+          <div
+            key={m.id}
+            className="flex items-center gap-2 rounded border border-tv-border bg-tv-bg px-2 py-1.5"
+          >
+            <input
+              type="color"
+              value={m.color}
+              onChange={(e) => editar(m.id, { color: e.target.value })}
+              title="Color de la línea"
+              aria-label={`Color de la media de ${m.periodo}`}
+              className="h-5 w-5 shrink-0 cursor-pointer rounded border-0 bg-transparent p-0"
+            />
+            <select
+              value={m.tipo}
+              onChange={(e) =>
+                editar(m.id, { tipo: e.target.value === "SMA" ? "SMA" : "EMA" })
+              }
+              aria-label="Tipo de media"
+              className="shrink-0 rounded bg-tv-panel px-1 py-0.5 text-[11px] text-tv-text outline-none"
+            >
+              <option value="EMA">EMA</option>
+              <option value="SMA">SMA</option>
+            </select>
+            <Input
+              type="number"
+              min={1}
+              max={2000}
+              value={m.periodo}
+              onChange={(e) => {
+                const n = parseInt(e.target.value, 10);
+                if (Number.isFinite(n) && n >= 1) editar(m.id, { periodo: n });
+              }}
+              aria-label={`Período de la media ${m.tipo}`}
+              className="h-7 w-20 bg-tv-panel tabular-nums"
+            />
+            <select
+              value={m.grosor}
+              onChange={(e) => editar(m.id, { grosor: Number(e.target.value) })}
+              aria-label="Grosor de la línea"
+              className="shrink-0 rounded bg-tv-panel px-1 py-0.5 text-[11px] text-tv-text outline-none"
+            >
+              <option value={1}>Fina</option>
+              <option value={2}>Gruesa</option>
+            </select>
+            <button
+              type="button"
+              onClick={() => editar(m.id, { visible: !m.visible })}
+              title={m.visible ? "Ocultar esta línea" : "Mostrar esta línea"}
+              aria-label={
+                m.visible
+                  ? `Ocultar la media de ${m.periodo}`
+                  : `Mostrar la media de ${m.periodo}`
+              }
+              className="ml-auto rounded p-1 text-tv-text-dim hover:bg-tv-panel-hover hover:text-tv-text"
+            >
+              {m.visible ? (
+                <Eye className="h-3.5 w-3.5" />
+              ) : (
+                <EyeOff className="h-3.5 w-3.5" />
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => quitar(m.id)}
+              title="Quitar esta línea"
+              aria-label={`Quitar la media de ${m.periodo}`}
+              className="rounded p-1 text-tv-text-dim hover:bg-tv-panel-hover hover:text-tv-red"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex items-end gap-2 border-t border-tv-border pt-3">
+        <label className="flex flex-1 flex-col gap-1">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-tv-text-muted">
+            Nueva media (período)
+          </span>
+          <Input
+            type="number"
+            min={1}
+            max={2000}
+            placeholder={String(sugerido())}
+            value={nuevo}
+            onChange={(e) => setNuevo(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && puedeAgregar) {
+                agregar(sugerido());
+                setNuevo("");
+              }
+            }}
+            className="bg-tv-bg tabular-nums"
+          />
+        </label>
+        <Button
+          type="button"
+          disabled={!puedeAgregar}
+          onClick={() => {
+            agregar(sugerido());
+            setNuevo("");
+          }}
+          className="gap-1"
+        >
+          <Plus className="h-3.5 w-3.5" /> Agregar
+        </Button>
+      </div>
+      {!puedeAgregar && (
+        <p className="text-[10px] text-tv-text-muted">
+          Llegaste al tope de {MAX_MEDIAS} líneas. Quitá una para agregar otra.
+        </p>
+      )}
+      <p className="text-[10px] text-tv-text-muted">
+        Las líneas se guardan y siguen puestas al cambiar de temporalidad o de
+        activo: el período es en velas, así que una EMA 50 en 4H son 50 velas
+        de 4 horas.
+      </p>
+    </div>
+  );
 }

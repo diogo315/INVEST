@@ -26,9 +26,12 @@ interface Entry {
 }
 
 const ENTRIES: Entry[] = [
-  { key: "ema20", group: "Medias móviles", label: (c) => `EMA ${c.ema20}` },
-  { key: "ema50", group: "Medias móviles", label: (c) => `EMA ${c.ema50}` },
-  { key: "ema200", group: "Medias móviles", label: (c) => `EMA ${c.ema200}` },
+  {
+    key: "medias",
+    group: "Medias móviles",
+    // La cantidad sale del store, no del config: la lista es variable.
+    label: () => "Medias móviles",
+  },
   {
     key: "vwap",
     group: "Medias móviles",

@@ -4,11 +4,22 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { Timeframe } from "@/lib/binance/types";
 import { ZONA_POR_DEFECTO, type ChartTimezone } from "@/lib/chart/timezone";
+import {
+  MAX_MEDIAS,
+  mediasPorDefecto,
+  migrarMedias,
+  nuevaMedia,
+  sanearMedias,
+  type MediaMovil,
+} from "@/lib/chart/medias";
+
+export type { MediaMovil, TipoMedia } from "@/lib/chart/medias";
+export { MAX_MEDIAS, COLORES_MEDIA } from "@/lib/chart/medias";
 
 export type IndicatorKey =
-  | "ema20"
-  | "ema50"
-  | "ema200"
+  // Un solo indicador para todas las medias móviles: la lista de líneas
+  // vive en `medias`, no en el config.
+  | "medias"
   | "rsi"
   | "macd"
   | "volume"
@@ -28,9 +39,6 @@ export interface PriceLine {
 }
 
 export interface IndicatorConfig {
-  ema20: number;
-  ema50: number;
-  ema200: number;
   rsi: number;
   // RSI — resto de entradas del indicador estándar de TradingView
   rsiSource: string; // close | open | high | low | hl2 | hlc3 | ohlc4
@@ -139,9 +147,6 @@ export interface IndicatorConfig {
 }
 
 export const DEFAULT_CONFIG: IndicatorConfig = {
-  ema20: 20,
-  ema50: 50,
-  ema200: 200,
   rsi: 14,
   rsiSource: "close",
   rsiCalcDivergence: true,
@@ -240,9 +245,7 @@ export const DEFAULT_CONFIG: IndicatorConfig = {
 };
 
 export const INDICATOR_COLORS: Record<IndicatorKey, string> = {
-  ema20: "#ffb74d",
-  ema50: "#2962ff",
-  ema200: "#ab47bc",
+  medias: "#ffb74d",
   rsi: "#ab47bc",
   macd: "#2962ff",
   volume: "#787b86",
@@ -362,6 +365,8 @@ export interface ChartState {
   hidden: Record<IndicatorKey, boolean>;
   /** Periods and parameters for each indicator */
   config: IndicatorConfig;
+  /** Líneas del indicador de medias móviles, en el orden en que se dibujan. */
+  medias: MediaMovil[];
   /** Listas de activos guardadas, en el orden en que se muestran. */
   listas: ListaActivos[];
   /** Id de la lista que se está viendo en el panel derecho. */
@@ -395,6 +400,9 @@ export interface ChartState {
   removeIndicator: (key: IndicatorKey) => void;
   toggleHidden: (key: IndicatorKey) => void;
   setConfig: (patch: Partial<IndicatorConfig>) => void;
+  agregarMedia: (periodo: number) => void;
+  editarMedia: (id: string, patch: Partial<MediaMovil>) => void;
+  quitarMedia: (id: string) => void;
   /** Agrega a la lista activa, o a `listaId` si se pasa. */
   addToWatchlist: (s: string, listaId?: string) => void;
   /** Quita de la lista activa, o de `listaId` si se pasa. */
@@ -422,9 +430,7 @@ export const useChartStore = create<ChartState>()(
       symbol: "BIN:BTCUSDT",
       timeframe: "15m" as Timeframe,
       indicators: {
-        ema20: true,
-        ema50: true,
-        ema200: false,
+        medias: true,
         rsi: true,
         macd: false,
         volume: true,
@@ -436,9 +442,7 @@ export const useChartStore = create<ChartState>()(
         srsi: false,
       },
       hidden: {
-        ema20: false,
-        ema50: false,
-        ema200: false,
+        medias: false,
         rsi: false,
         macd: false,
         volume: false,
@@ -450,6 +454,7 @@ export const useChartStore = create<ChartState>()(
         srsi: false,
       },
       config: { ...DEFAULT_CONFIG },
+      medias: mediasPorDefecto(),
       listas: [
         {
           id: ID_LISTA_INICIAL,
@@ -504,6 +509,27 @@ export const useChartStore = create<ChartState>()(
         set((s) => ({ hidden: { ...s.hidden, [key]: !s.hidden[key] } })),
       setConfig: (patch) =>
         set((s) => ({ config: { ...s.config, ...patch } })),
+      agregarMedia: (periodo) =>
+        set((s) => {
+          if (s.medias.length >= MAX_MEDIAS) return {};
+          const media = nuevaMedia(
+            periodo,
+            s.medias.map((m) => m.color),
+          );
+          // Ordenadas por período: así la leyenda se lee de rápida a lenta.
+          const medias = [...s.medias, media].sort(
+            (a, b) => a.periodo - b.periodo,
+          );
+          return { medias, indicators: { ...s.indicators, medias: true } };
+        }),
+      editarMedia: (id, patch) =>
+        set((s) => ({
+          medias: s.medias
+            .map((m) => (m.id === id ? { ...m, ...patch } : m))
+            .sort((a, b) => a.periodo - b.periodo),
+        })),
+      quitarMedia: (id) =>
+        set((s) => ({ medias: s.medias.filter((m) => m.id !== id) })),
       addToWatchlist: (s, listaId) =>
         set((state) => {
           const qualified = migrateSymbol(s);
@@ -625,6 +651,7 @@ export const useChartStore = create<ChartState>()(
         indicators: s.indicators,
         hidden: s.hidden,
         config: s.config,
+        medias: s.medias,
         listas: s.listas,
         listaActivaId: s.listaActivaId,
         watchlistCollapsed: s.watchlistCollapsed,
@@ -701,6 +728,37 @@ export const useChartStore = create<ChartState>()(
           ];
         }
 
+        // Medias móviles: antes eran tres indicadores sueltos (ema20/50/200)
+        // con su período en el config. Se convierten en la lista nueva una
+        // sola vez, conservando períodos y ojos apagados.
+        const guardadasMedias = sanearMedias(p.medias);
+        const viejoConfig = (p.config ?? {}) as Record<string, unknown>;
+        const viejoInd = (p.indicators ?? {}) as Record<string, unknown>;
+        const viejoOcu = (p.hidden ?? {}) as Record<string, unknown>;
+        const migracion = migrarMedias({
+          periodos: {
+            ema20: viejoConfig.ema20,
+            ema50: viejoConfig.ema50,
+            ema200: viejoConfig.ema200,
+          },
+          prendidos: {
+            ema20: viejoInd.ema20,
+            ema50: viejoInd.ema50,
+            ema200: viejoInd.ema200,
+          },
+          ocultos: {
+            ema20: viejoOcu.ema20,
+            ema50: viejoOcu.ema50,
+            ema200: viejoOcu.ema200,
+          },
+        });
+        const medias = guardadasMedias ?? migracion.medias;
+        // Si ya había `medias` guardadas, el estado de prendido también.
+        const mediasPrendidas =
+          typeof viejoInd.medias === "boolean"
+            ? viejoInd.medias
+            : migracion.prendido;
+
         const listaActivaId = listas.some((l) => l.id === p.listaActivaId)
           ? (p.listaActivaId as string)
           : listas[0].id;
@@ -719,7 +777,12 @@ export const useChartStore = create<ChartState>()(
           listas,
           listaActivaId,
           config: { ...DEFAULT_CONFIG, ...stripNullish(p.config) },
-          indicators: { ...current.indicators, ...stripNullish(p.indicators) },
+          medias,
+          indicators: {
+            ...current.indicators,
+            ...stripNullish(p.indicators),
+            medias: mediasPrendidas,
+          },
           hidden: { ...current.hidden, ...stripNullish(p.hidden) },
         };
       },
