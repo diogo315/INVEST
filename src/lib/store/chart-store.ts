@@ -291,13 +291,46 @@ export const DEFAULT_WATCHLIST = [
   "BIN:MATICUSDT",
 ];
 
+/** Una lista de activos guardada, con su nombre. */
+export interface ListaActivos {
+  id: string;
+  nombre: string;
+  simbolos: string[];
+}
+
+export const ID_LISTA_INICIAL = "principal";
+export const NOMBRE_LISTA_INICIAL = "Mi lista";
+/** Tope de listas, para que el menú no se vuelva inmanejable. */
+export const MAX_LISTAS = 20;
+
+function nuevoId(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `l${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+}
+
 /** Add a prefix to symbols that came from older versions without one. */
 function migrateSymbol(s: string): string {
   if (typeof s !== "string") return "BIN:BTCUSDT";
   return s.includes(":") ? s : `BIN:${s}`;
 }
 
-interface ChartState {
+/**
+ * Nombre único dentro del conjunto: "Mi lista" ya usada pasa a ser
+ * "Mi lista (2)". Sin esto dos listas distintas se ven igual en el menú.
+ */
+export function nombreLibre(listas: ListaActivos[], deseado: string): string {
+  const base = deseado.trim().slice(0, 40) || "Lista";
+  const usados = new Set(listas.map((l) => l.nombre.toLowerCase()));
+  if (!usados.has(base.toLowerCase())) return base;
+  for (let i = 2; i < 100; i++) {
+    const intento = `${base} (${i})`;
+    if (!usados.has(intento.toLowerCase())) return intento;
+  }
+  return `${base} ${nuevoId().slice(0, 4)}`;
+}
+
+export interface ChartState {
   symbol: string;
   timeframe: Timeframe;
   /** Indicator is added to the chart (appears in pill + renders unless hidden) */
@@ -306,9 +339,14 @@ interface ChartState {
   hidden: Record<IndicatorKey, boolean>;
   /** Periods and parameters for each indicator */
   config: IndicatorConfig;
-  watchlist: string[];
+  /** Listas de activos guardadas, en el orden en que se muestran. */
+  listas: ListaActivos[];
+  /** Id de la lista que se está viendo en el panel derecho. */
+  listaActivaId: string;
   /** Panel derecho (watchlist) plegado para dar más ancho al chart */
   watchlistCollapsed: boolean;
+  /** Mostrar el nombre del activo debajo del ticker en la lista. */
+  mostrarNombres: boolean;
   /** Zona horaria de las etiquetas del chart ("utc", "local" o un id IANA). */
   timezone: ChartTimezone;
   /** Marca de que ya se sembraron los perpetuos en un watchlist viejo. */
@@ -332,13 +370,21 @@ interface ChartState {
   removeIndicator: (key: IndicatorKey) => void;
   toggleHidden: (key: IndicatorKey) => void;
   setConfig: (patch: Partial<IndicatorConfig>) => void;
-  addToWatchlist: (s: string) => void;
-  removeFromWatchlist: (s: string) => void;
+  /** Agrega a la lista activa, o a `listaId` si se pasa. */
+  addToWatchlist: (s: string, listaId?: string) => void;
+  /** Quita de la lista activa, o de `listaId` si se pasa. */
+  removeFromWatchlist: (s: string, listaId?: string) => void;
+  crearLista: (nombre: string, simbolos?: string[]) => void;
+  renombrarLista: (id: string, nombre: string) => void;
+  duplicarLista: (id: string) => void;
+  eliminarLista: (id: string) => void;
+  seleccionarLista: (id: string) => void;
   setTool: (t: DrawingTool) => void;
   addPriceLine: (price: number, symbol: string) => void;
   clearPriceLines: (symbol?: string) => void;
   setSymbolDialogOpen: (v: boolean) => void;
   toggleWatchlistCollapsed: () => void;
+  toggleMostrarNombres: () => void;
   setTimezone: (tz: ChartTimezone) => void;
   refreshChart: () => void;
   setChartLoading: (v: boolean) => void;
@@ -379,8 +425,16 @@ export const useChartStore = create<ChartState>()(
         srsi: false,
       },
       config: { ...DEFAULT_CONFIG },
-      watchlist: DEFAULT_WATCHLIST,
+      listas: [
+        {
+          id: ID_LISTA_INICIAL,
+          nombre: NOMBRE_LISTA_INICIAL,
+          simbolos: DEFAULT_WATCHLIST,
+        },
+      ],
+      listaActivaId: ID_LISTA_INICIAL,
       watchlistCollapsed: false,
+      mostrarNombres: true,
       futuresSeeded: true,
       timezone: ZONA_POR_DEFECTO,
       tool: "cursor",
@@ -419,22 +473,88 @@ export const useChartStore = create<ChartState>()(
         set((s) => ({ hidden: { ...s.hidden, [key]: !s.hidden[key] } })),
       setConfig: (patch) =>
         set((s) => ({ config: { ...s.config, ...patch } })),
-      addToWatchlist: (s) =>
+      addToWatchlist: (s, listaId) =>
         set((state) => {
           const qualified = migrateSymbol(s);
+          const destino = listaId ?? state.listaActivaId;
           return {
-            watchlist: state.watchlist.includes(qualified)
-              ? state.watchlist
-              : [...state.watchlist, qualified],
+            listas: state.listas.map((l) =>
+              l.id !== destino || l.simbolos.includes(qualified)
+                ? l
+                : { ...l, simbolos: [...l.simbolos, qualified] },
+            ),
           };
         }),
-      removeFromWatchlist: (s) =>
+      removeFromWatchlist: (s, listaId) =>
         set((state) => {
           const qualified = migrateSymbol(s);
+          const destino = listaId ?? state.listaActivaId;
           return {
-            watchlist: state.watchlist.filter((x) => x !== qualified),
+            listas: state.listas.map((l) =>
+              l.id !== destino
+                ? l
+                : { ...l, simbolos: l.simbolos.filter((x) => x !== qualified) },
+            ),
           };
         }),
+      crearLista: (nombre, simbolos = []) =>
+        set((state) => {
+          if (state.listas.length >= MAX_LISTAS) return {};
+          const lista: ListaActivos = {
+            id: nuevoId(),
+            nombre: nombreLibre(state.listas, nombre),
+            simbolos: simbolos.map(migrateSymbol),
+          };
+          return { listas: [...state.listas, lista], listaActivaId: lista.id };
+        }),
+      renombrarLista: (id, nombre) =>
+        set((state) => ({
+          listas: state.listas.map((l) =>
+            l.id !== id
+              ? l
+              : {
+                  ...l,
+                  nombre: nombreLibre(
+                    state.listas.filter((o) => o.id !== id),
+                    nombre,
+                  ),
+                },
+          ),
+        })),
+      duplicarLista: (id) =>
+        set((state) => {
+          const origen = state.listas.find((l) => l.id === id);
+          if (!origen || state.listas.length >= MAX_LISTAS) return {};
+          const copia: ListaActivos = {
+            id: nuevoId(),
+            nombre: nombreLibre(state.listas, origen.nombre),
+            simbolos: [...origen.simbolos],
+          };
+          return { listas: [...state.listas, copia], listaActivaId: copia.id };
+        }),
+      eliminarLista: (id) =>
+        set((state) => {
+          // Nunca se queda sin ninguna: la última se vacía en vez de borrarse.
+          if (state.listas.length <= 1) {
+            return {
+              listas: state.listas.map((l) =>
+                l.id === id ? { ...l, simbolos: [] } : l,
+              ),
+            };
+          }
+          const listas = state.listas.filter((l) => l.id !== id);
+          return {
+            listas,
+            listaActivaId:
+              state.listaActivaId === id ? listas[0].id : state.listaActivaId,
+          };
+        }),
+      seleccionarLista: (listaActivaId) =>
+        set((state) =>
+          state.listas.some((l) => l.id === listaActivaId)
+            ? { listaActivaId }
+            : {},
+        ),
       setTool: (tool) => set({ tool }),
       addPriceLine: (price, symbol) =>
         set((state) => ({
@@ -459,6 +579,8 @@ export const useChartStore = create<ChartState>()(
       setSymbolDialogOpen: (symbolDialogOpen) => set({ symbolDialogOpen }),
       toggleWatchlistCollapsed: () =>
         set((s) => ({ watchlistCollapsed: !s.watchlistCollapsed })),
+      toggleMostrarNombres: () =>
+        set((s) => ({ mostrarNombres: !s.mostrarNombres })),
       setTimezone: (timezone) => set({ timezone }),
       refreshChart: () => set((s) => ({ refreshNonce: s.refreshNonce + 1 })),
       setChartLoading: (chartLoading) => set({ chartLoading }),
@@ -472,8 +594,10 @@ export const useChartStore = create<ChartState>()(
         indicators: s.indicators,
         hidden: s.hidden,
         config: s.config,
-        watchlist: s.watchlist,
+        listas: s.listas,
+        listaActivaId: s.listaActivaId,
         watchlistCollapsed: s.watchlistCollapsed,
+        mostrarNombres: s.mostrarNombres,
         futuresSeeded: s.futuresSeeded,
         timezone: s.timezone,
       }),
@@ -487,20 +611,54 @@ export const useChartStore = create<ChartState>()(
           Object.fromEntries(
             Object.entries(o ?? {}).filter(([, v]) => v !== null && v !== undefined),
           ) as Partial<T>;
-        // Watchlists guardados antes de que existieran los futuros: se les
-        // agregan BTC y ETH perpetuos una sola vez.
-        const persistedList = Array.isArray(p.watchlist)
-          ? p.watchlist.map(migrateSymbol)
+        // Estado viejo: un solo watchlist sin nombre. Pasa a ser la primera
+        // lista guardada, con los perpetuos sembrados si nunca lo estuvieron.
+        const viejo = (p as { watchlist?: unknown }).watchlist;
+        const persistedList = Array.isArray(viejo)
+          ? (viejo as string[]).map(migrateSymbol)
           : null;
         const needsFutures = persistedList !== null && !p.futuresSeeded;
-        const watchlist = persistedList
+        const migrada = persistedList
           ? needsFutures
             ? [
                 ...persistedList,
                 ...DEFAULT_FUTURES.filter((f) => !persistedList.includes(f)),
               ]
             : persistedList
-          : current.watchlist;
+          : null;
+
+        const guardadas = Array.isArray(p.listas)
+          ? p.listas
+              .filter(
+                (l): l is ListaActivos =>
+                  !!l && typeof l.id === "string" && Array.isArray(l.simbolos),
+              )
+              .map((l) => ({
+                id: l.id,
+                nombre:
+                  typeof l.nombre === "string" && l.nombre.trim()
+                    ? l.nombre
+                    : NOMBRE_LISTA_INICIAL,
+                simbolos: l.simbolos.map(migrateSymbol),
+              }))
+          : [];
+
+        const listas: ListaActivos[] =
+          guardadas.length > 0
+            ? guardadas
+            : migrada
+              ? [
+                  {
+                    id: ID_LISTA_INICIAL,
+                    nombre: NOMBRE_LISTA_INICIAL,
+                    simbolos: migrada,
+                  },
+                ]
+              : current.listas;
+
+        const listaActivaId = listas.some((l) => l.id === p.listaActivaId)
+          ? (p.listaActivaId as string)
+          : listas[0].id;
 
         return {
           ...current,
@@ -512,7 +670,8 @@ export const useChartStore = create<ChartState>()(
             !p.timezone || p.timezone === "utc" ? current.timezone : p.timezone,
           // Migrate legacy unprefixed symbols (pre-Bitget) → "BIN:..."
           symbol: p.symbol ? migrateSymbol(p.symbol) : current.symbol,
-          watchlist,
+          listas,
+          listaActivaId,
           config: { ...DEFAULT_CONFIG, ...stripNullish(p.config) },
           indicators: { ...current.indicators, ...stripNullish(p.indicators) },
           hidden: { ...current.hidden, ...stripNullish(p.hidden) },
@@ -521,3 +680,16 @@ export const useChartStore = create<ChartState>()(
     },
   ),
 );
+
+/**
+ * La lista que se está viendo. Siempre devuelve una: si el id guardado no
+ * existe (una lista borrada en otra pestaña) cae en la primera.
+ */
+export function listaActivaDe(s: ChartState): ListaActivos {
+  return s.listas.find((l) => l.id === s.listaActivaId) ?? s.listas[0];
+}
+
+/** Símbolos de la lista activa. Referencia estable para los selectores. */
+export function simbolosActivosDe(s: ChartState): string[] {
+  return listaActivaDe(s).simbolos;
+}

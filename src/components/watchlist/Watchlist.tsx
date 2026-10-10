@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
-import { ChevronRight, Plus, X } from "lucide-react";
+import { ChevronRight, Plus, Tag, X } from "lucide-react";
 import { ADAPTERS, EXCHANGE_BADGE, parseSymbol } from "@/lib/exchanges";
 import type { ExchangeId } from "@/lib/exchanges";
-import { useChartStore } from "@/lib/store/chart-store";
+import { nombreDeActivo } from "@/lib/exchanges/nombres";
+import { ListasMenu } from "@/components/watchlist/ListasMenu";
+import { simbolosActivosDe, useChartStore } from "@/lib/store/chart-store";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { formatPrice, formatPct } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -16,12 +18,14 @@ interface Row {
 }
 
 export function Watchlist() {
-  const watchlist = useChartStore((s) => s.watchlist);
+  const watchlist = useChartStore(simbolosActivosDe);
   const symbol = useChartStore((s) => s.symbol);
   const setSymbol = useChartStore((s) => s.setSymbol);
   const removeFromWatchlist = useChartStore((s) => s.removeFromWatchlist);
   const openSymbolDialog = useChartStore((s) => s.setSymbolDialogOpen);
   const toggleCollapsed = useChartStore((s) => s.toggleWatchlistCollapsed);
+  const mostrarNombres = useChartStore((s) => s.mostrarNombres);
+  const toggleMostrarNombres = useChartStore((s) => s.toggleMostrarNombres);
   const [rows, setRows] = useState<Record<string, Row>>({});
   const [flash, setFlash] = useState<Record<string, "up" | "down" | null>>({});
   // Se incrementa al volver a la pestaña para rehacer el snapshot de 24 h.
@@ -125,10 +129,26 @@ export function Watchlist() {
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b border-tv-border px-3 py-2">
-        <h2 className="text-[11px] font-semibold uppercase tracking-wider text-tv-text-muted">
-          Watchlist
-        </h2>
-        <div className="flex items-center gap-0.5">
+        <ListasMenu />
+        <div className="flex shrink-0 items-center gap-0.5">
+          <button
+            onClick={toggleMostrarNombres}
+            className={cn(
+              "rounded p-1 hover:bg-tv-panel-hover",
+              mostrarNombres
+                ? "text-tv-text"
+                : "text-tv-text-muted hover:text-tv-text",
+            )}
+            title={
+              mostrarNombres
+                ? "Ocultar los nombres de los activos"
+                : "Mostrar los nombres de los activos"
+            }
+            aria-pressed={mostrarNombres}
+            aria-label="Mostrar los nombres de los activos"
+          >
+            <Tag className="h-3.5 w-3.5" />
+          </button>
           <button
             onClick={() => openSymbolDialog(true)}
             className="rounded p-1 text-tv-text-muted hover:bg-tv-panel-hover hover:text-tv-text"
@@ -159,8 +179,10 @@ export function Watchlist() {
             const row = rows[q];
             const isActive = q === symbol;
             const f = flash[q];
-            const { exchange, symbol: base } = parseSymbol(q);
-            const display = base.replace("USDT", "");
+            const { exchange, symbol: par } = parseSymbol(q);
+            const display = par.replace("USDT", "");
+            const nombre = nombreDeActivo(display);
+            const conNombre = mostrarNombres && nombre !== null;
             return (
               <div
                 key={q}
@@ -171,17 +193,32 @@ export function Watchlist() {
                   isActive && "bg-tv-panel-hover",
                 )}
               >
-                <div className="flex items-center gap-2">
-                  <span
-                    className={cn(
-                      "rounded px-1 py-0.5 text-[8px] font-bold tracking-wide",
-                      EXCHANGE_BADGE[exchange].className,
+                <div className="flex min-w-0 flex-col gap-0.5">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span
+                      className={cn(
+                        "shrink-0 rounded px-1 py-0.5 text-[8px] font-bold tracking-wide",
+                        EXCHANGE_BADGE[exchange].className,
+                      )}
+                    >
+                      {EXCHANGE_BADGE[exchange].label}
+                    </span>
+                    <span className="truncate font-medium text-tv-text">
+                      {display}
+                    </span>
+                    {/* Con los nombres prendidos el par va en la segunda
+                        línea: en 256 px no entran las dos cosas arriba. */}
+                    {!conNombre && (
+                      <span className="shrink-0 text-[10px] text-tv-text-dim">
+                        USDT
+                      </span>
                     )}
-                  >
-                    {EXCHANGE_BADGE[exchange].label}
-                  </span>
-                  <span className="font-medium text-tv-text">{display}</span>
-                  <span className="text-[10px] text-tv-text-dim">USDT</span>
+                  </div>
+                  {conNombre && (
+                    <span className="truncate pl-0.5 text-[10px] leading-tight text-tv-text-muted">
+                      {nombre} · USDT
+                    </span>
+                  )}
                 </div>
                 <span
                   className={cn(
@@ -222,7 +259,7 @@ export function Watchlist() {
           })}
           {watchlist.length === 0 && (
             <div className="p-4 text-center text-xs text-tv-text-muted">
-              Tu watchlist está vacío
+              Esta lista está vacía. Agregá activos con el + de arriba.
             </div>
           )}
         </div>
