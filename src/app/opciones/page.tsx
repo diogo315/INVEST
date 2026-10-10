@@ -3,6 +3,7 @@
 import { useSyncExternalStore } from "react";
 import Link from "next/link";
 import { CandlestickChart, Zap } from "lucide-react";
+import { Cadena } from "@/components/options/Cadena";
 import { Calculadora } from "@/components/options/Calculadora";
 import { MatrizSimulacion } from "@/components/options/MatrizSimulacion";
 import { Estrategias } from "@/components/options/Estrategias";
@@ -47,23 +48,10 @@ export default function OpcionesPage() {
         <div className="mx-auto flex max-w-[1400px] flex-col gap-4">
           {montado ? (
             <>
+              <Cadena />
               <Calculadora />
               <MatrizSimulacion />
               <Estrategias />
-              <section className="rounded-lg border border-dashed border-tv-border p-4">
-                <h2 className="text-sm font-semibold text-tv-text">
-                  Precios en vivo y cadena de opciones
-                </h2>
-                <p className="mt-1 max-w-3xl text-[11px] leading-relaxed text-tv-text-muted">
-                  Todo lo de esta pantalla es cálculo propio y funciona sin
-                  conexión a ningún proveedor: cargás los datos del contrato y
-                  listo. Para que el strike, la prima y la volatilidad se llenen
-                  solos desde el mercado hace falta un proveedor de datos de
-                  opciones de EE. UU., que es dato licenciado. Decime por cuál
-                  vamos y lo conecto: la clave tiene que vivir en el servidor,
-                  así que suma una ruta de API en Vercel.
-                </p>
-              </section>
             </>
           ) : (
             <p className="text-xs text-tv-text-muted">Cargando…</p>
