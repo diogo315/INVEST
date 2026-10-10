@@ -1,6 +1,7 @@
 "use client";
 
-import { Code2, RefreshCw, Zap } from "lucide-react";
+import { Code2, RefreshCw, Sigma, Zap } from "lucide-react";
+import Link from "next/link";
 import { SymbolSelector } from "@/components/chart/SymbolSelector";
 import { TimeframeSelector } from "@/components/chart/TimeframeSelector";
 import { IndicatorMenu } from "@/components/chart/IndicatorMenu";
@@ -23,6 +24,19 @@ export function Header() {
           <span className="text-sm font-semibold text-tv-text">
             TradingView <span className="text-tv-text-muted">Gratis</span>
           </span>
+          {/* Cambio de vista: el chart de cripto y la mesa de opciones. */}
+          <nav className="ml-2 flex gap-0.5 rounded bg-tv-bg p-0.5">
+            <span className="rounded bg-tv-panel-hover px-2.5 py-1 text-xs font-medium text-tv-text">
+              Cripto
+            </span>
+            <Link
+              href="/opciones"
+              className="flex items-center gap-1.5 rounded px-2.5 py-1 text-xs text-tv-text-muted transition-colors hover:text-tv-text"
+            >
+              <Sigma className="h-3.5 w-3.5" />
+              Opciones
+            </Link>
+          </nav>
         </div>
         <Separator orientation="vertical" className="h-6 bg-tv-border" />
         <SymbolSelector />
