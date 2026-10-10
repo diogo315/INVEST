@@ -33,6 +33,11 @@ const TRADING = [
 const SIMBOLO = /^[A-Z][A-Z.]{0,6}$/;
 const FECHA = /^\d{4}-\d{2}-\d{2}$/;
 const TOKEN = /^[A-Za-z0-9_=\-.:]{1,500}$/;
+/**
+ * Temporalidades que acepta Alpaca: 1-59 Min, 1-23 Hour, 1Day, 1Week y
+ * 1/2/3/6/12 Month (validado en `alpaca/data/timeframe.py` del SDK).
+ */
+const TEMPORALIDAD = /^(?:[1-9]|[1-5]\d)Min$|^(?:[1-9]|1\d|2[0-3])Hour$|^1Day$|^1Week$|^(?:1|2|3|6|12)Month$/;
 
 function json(cuerpo: unknown, status: number) {
   return new Response(JSON.stringify(cuerpo), {
@@ -52,10 +57,44 @@ const FILTROS_CADENA: Record<string, (v: string) => boolean> = {
   page_token: (v) => TOKEN.test(v),
 };
 
+/** Le pega a Alpaca y devuelve la respuesta tal cual, traduciendo los errores. */
+async function reenviar(destino: URL, headers: HeadersInit): Promise<Response> {
+  try {
+    const r = await fetch(destino, { headers, cache: "no-store" });
+    const texto = await r.text();
+    if (!r.ok) {
+      return json(
+        {
+          error: "alpaca",
+          status: r.status,
+          mensaje:
+            r.status === 401 || r.status === 403
+              ? "Alpaca rechazó las credenciales."
+              : r.status === 429
+                ? "Alpaca cortó por límite de llamadas (el plan gratis son 200 por minuto)."
+                : texto.slice(0, 400),
+        },
+        r.status,
+      );
+    }
+    return new Response(texto, {
+      status: 200,
+      headers: { "content-type": "application/json", "cache-control": "no-store" },
+    });
+  } catch {
+    return json({ error: "red", mensaje: "No se pudo contactar a Alpaca." }, 502);
+  }
+}
+
 // ───────────────────────── catálogo de símbolos ─────────────────────────
 
+/** Un activo del catálogo; `o` marca los que tienen opciones listadas. */
+interface ActivoCatalogo extends Activo {
+  o: boolean;
+}
+
 interface Catalogo {
-  activos: Activo[];
+  activos: ActivoCatalogo[];
   cargadoEn: number;
 }
 
@@ -91,21 +130,21 @@ async function traerCatalogo(headers: HeadersInit): Promise<Catalogo> {
       attributes?: string[];
     }>;
 
-    // Si la cuenta expone un atributo de opciones, se filtra por él; si no
-    // aparece en esta respuesta, se deja pasar todo en vez de adivinar.
+    // Si la cuenta expone un atributo de opciones se usa para marcar cuáles
+    // las tienen; si no aparece en la respuesta, se marcan todos (es mejor
+    // mostrar de más en la cadena que esconder un papel que sí opera).
     const hayAtributoOpciones = crudo.some((a) =>
       a.attributes?.some((x) => /option/i.test(x)),
     );
     const activos = crudo
       .filter((a) => a.symbol && a.tradable !== false)
-      .filter(
-        (a) =>
-          !hayAtributoOpciones || a.attributes?.some((x) => /option/i.test(x)),
-      )
       .map((a) => ({
         s: a.symbol as string,
         n: a.name ?? "",
         e: a.exchange ?? "",
+        o:
+          !hayAtributoOpciones ||
+          Boolean(a.attributes?.some((x) => /option/i.test(x))),
       }));
 
     return { activos, cargadoEn: Date.now() };
@@ -138,37 +177,136 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const recurso = url.searchParams.get("recurso");
 
-  // ── búsqueda de símbolos (autocompletado) ──────────────────────────────
+  /** Catálogo en memoria, bajándolo si hace falta. */
+  async function conCatalogo(): Promise<Catalogo> {
+    const vencido = !catalogo || Date.now() - catalogo.cargadoEn > VIDA_CATALOGO;
+    if (vencido) {
+      // Una sola descarga aunque entren varias búsquedas a la vez.
+      cargando ??= traerCatalogo(headers).finally(() => {
+        cargando = null;
+      });
+      catalogo = await cargando;
+    }
+    return catalogo!;
+  }
+
+  function errorCatalogo(e: unknown) {
+    return json(
+      {
+        error: "catalogo",
+        mensaje: e instanceof Error ? e.message : "No se pudo traer el listado.",
+      },
+      502,
+    );
+  }
+
+  // ── búsqueda de símbolos (autocompletado de la cadena de opciones) ─────
   if (recurso === "buscar") {
     const q = (url.searchParams.get("q") ?? "").slice(0, 30);
     if (q.trim().length < 1) return json({ resultados: [] }, 200);
     try {
-      const vencido =
-        !catalogo || Date.now() - catalogo.cargadoEn > VIDA_CATALOGO;
-      if (vencido) {
-        // Una sola descarga aunque entren varias búsquedas a la vez.
-        cargando ??= traerCatalogo(headers).finally(() => {
-          cargando = null;
-        });
-        catalogo = await cargando;
-      }
-      return json(
+      const c = await conCatalogo();
+      // La cadena de opciones solo tiene sentido con papeles que las listan;
+      // el buscador del gráfico quiere todo.
+      const base =
+        url.searchParams.get("opciones") === "1"
+          ? c.activos.filter((a) => a.o)
+          : c.activos;
+      return json({ resultados: rankearActivos(base, q), total: base.length }, 200);
+    } catch (e) {
+      return errorCatalogo(e);
+    }
+  }
+
+  // ── catálogo completo (buscador del gráfico) ───────────────────────────
+  if (recurso === "catalogo") {
+    try {
+      const c = await conCatalogo();
+      return new Response(
+        JSON.stringify({
+          // Solo ticker y nombre: son miles de papeles y el mercado donde
+          // cotiza no se muestra en el buscador del gráfico.
+          activos: c.activos.map((a) => ({ s: a.s, n: a.n })),
+        }),
         {
-          resultados: rankearActivos(catalogo!.activos, q),
-          total: catalogo!.activos.length,
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            // Son varios MB: que el navegador lo reuse mientras dure la pestaña.
+            "cache-control": "private, max-age=3600",
+          },
         },
-        200,
       );
     } catch (e) {
+      return errorCatalogo(e);
+    }
+  }
+
+  // ── nombres de unos pocos símbolos (filas del watchlist) ───────────────
+  if (recurso === "nombres") {
+    const pedidos = (url.searchParams.get("simbolos") ?? "")
+      .toUpperCase()
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => SIMBOLO.test(s))
+      .slice(0, 100);
+    if (pedidos.length === 0) return json({ nombres: {} }, 200);
+    try {
+      const c = await conCatalogo();
+      const buscados = new Set(pedidos);
+      const nombres: Record<string, string> = {};
+      for (const a of c.activos) if (buscados.has(a.s)) nombres[a.s] = a.n;
+      return json({ nombres }, 200);
+    } catch (e) {
+      return errorCatalogo(e);
+    }
+  }
+
+  // ── cotizaciones de varios símbolos a la vez (watchlist) ───────────────
+  if (recurso === "cotizaciones") {
+    const pedidos = (url.searchParams.get("simbolos") ?? "")
+      .toUpperCase()
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => SIMBOLO.test(s))
+      .slice(0, 100);
+    if (pedidos.length === 0) return json({}, 200);
+    const destino = new URL(`${DATOS}/v2/stocks/snapshots`);
+    destino.searchParams.set("symbols", pedidos.join(","));
+    destino.searchParams.set("feed", "iex");
+    return reenviar(destino, headers);
+  }
+
+  // ── velas ──────────────────────────────────────────────────────────────
+  if (recurso === "barras") {
+    const sim = (url.searchParams.get("simbolo") ?? "").trim().toUpperCase();
+    if (!SIMBOLO.test(sim)) {
       return json(
-        {
-          error: "catalogo",
-          mensaje:
-            e instanceof Error ? e.message : "No se pudo traer el listado.",
-        },
-        502,
+        { error: "simbolo_invalido", mensaje: `Símbolo no válido: "${sim}"` },
+        400,
       );
     }
+    const tf = url.searchParams.get("tf") ?? "";
+    if (!TEMPORALIDAD.test(tf)) {
+      return json(
+        { error: "tf_invalida", mensaje: `Temporalidad no válida: "${tf}"` },
+        400,
+      );
+    }
+    const limite = Number(url.searchParams.get("limit") ?? 1000);
+    const destino = new URL(`${DATOS}/v2/stocks/bars`);
+    destino.searchParams.set("symbols", sim);
+    destino.searchParams.set("timeframe", tf);
+    destino.searchParams.set("feed", "iex");
+    // Precios ajustados por splits y dividendos: sin esto un split deja un
+    // escalón falso en el histórico y rompe cualquier media móvil.
+    destino.searchParams.set("adjustment", "all");
+    destino.searchParams.set("sort", "desc"); // las más recientes primero
+    destino.searchParams.set(
+      "limit",
+      String(Math.min(10000, Math.max(1, Number.isFinite(limite) ? limite : 1000))),
+    );
+    return reenviar(destino, headers);
   }
 
   // ── datos de mercado ───────────────────────────────────────────────────
@@ -210,35 +348,12 @@ export async function GET(req: Request) {
     return json(
       {
         error: "recurso_invalido",
-        mensaje: 'recurso debe ser "accion", "cadena" o "buscar"',
+        mensaje:
+          'recurso debe ser "accion", "cadena", "barras", "cotizaciones", "catalogo", "nombres" o "buscar"',
       },
       400,
     );
   }
 
-  try {
-    const r = await fetch(destino, { headers, cache: "no-store" });
-    const texto = await r.text();
-    if (!r.ok) {
-      return json(
-        {
-          error: "alpaca",
-          status: r.status,
-          mensaje:
-            r.status === 401 || r.status === 403
-              ? "Alpaca rechazó las credenciales."
-              : r.status === 429
-                ? "Alpaca cortó por límite de llamadas (el plan gratis son 200 por minuto)."
-                : texto.slice(0, 400),
-        },
-        r.status,
-      );
-    }
-    return new Response(texto, {
-      status: 200,
-      headers: { "content-type": "application/json", "cache-control": "no-store" },
-    });
-  } catch {
-    return json({ error: "red", mensaje: "No se pudo contactar a Alpaca." }, 502);
-  }
+  return reenviar(destino, headers);
 }

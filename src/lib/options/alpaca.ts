@@ -186,7 +186,7 @@ export interface Sugerencia {
  */
 export async function buscarSimbolos(q: string): Promise<Sugerencia[]> {
   if (!q.trim()) return [];
-  const d = (await pedir({ recurso: "buscar", q })) as {
+  const d = (await pedir({ recurso: "buscar", q, opciones: "1" })) as {
     resultados?: Sugerencia[];
   };
   return d?.resultados ?? [];

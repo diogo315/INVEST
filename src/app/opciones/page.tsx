@@ -35,7 +35,7 @@ export default function OpcionesPage() {
               className="flex items-center gap-1.5 rounded px-2.5 py-1 text-xs text-tv-text-muted transition-colors hover:text-tv-text"
             >
               <CandlestickChart className="h-3.5 w-3.5" />
-              Cripto
+              Gráfico
             </Link>
             <span className="rounded bg-tv-panel-hover px-2.5 py-1 text-xs font-medium text-tv-text">
               Opciones

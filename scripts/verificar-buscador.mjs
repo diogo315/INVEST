@@ -18,13 +18,21 @@ const N = {
   AVAX: "Avalanche",
   USDT: "TetherUS",
   FDUSD: "First Digital USD",
+  AAPL: "Apple Inc. Common Stock",
+  AMZN: "Amazon.com, Inc. Common Stock",
+  GLD: "SPDR Gold Shares",
+  SPY: "SPDR S&P 500 ETF Trust",
+  USO: "United States Oil Fund",
 };
 
 function act(exchange, base, quote) {
+  // En cripto la cotización va pegada al ticker (BTCUSDT); una acción
+  // cotiza en dólares y el símbolo es el ticker solo (AAPL).
+  const symbol = exchange === "ALP" ? base : `${base}${quote}`;
   return {
-    qualified: `${exchange}:${base}${quote}`,
+    qualified: `${exchange}:${symbol}`,
     exchange,
-    symbol: `${base}${quote}`,
+    symbol,
     base,
     quote,
     nombre: N[base] ?? null,
@@ -45,6 +53,12 @@ const CATALOGO = [
   act("BIN", "PEPE", "USDT"),
   act("BIN", "AVAX", "USDT"),
   act("BIN", "XYZ", "USDT"), // sin nombre en el diccionario
+  // Bolsa: el símbolo es el ticker y la cotización siempre es USD.
+  act("ALP", "AAPL", "USD"),
+  act("ALP", "AMZN", "USD"),
+  act("ALP", "GLD", "USD"),
+  act("ALP", "SPY", "USD"),
+  act("ALP", "USO", "USD"),
 ];
 
 const CASOS = [
@@ -140,6 +154,50 @@ const CASOS = [
     consulta: "xyz",
     espero: ["BIN:XYZUSDT"],
     cuantos: 1,
+  },
+  {
+    que: "acciones: el ticker exacto, aapl → AAPL",
+    consulta: "aapl",
+    espero: ["ALP:AAPL"],
+    cuantos: 1,
+  },
+  {
+    que: "acciones por nombre de empresa: amazon → AMZN",
+    consulta: "amazon",
+    espero: ["ALP:AMZN"],
+    cuantos: 1,
+  },
+  {
+    que: "atajo en español: oro → GLD, aunque se llame SPDR Gold Shares",
+    consulta: "oro",
+    espero: ["ALP:GLD"],
+    cuantos: 1,
+  },
+  {
+    que: "atajo con tilde: petróleo → USO",
+    consulta: "petróleo",
+    espero: ["ALP:USO"],
+    cuantos: 1,
+  },
+  {
+    que: "atajo de índice: s&p 500 → SPY",
+    consulta: "s&p 500",
+    espero: ["ALP:SPY"],
+    cuantos: 1,
+  },
+  {
+    que: "filtro de bolsa: solo acciones y ETFs",
+    consulta: "",
+    opciones: { tipo: "BOLSA" },
+    espero: ["ALP:SPY", "ALP:AAPL", "ALP:AMZN", "ALP:GLD", "ALP:USO"],
+    cuantos: 5,
+  },
+  {
+    que: "el filtro de cripto deja fuera la bolsa",
+    consulta: "",
+    opciones: { tipo: "SPOT" },
+    cuantos: 11,
+    espero: ["BIN:BTCUSDT", "BG:BTCUSDT", "BIN:BTCFDUSD"],
   },
 ];
 

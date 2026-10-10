@@ -60,4 +60,6 @@ export interface SymbolInfo {
   baseAsset: string;
   quoteAsset: string;
   status: string;
+  /** Nombre del activo cuando el exchange lo da (Alpaca sí, Binance no). */
+  nombre?: string;
 }

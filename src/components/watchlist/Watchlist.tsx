@@ -2,9 +2,15 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { ChevronRight, Plus, Tag, X } from "lucide-react";
-import { ADAPTERS, EXCHANGE_BADGE, parseSymbol } from "@/lib/exchanges";
+import { ADAPTERS, EXCHANGE_BADGE, parseSymbol, partirPar } from "@/lib/exchanges";
 import type { ExchangeId } from "@/lib/exchanges";
-import { nombreDeActivo } from "@/lib/exchanges/nombres";
+import {
+  nombreDeActivo,
+  nombreDeAccion,
+  recordarNombres,
+} from "@/lib/exchanges/nombres";
+import { CLASE_MERCADO } from "@/lib/exchanges/buscar";
+import { traerNombresAcciones } from "@/lib/exchanges/alpaca-acciones";
 import { ListasMenu } from "@/components/watchlist/ListasMenu";
 import { simbolosActivosDe, useChartStore } from "@/lib/store/chart-store";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -30,6 +36,10 @@ export function Watchlist() {
   const [flash, setFlash] = useState<Record<string, "up" | "down" | null>>({});
   // Se incrementa al volver a la pestaña para rehacer el snapshot de 24 h.
   const [revision, setRevision] = useState(0);
+  // Nombres de las acciones/ETFs de la lista. El diccionario de cripto está
+  // en el repo; los de bolsa se piden al catálogo de Alpaca (solo los que
+  // hacen falta, no los miles del listado completo).
+  const [nombresBolsa, setNombresBolsa] = useState<Record<string, string>>({});
 
   // Recuperación, igual que el chart: en segundo plano el navegador frena el
   // WebSocket y los precios quedan congelados sin aviso. Al volver se vuelve a
@@ -48,9 +58,44 @@ export function Watchlist() {
     };
   }, []);
 
+  useEffect(() => {
+    const faltan = [
+      ...new Set(
+        watchlist
+          .map(parseSymbol)
+          .filter(
+            (p) =>
+              CLASE_MERCADO[p.exchange] === "accion" &&
+              !nombreDeAccion(p.symbol),
+          )
+          .map((p) => p.symbol),
+      ),
+    ];
+    if (faltan.length === 0) return;
+    let vivo = true;
+    traerNombresAcciones(faltan)
+      .then((n) => {
+        if (!vivo) return;
+        recordarNombres(n);
+        setNombresBolsa((prev) => ({ ...prev, ...n }));
+      })
+      .catch(() => {
+        // Sin clave de Alpaca cargada no hay nombres; las filas igual
+        // muestran el ticker.
+      });
+    return () => {
+      vivo = false;
+    };
+  }, [watchlist]);
+
   // Group watchlist symbols by exchange so we make one fetch + one WS sub per exchange.
   const grouped = useMemo(() => {
-    const out: Record<ExchangeId, string[]> = { BIN: [], BINF: [], BG: [] };
+    const out: Record<ExchangeId, string[]> = {
+      BIN: [],
+      BINF: [],
+      BG: [],
+      ALP: [],
+    };
     for (const q of watchlist) {
       const { exchange, symbol } = parseSymbol(q);
       out[exchange].push(symbol);
@@ -180,9 +225,12 @@ export function Watchlist() {
             const isActive = q === symbol;
             const f = flash[q];
             const { exchange, symbol: par } = parseSymbol(q);
-            const display = par.replace("USDT", "");
-            const nombre = nombreDeActivo(display);
-            const conNombre = mostrarNombres && nombre !== null;
+            const { base: display, cotizacion } = partirPar(exchange, par);
+            const esBolsa = CLASE_MERCADO[exchange] === "accion";
+            const nombre = esBolsa
+              ? (nombresBolsa[display] ?? nombreDeAccion(display))
+              : nombreDeActivo(display);
+            const conNombre = mostrarNombres && Boolean(nombre);
             return (
               <div
                 key={q}
@@ -208,15 +256,16 @@ export function Watchlist() {
                     </span>
                     {/* Con los nombres prendidos el par va en la segunda
                         línea: en 256 px no entran las dos cosas arriba. */}
-                    {!conNombre && (
+                    {!conNombre && cotizacion && (
                       <span className="shrink-0 text-[10px] text-tv-text-dim">
-                        USDT
+                        {cotizacion}
                       </span>
                     )}
                   </div>
                   {conNombre && (
                     <span className="truncate pl-0.5 text-[10px] leading-tight text-tv-text-muted">
-                      {nombre} · USDT
+                      {nombre}
+                      {cotizacion ? ` · ${cotizacion}` : ""}
                     </span>
                   )}
                 </div>

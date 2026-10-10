@@ -291,6 +291,29 @@ export const DEFAULT_WATCHLIST = [
   "BIN:MATICUSDT",
 ];
 
+/**
+ * Lista inicial de bolsa: unas pocas acciones grandes y los ETFs con los
+ * que se siguen las materias primas (oro, plata, petróleo, gas) y los
+ * índices, que es la forma de verlas sin pagar datos de futuros.
+ */
+export const LISTA_BOLSA = [
+  "ALP:SPY",
+  "ALP:QQQ",
+  "ALP:AAPL",
+  "ALP:MSFT",
+  "ALP:NVDA",
+  "ALP:AMZN",
+  "ALP:GOOGL",
+  "ALP:TSLA",
+  "ALP:GLD",
+  "ALP:SLV",
+  "ALP:USO",
+  "ALP:UNG",
+];
+
+export const ID_LISTA_BOLSA = "bolsa";
+export const NOMBRE_LISTA_BOLSA = "Bolsa y ETFs";
+
 /** Una lista de activos guardada, con su nombre. */
 export interface ListaActivos {
   id: string;
@@ -351,6 +374,8 @@ export interface ChartState {
   timezone: ChartTimezone;
   /** Marca de que ya se sembraron los perpetuos en un watchlist viejo. */
   futuresSeeded: boolean;
+  /** Marca de que ya se agregó la lista de bolsa a un estado guardado. */
+  bolsaSeeded: boolean;
 
   // Ephemeral UI state (not persisted)
   tool: DrawingTool;
@@ -431,11 +456,17 @@ export const useChartStore = create<ChartState>()(
           nombre: NOMBRE_LISTA_INICIAL,
           simbolos: DEFAULT_WATCHLIST,
         },
+        {
+          id: ID_LISTA_BOLSA,
+          nombre: NOMBRE_LISTA_BOLSA,
+          simbolos: LISTA_BOLSA,
+        },
       ],
       listaActivaId: ID_LISTA_INICIAL,
       watchlistCollapsed: false,
       mostrarNombres: true,
       futuresSeeded: true,
+      bolsaSeeded: true,
       timezone: ZONA_POR_DEFECTO,
       tool: "cursor",
       priceLines: [],
@@ -599,6 +630,7 @@ export const useChartStore = create<ChartState>()(
         watchlistCollapsed: s.watchlistCollapsed,
         mostrarNombres: s.mostrarNombres,
         futuresSeeded: s.futuresSeeded,
+        bolsaSeeded: s.bolsaSeeded,
         timezone: s.timezone,
       }),
       // Deep-merge so config/indicators/hidden keys added in newer versions
@@ -643,7 +675,7 @@ export const useChartStore = create<ChartState>()(
               }))
           : [];
 
-        const listas: ListaActivos[] =
+        let listas: ListaActivos[] =
           guardadas.length > 0
             ? guardadas
             : migrada
@@ -656,6 +688,19 @@ export const useChartStore = create<ChartState>()(
                 ]
               : current.listas;
 
+        // A quien ya tenía listas guardadas se le agrega la de bolsa una
+        // sola vez, igual que en su momento los perpetuos.
+        if (!p.bolsaSeeded && !listas.some((l) => l.id === ID_LISTA_BOLSA)) {
+          listas = [
+            ...listas,
+            {
+              id: ID_LISTA_BOLSA,
+              nombre: nombreLibre(listas, NOMBRE_LISTA_BOLSA),
+              simbolos: LISTA_BOLSA,
+            },
+          ];
+        }
+
         const listaActivaId = listas.some((l) => l.id === p.listaActivaId)
           ? (p.listaActivaId as string)
           : listas[0].id;
@@ -664,6 +709,7 @@ export const useChartStore = create<ChartState>()(
           ...current,
           ...p,
           futuresSeeded: true,
+          bolsaSeeded: true,
           // "utc" era el default viejo, no una eleccion del usuario: pasa a la
           // zona por defecto actual. Una zona elegida a mano se respeta.
           timezone:

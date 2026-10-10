@@ -22,8 +22,10 @@ import {
   TIPO_MERCADO,
   descripcionPar,
   nombreDeActivo,
+  recordarNombres,
 } from "@/lib/exchanges/nombres";
 import {
+  CLASE_MERCADO,
   rankearSimbolos,
   type ActivoBuscable,
   type FiltroTipo,
@@ -35,8 +37,9 @@ import type { ExchangeId } from "@/lib/exchanges";
 /** Chips de tipo de mercado. */
 const TIPOS: Array<{ id: FiltroTipo; etiqueta: string }> = [
   { id: "TODOS", etiqueta: "Todos" },
-  { id: "SPOT", etiqueta: "Spot" },
+  { id: "SPOT", etiqueta: "Cripto" },
   { id: "PERP", etiqueta: "Perpetuos" },
+  { id: "BOLSA", etiqueta: "Acciones y ETFs" },
 ];
 
 /** Chips de exchange. */
@@ -45,6 +48,7 @@ const EXCHANGES: Array<{ id: ExchangeId | "TODOS"; etiqueta: string }> = [
   { id: "BIN", etiqueta: "Binance" },
   { id: "BINF", etiqueta: "Futuros" },
   { id: "BG", etiqueta: "Bitget" },
+  { id: "ALP", etiqueta: "Bolsa EE. UU." },
 ];
 
 function Chip({
@@ -116,16 +120,26 @@ export function SymbolSelector() {
       ALL_EXCHANGES.map((ex) =>
         ex
           .fetchSymbols()
-          .then((filas) =>
-            filas.map<ActivoBuscable>((s) => ({
+          .then((filas) => {
+            // Alpaca trae el nombre de cada papel; el diccionario de cripto
+            // vive en el repo. Lo que llega del exchange se guarda para que
+            // el watchlist también lo tenga.
+            if (CLASE_MERCADO[ex.id] === "accion") {
+              recordarNombres(
+                Object.fromEntries(
+                  filas.flatMap((f) => (f.nombre ? [[f.symbol, f.nombre]] : [])),
+                ),
+              );
+            }
+            return filas.map<ActivoBuscable>((s) => ({
               qualified: formatSymbol(ex.id, s.symbol),
               exchange: ex.id,
               symbol: s.symbol,
               base: s.baseAsset,
               quote: s.quoteAsset,
-              nombre: nombreDeActivo(s.baseAsset),
-            })),
-          )
+              nombre: s.nombre ?? nombreDeActivo(s.baseAsset),
+            }));
+          })
           .catch((err) => {
             console.error(`fetchSymbols ${ex.id} falló:`, err);
             return [] as ActivoBuscable[];
@@ -187,7 +201,7 @@ export function SymbolSelector() {
         <span className="tabular-nums">{displayBase}</span>
         <ChevronDown className="h-3.5 w-3.5 text-tv-text-muted" />
       </DialogTrigger>
-      <DialogContent className="max-w-[calc(100%-2rem)] gap-0 bg-tv-panel p-0 sm:max-w-2xl">
+      <DialogContent className="max-w-[calc(100%-2rem)] gap-0 bg-tv-panel p-0 sm:max-w-3xl">
         <DialogHeader className="border-b border-tv-border px-4 py-3">
           <DialogTitle className="text-sm font-medium">
             Buscar activo
@@ -198,7 +212,7 @@ export function SymbolSelector() {
           <Search className="pointer-events-none absolute left-6 top-1/2 h-4 w-4 -translate-y-1/2 text-tv-text-muted" />
           <Input
             autoFocus
-            placeholder="Ticker o nombre: BTC, bitcoin, solana…"
+            placeholder="Ticker o nombre: BTC, bitcoin, AAPL, apple, oro…"
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);
@@ -210,38 +224,43 @@ export function SymbolSelector() {
           />
         </div>
 
-        <div className="flex flex-wrap items-center gap-1.5 border-b border-tv-border px-3 py-2">
-          <span className="mr-0.5 text-[10px] uppercase tracking-wider text-tv-text-dim">
-            Mercado
-          </span>
-          {TIPOS.map((t) => (
-            <Chip
-              key={t.id}
-              activo={tipo === t.id}
-              onClick={() => {
-                setTipo(t.id);
-                setCursor(0);
-              }}
-            >
-              {t.etiqueta}
-            </Chip>
-          ))}
-          <span className="mx-1 h-4 w-px bg-tv-border" />
-          <span className="mr-0.5 text-[10px] uppercase tracking-wider text-tv-text-dim">
-            Exchange
-          </span>
-          {EXCHANGES.map((x) => (
-            <Chip
-              key={x.id}
-              activo={exchange === x.id}
-              onClick={() => {
-                setExchange(x.id);
-                setCursor(0);
-              }}
-            >
-              {x.etiqueta}
-            </Chip>
-          ))}
+        {/* Dos filas a propósito: en una sola los chips se cortan y queda
+            un salto de línea a mitad del grupo. */}
+        <div className="flex flex-col gap-1.5 border-b border-tv-border px-3 py-2">
+          <div className="flex items-center gap-1.5">
+            <span className="w-16 shrink-0 text-[10px] uppercase tracking-wider text-tv-text-dim">
+              Mercado
+            </span>
+            {TIPOS.map((t) => (
+              <Chip
+                key={t.id}
+                activo={tipo === t.id}
+                onClick={() => {
+                  setTipo(t.id);
+                  setCursor(0);
+                }}
+              >
+                {t.etiqueta}
+              </Chip>
+            ))}
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="w-16 shrink-0 text-[10px] uppercase tracking-wider text-tv-text-dim">
+              Exchange
+            </span>
+            {EXCHANGES.map((x) => (
+              <Chip
+                key={x.id}
+                activo={exchange === x.id}
+                onClick={() => {
+                  setExchange(x.id);
+                  setCursor(0);
+                }}
+              >
+                {x.etiqueta}
+              </Chip>
+            ))}
+          </div>
         </div>
 
         <ScrollArea className="h-[420px]">
@@ -286,7 +305,11 @@ export function SymbolSelector() {
                     </span>
                     <span className="min-w-0 flex-1 truncate text-tv-text-muted">
                       <Resaltado
-                        texto={descripcionPar(a.base, a.quote)}
+                        texto={
+                          CLASE_MERCADO[a.exchange] === "accion"
+                            ? (a.nombre ?? a.symbol)
+                            : descripcionPar(a.base, a.quote)
+                        }
                         consulta={query}
                       />
                     </span>

@@ -27,7 +27,7 @@ export function Header() {
           {/* Cambio de vista: el chart de cripto y la mesa de opciones. */}
           <nav className="ml-2 flex gap-0.5 rounded bg-tv-bg p-0.5">
             <span className="rounded bg-tv-panel-hover px-2.5 py-1 text-xs font-medium text-tv-text">
-              Cripto
+              Gráfico
             </span>
             <Link
               href="/opciones"

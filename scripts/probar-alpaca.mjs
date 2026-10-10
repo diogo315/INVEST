@@ -82,6 +82,54 @@ if (cadena) {
   }
 }
 
-if (accion && cadena) {
-  console.log("\n✓ Todo listo. Ya podés usar la cadena en /opciones.");
+// ── lo que necesita el gráfico de acciones y ETFs ──────────────────────
+const barras = await probar(
+  "Velas",
+  "https://data.alpaca.markets/v2/stocks/bars?symbols=AAPL&timeframe=15Min&feed=iex&adjustment=all&sort=desc&limit=3",
+);
+if (barras) {
+  const filas = barras?.bars?.AAPL ?? [];
+  const u = filas[0];
+  console.log(
+    `✓ Velas: ${filas.length} de AAPL en 15 min` +
+      (u ? ` — la última cierra en ${u.c} (${u.t})` : ""),
+  );
+  if (filas.length === 0) {
+    console.log("  Vinieron cero velas: puede ser feriado o cuenta sin datos.");
+  }
+}
+
+const foto = await probar(
+  "Cotizaciones",
+  "https://data.alpaca.markets/v2/stocks/snapshots?symbols=AAPL,SPY,GLD&feed=iex",
+);
+if (foto) {
+  for (const sim of ["AAPL", "SPY", "GLD"]) {
+    const s = foto?.[sim];
+    const p = s?.latestTrade?.p ?? s?.dailyBar?.c;
+    const previo = s?.prevDailyBar?.c;
+    const pct = p && previo ? (((p - previo) / previo) * 100).toFixed(2) : "?";
+    console.log(`✓ ${sim}: ${p ?? "—"} (${pct}% vs cierre anterior)`);
+  }
+}
+
+// El listado de papeles vive en la API de trading, no en la de datos, y las
+// claves de paper solo funcionan contra paper-api.
+let catalogo = null;
+for (const base of [
+  "https://paper-api.alpaca.markets",
+  "https://api.alpaca.markets",
+]) {
+  catalogo = await probar(
+    `Catálogo (${base.includes("paper") ? "paper" : "producción"})`,
+    `${base}/v2/assets?status=active&asset_class=us_equity`,
+  );
+  if (catalogo) {
+    console.log(`✓ Catálogo: ${catalogo.length} papeles disponibles`);
+    break;
+  }
+}
+
+if (accion && cadena && barras && foto && catalogo) {
+  console.log("\n✓ Todo listo: cadena de opciones en /opciones y acciones/ETFs en el gráfico.");
 }

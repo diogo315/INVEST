@@ -13,6 +13,7 @@
  */
 
 import crudo from "@/lib/data/nombres-cripto.json";
+import { CLASE_MERCADO } from "./buscar";
 import type { ExchangeId } from "./types";
 
 const NOMBRES = crudo as Record<string, string>;
@@ -38,6 +39,7 @@ export const TIPO_MERCADO: Record<ExchangeId, string> = {
   BIN: "spot cripto",
   BINF: "perpetuo cripto",
   BG: "spot cripto",
+  ALP: "acción · ETF",
 };
 
 /** Nombre largo del exchange para la columna derecha del buscador. */
@@ -45,4 +47,32 @@ export const NOMBRE_EXCHANGE: Record<ExchangeId, string> = {
   BIN: "Binance",
   BINF: "Binance Futuros",
   BG: "Bitget",
+  ALP: "Bolsa EE. UU.",
 };
+
+/**
+ * Nombres de acciones y ETFs que se van conociendo (del catálogo de Alpaca o
+ * de la consulta puntual del watchlist). El diccionario de cripto es fijo y
+ * está en el repo; este se llena en caliente.
+ */
+const nombresBolsa = new Map<string, string>();
+
+export function recordarNombres(nuevos: Record<string, string>): void {
+  for (const [sim, nombre] of Object.entries(nuevos)) {
+    if (nombre) nombresBolsa.set(sim.toUpperCase(), nombre);
+  }
+}
+
+export function nombreDeAccion(simbolo: string): string | null {
+  return nombresBolsa.get(simbolo.toUpperCase()) ?? null;
+}
+
+/** Nombre de cualquier activo, sea cripto o papel de bolsa. */
+export function nombreDeSimbolo(
+  exchange: ExchangeId,
+  base: string,
+): string | null {
+  return CLASE_MERCADO[exchange] === "accion"
+    ? nombreDeAccion(base)
+    : nombreDeActivo(base);
+}
