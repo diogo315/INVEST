@@ -346,6 +346,9 @@ export function PriceChart({ symbol, timeframe }: Props) {
   const [hover, setHover] = useState<HoverInfo | null>(null);
   const [lastPrice, setLastPrice] = useState<{ value: number; pct: number } | null>(null);
   const [lastValues, setLastValues] = useState<LastValues>({});
+  // El proveedor devolvió cero velas: se avisa en vez de dejar en pantalla
+  // las curvas del símbolo anterior.
+  const [sinDatos, setSinDatos] = useState(false);
   const [paneOffsets, setPaneOffsets] = useState<PaneOffset[]>([]);
   const [measure, setMeasure] = useState<MeasureState>(INITIAL_MEASURE);
   const [renderTick, setRenderTick] = useState(0);
@@ -2629,6 +2632,26 @@ export function PriceChart({ symbol, timeframe }: Props) {
 
     // Vuelca un set de velas al chart (velas + volumen). Se usa dos veces:
     // una con lo cacheado (instantáneo) y otra con lo que llega de la API.
+    /**
+     * Borra los datos de TODAS las series del chart, en todos los paneles.
+     * Se usa cuando el símbolo nuevo no devolvió velas: cada updateX() sale
+     * temprano con cero velas, así que si no se limpia quedan dibujados los
+     * indicadores del símbolo anterior y parece que el gráfico sí cargó.
+     */
+    function vaciarTodasLasSeries() {
+      const chart = chartRef.current;
+      if (!chart) return;
+      for (const pane of chart.panes()) {
+        for (const serie of pane.getSeries()) {
+          try {
+            serie.setData([]);
+          } catch {
+            // Una serie ya removida tira: no es un problema.
+          }
+        }
+      }
+    }
+
     function paint(klines: Candle[]) {
       candlesRef.current = klines;
       if (candleSeriesRef.current) {
@@ -2688,6 +2711,12 @@ export function PriceChart({ symbol, timeframe }: Props) {
 
         const klines = await adapter.fetchKlines(rawSymbol, timeframe, 1000);
         if (cancelled) return;
+        setSinDatos(klines.length === 0);
+        if (klines.length === 0) {
+          // Cada updateX() sale temprano cuando no hay velas, así que sin
+          // esto quedarían dibujados los indicadores del símbolo anterior.
+          vaciarTodasLasSeries();
+        }
         paint(klines);
         writeCandleCache(symbol, timeframe, klines);
         // Pintamos velas + EMAs y recién en el frame siguiente calculamos
@@ -2863,6 +2892,20 @@ export function PriceChart({ symbol, timeframe }: Props) {
     <div className="relative h-full w-full">
       <div ref={containerRef} className="h-full w-full" />
       {measureRender}
+      {sinDatos && (
+        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
+          <div className="pointer-events-auto max-w-sm rounded-lg border border-tv-border bg-tv-panel/95 px-4 py-3 text-center text-xs text-tv-text-muted shadow-lg">
+            <p className="mb-1 text-sm font-medium text-tv-text">
+              Sin velas para {parseSymbol(symbol).symbol} en {timeframe}
+            </p>
+            <p>
+              El proveedor no devolvió datos para esta temporalidad. Si es un
+              papel de bolsa, puede ser un símbolo sin histórico en este feed;
+              probá otra temporalidad o el botón Actualizar.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Top-left of main pane: symbol info + OHLC + Volume pill + EMA pills */}
       <div

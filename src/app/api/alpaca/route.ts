@@ -15,6 +15,7 @@
  */
 
 import { rankearActivos, type Activo } from "@/lib/options/ranking";
+import { desdeCuando } from "@/lib/exchanges/ventana-barras";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -293,19 +294,18 @@ export async function GET(req: Request) {
         400,
       );
     }
-    const limite = Number(url.searchParams.get("limit") ?? 1000);
+    const pedido = Number(url.searchParams.get("limit") ?? 1000);
+    const limite = Math.min(10000, Math.max(1, Number.isFinite(pedido) ? pedido : 1000));
     const destino = new URL(`${DATOS}/v2/stocks/bars`);
     destino.searchParams.set("symbols", sim);
     destino.searchParams.set("timeframe", tf);
+    destino.searchParams.set("start", desdeCuando(tf, limite));
     destino.searchParams.set("feed", "iex");
     // Precios ajustados por splits y dividendos: sin esto un split deja un
     // escalón falso en el histórico y rompe cualquier media móvil.
     destino.searchParams.set("adjustment", "all");
     destino.searchParams.set("sort", "desc"); // las más recientes primero
-    destino.searchParams.set(
-      "limit",
-      String(Math.min(10000, Math.max(1, Number.isFinite(limite) ? limite : 1000))),
-    );
+    destino.searchParams.set("limit", String(limite));
     return reenviar(destino, headers);
   }
 
