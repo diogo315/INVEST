@@ -15,7 +15,7 @@
  */
 
 import { rankearActivos, type Activo } from "@/lib/options/ranking";
-import { desdeCuando } from "@/lib/exchanges/ventana-barras";
+import { ventanasDeBarras } from "@/lib/exchanges/ventana-barras";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -57,6 +57,124 @@ const FILTROS_CADENA: Record<string, (v: string) => boolean> = {
   type: (v) => v === "call" || v === "put",
   page_token: (v) => TOKEN.test(v),
 };
+
+/**
+ * Velas.
+ *
+ * **Una sola llamada no alcanza en intradía.** Alpaca no pagina por
+ * cantidad de velas sino por cuántos datos crudos recorre: cada página
+ * cubre más o menos el mismo tramo de tiempo sin importar la temporalidad.
+ * Medido contra la API real con AMZN: 15Min devolvió 705 velas, 1Hour 197 y
+ * 4Hour **52**, las tres terminando el mismo día y con `next_page_token`.
+ * Por eso el gráfico de 4H mostraba dos semanas.
+ *
+ * El rango se parte en ventanas del tamaño de una página y se piden **en
+ * paralelo**: una ida y vuelta en vez de diez encadenadas. Dentro de una
+ * ventana, si todavía queda token se sigue una página más.
+ */
+const PAGINAS_POR_VENTANA = 2;
+
+interface BarraCruda {
+  t: string;
+}
+
+async function unaVentana(
+  simbolo: string,
+  tf: string,
+  desde: string,
+  hasta: string,
+  limite: number,
+  headers: HeadersInit,
+): Promise<{ barras: BarraCruda[]; status?: number; mensaje?: string }> {
+  const barras: BarraCruda[] = [];
+  let token: string | null = null;
+  for (let p = 0; p < PAGINAS_POR_VENTANA; p++) {
+    const destino = new URL(`${DATOS}/v2/stocks/bars`);
+    destino.searchParams.set("symbols", simbolo);
+    destino.searchParams.set("timeframe", tf);
+    destino.searchParams.set("start", desde);
+    // Si la ventana llega hasta hoy no se manda `end`: Alpaca ya usa
+    // "ahora" por defecto y así no hay que pelear con zonas horarias.
+    if (Date.parse(`${hasta}T00:00:00Z`) <= Date.now()) {
+      destino.searchParams.set("end", hasta);
+    }
+    destino.searchParams.set("feed", "iex");
+    // Ajustadas por splits y dividendos: sin esto un split deja un escalón
+    // falso en el histórico y rompe cualquier media móvil.
+    destino.searchParams.set("adjustment", "all");
+    // Descendente: el límite se aplica desde el principio del rango, así
+    // que en ascendente traería las velas más viejas de la ventana.
+    destino.searchParams.set("sort", "desc");
+    destino.searchParams.set("limit", String(limite));
+    if (token) destino.searchParams.set("page_token", token);
+
+    const r = await fetch(destino, { headers, cache: "no-store" });
+    const texto = await r.text();
+    if (!r.ok) {
+      return {
+        barras,
+        status: r.status,
+        mensaje:
+          r.status === 401 || r.status === 403
+            ? "Alpaca rechazó las credenciales."
+            : r.status === 429
+              ? "Alpaca cortó por límite de llamadas (el plan gratis son 200 por minuto)."
+              : texto.slice(0, 400),
+      };
+    }
+    const cuerpo = JSON.parse(texto) as {
+      bars?: Record<string, BarraCruda[]>;
+      next_page_token?: string | null;
+    };
+    barras.push(...(cuerpo.bars?.[simbolo] ?? []));
+    token = cuerpo.next_page_token ?? null;
+    if (!token || barras.length >= limite) break;
+  }
+  return { barras };
+}
+
+async function traerBarras(
+  simbolo: string,
+  tf: string,
+  limite: number,
+  headers: HeadersInit,
+): Promise<Response> {
+  const ventanas = ventanasDeBarras(tf, limite);
+  let partes: Array<{ barras: BarraCruda[]; status?: number; mensaje?: string }>;
+  try {
+    partes = await Promise.all(
+      ventanas.map((v) =>
+        unaVentana(simbolo, tf, v.desde, v.hasta, limite, headers),
+      ),
+    );
+  } catch {
+    return json({ error: "red", mensaje: "No se pudo contactar a Alpaca." }, 502);
+  }
+
+  // Si Alpaca rechazó, se dice por qué en vez de devolver una lista a medias.
+  const fallo = partes.find((p) => p.status);
+  if (fallo && partes.every((p) => p.barras.length === 0)) {
+    return json(
+      { error: "alpaca", status: fallo.status, mensaje: fallo.mensaje },
+      fallo.status!,
+    );
+  }
+
+  // Las ventanas se solapan un día: hay que sacar las repetidas.
+  const porTiempo = new Map<string, BarraCruda>();
+  for (const p of partes) for (const b of p.barras) porTiempo.set(b.t, b);
+  const barras = [...porTiempo.values()]
+    .sort((a, b) => (a.t < b.t ? 1 : a.t > b.t ? -1 : 0))
+    .slice(0, limite);
+
+  return new Response(
+    JSON.stringify({ bars: { [simbolo]: barras }, ventanas: ventanas.length }),
+    {
+      status: 200,
+      headers: { "content-type": "application/json", "cache-control": "no-store" },
+    },
+  );
+}
 
 /** Le pega a Alpaca y devuelve la respuesta tal cual, traduciendo los errores. */
 async function reenviar(destino: URL, headers: HeadersInit): Promise<Response> {
@@ -296,17 +414,7 @@ export async function GET(req: Request) {
     }
     const pedido = Number(url.searchParams.get("limit") ?? 1000);
     const limite = Math.min(10000, Math.max(1, Number.isFinite(pedido) ? pedido : 1000));
-    const destino = new URL(`${DATOS}/v2/stocks/bars`);
-    destino.searchParams.set("symbols", sim);
-    destino.searchParams.set("timeframe", tf);
-    destino.searchParams.set("start", desdeCuando(tf, limite));
-    destino.searchParams.set("feed", "iex");
-    // Precios ajustados por splits y dividendos: sin esto un split deja un
-    // escalón falso en el histórico y rompe cualquier media móvil.
-    destino.searchParams.set("adjustment", "all");
-    destino.searchParams.set("sort", "desc"); // las más recientes primero
-    destino.searchParams.set("limit", String(limite));
-    return reenviar(destino, headers);
+    return traerBarras(sim, tf, limite, headers);
   }
 
   // ── datos de mercado ───────────────────────────────────────────────────

@@ -9,7 +9,12 @@
  * velas pedidas, incluso cayendo en fin de semana.
  */
 
-import { desdeCuando, PISO_HISTORICO } from "../src/lib/exchanges/ventana-barras.ts";
+import {
+  desdeCuando,
+  ventanasDeBarras,
+  MAX_VENTANAS,
+  PISO_HISTORICO,
+} from "../src/lib/exchanges/ventana-barras.ts";
 
 /** Un sábado y un lunes feriado, que son los días que destapan el bug. */
 const SABADO = Date.parse("2026-10-10T15:00:00Z");
@@ -89,6 +94,53 @@ if (raro === PISO_HISTORICO) {
 } else {
   fallos++;
   console.log(`✗ temporalidad desconocida dio ${raro}`);
+}
+
+// ── ventanas en paralelo ───────────────────────────────────────────────
+// Alpaca pagina por tramo de tiempo, no por cantidad de velas: cada página
+// cubre ~26 días de rueda. Las ventanas tienen que ser más chicas que eso.
+const VENTANAS = [
+  { tf: "15Min", limite: 1000, max: 3 },
+  { tf: "1Hour", limite: 1000, max: MAX_VENTANAS },
+  { tf: "4Hour", limite: 1000, max: MAX_VENTANAS },
+  { tf: "1Day", limite: 1000, max: 1 },
+  { tf: "1Week", limite: 1000, max: 1 },
+  // El sondeo en vivo pide dos velas: una sola llamada, no diez.
+  { tf: "15Min", limite: 2, max: 1 },
+  { tf: "4Hour", limite: 2, max: 1 },
+];
+
+for (const { tf, limite, max } of VENTANAS) {
+  const v = ventanasDeBarras(tf, limite, SABADO);
+  const problemas = [];
+  if (v.length === 0) problemas.push("ninguna ventana");
+  if (v.length > max) problemas.push(`${v.length} ventanas, el tope es ${max}`);
+  // Ninguna ventana puede ser más larga que una página de Alpaca (~26 días
+  // de rueda, o sea ~36 de calendario): si lo es, se pierden velas adentro.
+  for (const w of v) {
+    const dias = (Date.parse(w.hasta) - Date.parse(w.desde)) / 86_400_000;
+    if (tf.endsWith("Min") || tf.endsWith("Hour")) {
+      if (dias > 36) problemas.push(`ventana de ${dias} días en ${tf}`);
+    }
+    if (Date.parse(w.desde) >= Date.parse(w.hasta)) problemas.push("ventana vacía");
+  }
+  // La más nueva tiene que llegar hasta hoy, si no falta el tramo reciente.
+  const masNueva = v[0];
+  if (Date.parse(masNueva.hasta) < SABADO) problemas.push("no llega hasta hoy");
+  // Y entre todas no puede quedar un hueco.
+  for (let i = 1; i < v.length; i++) {
+    if (Date.parse(v[i].hasta) < Date.parse(v[i - 1].desde)) {
+      problemas.push(`hueco entre ${v[i].hasta} y ${v[i - 1].desde}`);
+    }
+  }
+  if (problemas.length === 0) {
+    console.log(
+      `✓ ${tf.padEnd(6)} × ${limite} → ${v.length} ventana(s), de ${v[v.length - 1].desde} a ${v[0].hasta}`,
+    );
+  } else {
+    fallos++;
+    console.log(`✗ ${tf}: ${problemas.join("; ")}`);
+  }
 }
 
 console.log(fallos === 0 ? "\n✓ ventana de velas correcta" : `\n✗ ${fallos} fallos`);
