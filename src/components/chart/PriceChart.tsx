@@ -15,6 +15,7 @@ import {
   type IPriceLine,
   type ISeriesMarkersPluginApi,
   type SeriesMarker,
+  type Logical,
   type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
@@ -75,6 +76,7 @@ import { formatPrice, formatVolume } from "@/lib/format";
 import { IndicatorPill } from "./IndicatorPill";
 import { ControlReplay } from "./ControlReplay";
 import { CapaDibujos } from "./CapaDibujos";
+import { indiceDeTiempo, tiempoDeIndice } from "@/lib/dibujos/coordenadas";
 import { MeasureOverlay } from "./MeasureOverlay";
 
 interface MeasurePoint {
@@ -3409,26 +3411,20 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
           simbolo={symbol}
           ancho={anchoCapa}
           alto={paneOffsets[0].height}
-          aX={(t) => ts.timeToCoordinate(t as UTCTimestamp)}
+          // De fecha a píxel por la posición CONTINUA en la escala, no por
+          // `timeToCoordinate`: esa solo ubica fechas que existan como vela
+          // exacta y devuelve null para el aire de la derecha o el hueco de
+          // un fin de semana, con lo que el dibujo no se dibujaba.
+          aX={(t) =>
+            ts.logicalToCoordinate(
+              indiceDeTiempo(candlesRef.current, t) as Logical,
+            )
+          }
           aY={(precio) => serie.priceToCoordinate(precio)}
           aTiempo={(x) => {
-            const t = ts.coordinateToTime(x);
-            if (t !== null) return Number(t);
-            // Más allá de la última vela no hay tiempo definido: se
-            // extrapola con el paso entre velas para poder dibujar en el
-            // aire de la derecha.
-            const velas = candlesRef.current;
-            if (velas.length < 2) return null;
-            const paso = velas[velas.length - 1].time - velas[velas.length - 2].time;
-            const xUlt = ts.timeToCoordinate(
-              velas[velas.length - 1].time as UTCTimestamp,
-            );
-            if (xUlt === null) return null;
-            const ancho1 = ts.options().barSpacing || 8;
-            return (
-              velas[velas.length - 1].time +
-              Math.round((x - xUlt) / ancho1) * paso
-            );
+            const l = ts.coordinateToLogical(x);
+            if (l === null) return null;
+            return tiempoDeIndice(candlesRef.current, Number(l));
           }}
           aPrecio={(y) => serie.coordinateToPrice(y)}
           tick={renderTick}
