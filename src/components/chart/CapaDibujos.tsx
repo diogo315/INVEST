@@ -16,6 +16,8 @@ import { formatPrice } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 interface Props {
+  /** Cuál de los gráficos abiertos es este. */
+  graficoId: string;
   simbolo: string;
   /** Ancho y alto del área del gráfico, en píxeles. */
   ancho: number;
@@ -53,6 +55,7 @@ type Arrastre =
  * render: por eso el dibujo acompaña al gráfico cuando se lo mueve.
  */
 export function CapaDibujos({
+  graficoId,
   simbolo,
   ancho,
   alto,
@@ -65,7 +68,11 @@ export function CapaDibujos({
   const herramienta = useChartStore((s) => s.tool);
   const setTool = useChartStore((s) => s.setTool);
   const dibujos = useChartStore((s) => s.dibujos[simbolo]);
-  const seleccionado = useChartStore((s) => s.dibujoSeleccionado);
+  // Solo el gráfico donde se seleccionó muestra los tiradores y la
+  // barrita: con dos gráficos del mismo activo salían duplicados.
+  const seleccionado = useChartStore((s) =>
+    s.graficoDeLaSeleccion === graficoId ? s.dibujoSeleccionado : null,
+  );
   const seleccionar = useChartStore((s) => s.seleccionarDibujo);
   const agregar = useChartStore((s) => s.agregarDibujo);
   const editar = useChartStore((s) => s.editarDibujo);
@@ -97,6 +104,18 @@ export function CapaDibujos({
    */
   const [arrastre, setArrastre] = useState<Arrastre>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+
+  // Escape mientras se dibuja: cancela y vuelve al cursor.
+  useEffect(() => {
+    if (!dibujando && !borrando) return;
+    const alTeclear = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      setPrimerPunto(null);
+      setTool("cursor");
+    };
+    window.addEventListener("keydown", alTeclear);
+    return () => window.removeEventListener("keydown", alTeclear);
+  }, [dibujando, borrando, setTool]);
 
   // Suprimir / Escape sobre el dibujo seleccionado.
   useEffect(() => {
@@ -158,7 +177,7 @@ export function CapaDibujos({
     if (!dibujando) {
       // Con el cursor: seleccionar lo que haya debajo, o deseleccionar.
       const d = dibujoBajoElClic(lista, puntosDe, pos.x, pos.y, ancho, alto);
-      seleccionar(d ? d.id : null);
+      seleccionar(d ? d.id : null, graficoId);
       return;
     }
 
@@ -167,7 +186,7 @@ export function CapaDibujos({
     const tipo = herramienta as TipoDibujo;
 
     if (PUNTOS_DE[tipo] === 1) {
-      agregar(simbolo, tipo, [punto]);
+      agregar(simbolo, tipo, [punto], graficoId);
       // El texto se abre a editar enseguida: un "Texto" vacío no sirve.
       if (tipo === "texto") setDialogo(simbolo);
       setTool("cursor");
@@ -178,7 +197,7 @@ export function CapaDibujos({
       setPrimerPunto({ tool: herramienta, punto });
       return;
     }
-    agregar(simbolo, tipo, [aMedias, punto]);
+    agregar(simbolo, tipo, [aMedias, punto], graficoId);
     setPrimerPunto(null);
     setTool("cursor");
   }
@@ -257,7 +276,7 @@ export function CapaDibujos({
             interactiva={!dibujando && !borrando}
             alAgarrar={(e) => {
               e.stopPropagation();
-              seleccionar(d.id);
+              seleccionar(d.id, graficoId);
               const pos = posicionDelMouse(e);
               const punto = pos ? aMercado(pos) : null;
               if (punto && !d.bloqueado) {

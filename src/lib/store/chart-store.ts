@@ -592,6 +592,11 @@ export interface ChartState {
   dibujos: Record<string, Dibujo[]>;
   /** Dibujo seleccionado (para editarlo). No se guarda. */
   dibujoSeleccionado: string | null;
+  /**
+   * En qué gráfico está seleccionado. Con dos gráficos del mismo activo,
+   * sin esto los dos mostraban los tiradores y la barrita a la vez.
+   */
+  graficoDeLaSeleccion: string | null;
   /** Activo cuyo dibujo seleccionado tiene abierto el diálogo de edición. */
   dibujoEnDialogo: string | null;
   /** Alertas de precio e indicador. */
@@ -654,13 +659,18 @@ export interface ChartState {
   renombrarPlantilla: (id: string, nombre: string) => void;
   borrarPlantilla: (id: string) => void;
   /** Agrega un dibujo al activo y lo deja seleccionado. */
-  agregarDibujo: (simbolo: string, tipo: TipoDibujo, puntos: PuntoDibujo[]) => void;
+  agregarDibujo: (
+    simbolo: string,
+    tipo: TipoDibujo,
+    puntos: PuntoDibujo[],
+    grafico?: string,
+  ) => void;
   editarDibujo: (simbolo: string, id: string, patch: Partial<Dibujo>) => void;
   borrarDibujo: (simbolo: string, id: string) => void;
   /** Borra todos los dibujos de un activo. */
   borrarDibujosDe: (simbolo: string) => void;
   duplicarDibujo: (simbolo: string, id: string) => void;
-  seleccionarDibujo: (id: string | null) => void;
+  seleccionarDibujo: (id: string | null, grafico?: string) => void;
   /** Abre (con el símbolo) o cierra (null) el diálogo de edición. */
   setDibujoEnDialogo: (simbolo: string | null) => void;
   crearAlerta: (a: Omit<Alerta, "id" | "creada">) => void;
@@ -851,6 +861,7 @@ export const useChartStore = create<ChartState>()(
       plantillas: [],
       dibujos: {},
       dibujoSeleccionado: null,
+      graficoDeLaSeleccion: null,
       dibujoEnDialogo: null,
       alertas: [],
       disparos: [],
@@ -1029,7 +1040,21 @@ export const useChartStore = create<ChartState>()(
             ? { listaActivaId }
             : {},
         ),
-      setTool: (tool) => set({ tool }),
+      setTool: (tool) =>
+        set((state) => ({
+          tool,
+          // Al agarrar una herramienta de dibujo se suelta lo que estuviera
+          // seleccionado: su barrita quedaba tapando justo donde uno va a
+          // dibujar.
+          ...(tool === "cursor"
+            ? {}
+            : {
+                dibujoSeleccionado: null,
+                graficoDeLaSeleccion: null,
+                dibujoEnDialogo: null,
+              }),
+          ...(state.tool === tool ? {} : {}),
+        })),
       addPriceLine: (price, symbol) =>
         set((state) => ({
           priceLines: [
@@ -1116,7 +1141,7 @@ export const useChartStore = create<ChartState>()(
         })),
       borrarPlantilla: (id) =>
         set((state) => ({ plantillas: state.plantillas.filter((p) => p.id !== id) })),
-      agregarDibujo: (simbolo, tipo, puntos) =>
+      agregarDibujo: (simbolo, tipo, puntos, grafico) =>
         set((state) => {
           const d = dibujoNuevo(nuevoId(), tipo, puntos);
           return {
@@ -1125,6 +1150,7 @@ export const useChartStore = create<ChartState>()(
               [simbolo]: [...(state.dibujos[simbolo] ?? []), d],
             },
             dibujoSeleccionado: d.id,
+            graficoDeLaSeleccion: grafico ?? state.graficoActivoId,
           };
         }),
       editarDibujo: (simbolo, id, patch) =>
@@ -1144,11 +1170,15 @@ export const useChartStore = create<ChartState>()(
           },
           dibujoSeleccionado:
             state.dibujoSeleccionado === id ? null : state.dibujoSeleccionado,
+          dibujoEnDialogo:
+            state.dibujoSeleccionado === id ? null : state.dibujoEnDialogo,
         })),
       borrarDibujosDe: (simbolo) =>
         set((state) => ({
           dibujos: { ...state.dibujos, [simbolo]: [] },
           dibujoSeleccionado: null,
+          graficoDeLaSeleccion: null,
+          dibujoEnDialogo: null,
         })),
       duplicarDibujo: (simbolo, id) =>
         set((state) => {
@@ -1174,9 +1204,15 @@ export const useChartStore = create<ChartState>()(
               [simbolo]: [...(state.dibujos[simbolo] ?? []), copia],
             },
             dibujoSeleccionado: copia.id,
+            graficoDeLaSeleccion: state.graficoActivoId,
           };
         }),
-      seleccionarDibujo: (dibujoSeleccionado) => set({ dibujoSeleccionado }),
+      seleccionarDibujo: (dibujoSeleccionado, grafico) =>
+        set((state) => ({
+          dibujoSeleccionado,
+          graficoDeLaSeleccion:
+            dibujoSeleccionado === null ? null : (grafico ?? state.graficoActivoId),
+        })),
       setDibujoEnDialogo: (dibujoEnDialogo) => set({ dibujoEnDialogo }),
       crearAlerta: (a) =>
         set((state) => {

@@ -414,6 +414,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
   const timezone = useChartStore((s) => s.timezone);
   const refreshNonce = useChartStore((s) => s.refreshNonce);
   const velasHistoria = useChartStore((s) => s.velasHistoria);
+  const seleccionarDibujo = useChartStore((s) => s.seleccionarDibujo);
   const replay = useChartStore((s) => s.replay);
   const elegirIndiceReplay = useChartStore((s) => s.elegirIndiceReplay);
   const totalReplay = useChartStore((s) => s.totalReplay);
@@ -444,6 +445,8 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
   eligiendoRef.current = eligiendoReplay;
   const elegirIndiceReplayRef = useRef(elegirIndiceReplay);
   elegirIndiceReplayRef.current = elegirIndiceReplay;
+  const soltarSeleccionRef = useRef(seleccionarDibujo);
+  soltarSeleccionRef.current = seleccionarDibujo;
   // La lista de medias, para leerla desde los callbacks que no son reactivos.
   const listaMediasRef = useRef(medias);
   listaMediasRef.current = medias;
@@ -716,6 +719,11 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
 
     // Click handler — add horizontal price line when hline tool is active
     chart.subscribeClick((param) => {
+      // Un clic que llega HASTA ACÁ es un clic en el gráfico pelado: la
+      // capa de dibujos se queda con los que caen sobre un dibujo. Así que
+      // este es el "clic afuera" que tiene que soltar la selección.
+      if (toolRef.current === "cursor") soltarSeleccionRef.current(null);
+
       // Elegir dónde empieza el replay gana a cualquier herramienta: es un
       // modo, y lo primero que uno hace al entrar es marcar la vela.
       if (eligiendoRef.current && param.time) {
@@ -3408,6 +3416,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
         style={{ width: anchoCapa, height: paneOffsets[0].height }}
       >
         <CapaDibujos
+          graficoId={graficoId}
           simbolo={symbol}
           ancho={anchoCapa}
           alto={paneOffsets[0].height}
