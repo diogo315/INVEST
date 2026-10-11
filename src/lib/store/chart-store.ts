@@ -5,6 +5,13 @@ import { persist } from "zustand/middleware";
 import type { Timeframe } from "@/lib/binance/types";
 import { ZONA_POR_DEFECTO, type ChartTimezone } from "@/lib/chart/timezone";
 import { HISTORIA_POR_DEFECTO, OPCIONES_HISTORIA } from "@/lib/binance/paginado";
+import {
+  MAX_ALERTAS,
+  MAX_DISPAROS,
+  type Alerta,
+  type Disparo,
+} from "@/lib/alertas/tipos";
+export type { Alerta, Disparo } from "@/lib/alertas/tipos";
 export { OPCIONES_HISTORIA } from "@/lib/binance/paginado";
 import {
   MAX_MEDIAS,
@@ -545,6 +552,10 @@ export interface ChartState {
   velasHistoria: number;
   /** Juegos de indicadores guardados con nombre. */
   plantillas: PlantillaIndicadores[];
+  /** Alertas de precio e indicador. */
+  alertas: Alerta[];
+  /** Las últimas veces que saltó alguna, de la más nueva a la más vieja. */
+  disparos: Disparo[];
   /** Marca de que ya se sembraron los perpetuos en un watchlist viejo. */
   futuresSeeded: boolean;
   /** Marca de que ya se agregó la lista de bolsa a un estado guardado. */
@@ -598,6 +609,12 @@ export interface ChartState {
   aplicarPlantilla: (id: string, grafico?: string) => void;
   renombrarPlantilla: (id: string, nombre: string) => void;
   borrarPlantilla: (id: string) => void;
+  crearAlerta: (a: Omit<Alerta, "id" | "creada">) => void;
+  editarAlerta: (id: string, patch: Partial<Alerta>) => void;
+  borrarAlerta: (id: string) => void;
+  /** Registra que una alerta saltó (y la apaga si era de una sola vez). */
+  registrarDisparo: (alertaId: string, texto: string) => void;
+  limpiarDisparos: () => void;
   refreshChart: () => void;
   setChartLoading: (v: boolean) => void;
   setSettingsTarget: (k: IndicatorKey | null, grafico?: string) => void;
@@ -767,6 +784,8 @@ export const useChartStore = create<ChartState>()(
       timezone: ZONA_POR_DEFECTO,
       velasHistoria: HISTORIA_POR_DEFECTO,
       plantillas: [],
+      alertas: [],
+      disparos: [],
       tool: "cursor",
       priceLines: [],
       symbolDialogOpen: false,
@@ -1028,6 +1047,43 @@ export const useChartStore = create<ChartState>()(
         })),
       borrarPlantilla: (id) =>
         set((state) => ({ plantillas: state.plantillas.filter((p) => p.id !== id) })),
+      crearAlerta: (a) =>
+        set((state) => {
+          if (state.alertas.length >= MAX_ALERTAS) return {};
+          return {
+            alertas: [
+              ...state.alertas,
+              { ...a, id: nuevoId(), creada: Date.now() },
+            ],
+          };
+        }),
+      editarAlerta: (id, patch) =>
+        set((state) => ({
+          alertas: state.alertas.map((x) => (x.id === id ? { ...x, ...patch } : x)),
+        })),
+      borrarAlerta: (id) =>
+        set((state) => ({ alertas: state.alertas.filter((x) => x.id !== id) })),
+      registrarDisparo: (alertaId, texto) =>
+        set((state) => {
+          const a = state.alertas.find((x) => x.id === alertaId);
+          if (!a) return {};
+          const cuando = Date.now();
+          return {
+            alertas: state.alertas.map((x) =>
+              x.id !== alertaId
+                ? x
+                : // Una alerta de "una sola vez" se apaga sola: si no,
+                  // seguiría sonando en cada vela mientras la condición
+                  // se mantenga.
+                  { ...x, ultimoDisparo: cuando, activa: x.unaVez ? false : x.activa },
+            ),
+            disparos: [
+              { id: nuevoId(), alertaId, simbolo: a.simbolo, texto, cuando },
+              ...state.disparos,
+            ].slice(0, MAX_DISPAROS),
+          };
+        }),
+      limpiarDisparos: () => set({ disparos: [] }),
       setVelasHistoria: (velasHistoria) =>
         set((s) => ({
           velasHistoria: OPCIONES_HISTORIA.includes(
@@ -1063,6 +1119,8 @@ export const useChartStore = create<ChartState>()(
         timezone: s.timezone,
         velasHistoria: s.velasHistoria,
         plantillas: s.plantillas,
+        alertas: s.alertas,
+        disparos: s.disparos,
       }),
       // Deep-merge so config/indicators/hidden keys added in newer versions
       // get their defaults instead of staying undefined from older persisted state.
@@ -1209,6 +1267,20 @@ export const useChartStore = create<ChartState>()(
           graficoActivoId,
           distribucion,
           plantillas,
+          // Lo guardado puede venir de una versión anterior: se filtra lo
+          // que no tenga forma de alerta en vez de confiar.
+          alertas: (Array.isArray(p.alertas) ? p.alertas : [])
+            .filter(
+              (a): a is Alerta =>
+                !!a && typeof a.id === "string" && typeof a.simbolo === "string",
+            )
+            .slice(0, MAX_ALERTAS),
+          disparos: (Array.isArray(p.disparos) ? p.disparos : [])
+            .filter(
+              (d): d is Disparo =>
+                !!d && typeof d.id === "string" && typeof d.texto === "string",
+            )
+            .slice(0, MAX_DISPAROS),
         };
       },
     },

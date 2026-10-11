@@ -5,6 +5,7 @@ import { LeftSidebar } from "@/components/layout/LeftSidebar";
 import { RightSidebar } from "@/components/layout/RightSidebar";
 import { BottomPanel } from "@/components/layout/BottomPanel";
 import { MultiChart } from "@/components/chart/MultiChart";
+import { MotorAlertas } from "@/components/alertas/MotorAlertas";
 import dynamic from "next/dynamic";
 
 // ~900 líneas de formularios que solo se ven al abrir "configurar" un
@@ -33,6 +34,8 @@ export default function HomePage() {
         <RightSidebar />
       </div>
       <BottomPanel />
+      {/* Vigila las alertas mientras la pestaña esté abierta. No dibuja nada. */}
+      <MotorAlertas />
       <IndicatorSettingsDialog />
     </div>
   );
