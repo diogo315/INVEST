@@ -36,6 +36,10 @@ export function Watchlist() {
   const toggleMostrarNombres = useChartStore((s) => s.toggleMostrarNombres);
   const [rows, setRows] = useState<Record<string, Row>>({});
   const [flash, setFlash] = useState<Record<string, "up" | "down" | null>>({});
+  // Reordenar arrastrando: qué fila se agarró y en qué ranura caería.
+  const [arrastrando, setArrastrando] = useState<number | null>(null);
+  const [ranura, setRanura] = useState<number | null>(null);
+  const reordenar = useChartStore((s) => s.reordenarWatchlist);
   // Se incrementa al volver a la pestaña para rehacer el snapshot de 24 h.
   const [revision, setRevision] = useState(0);
   // Nombres de las acciones/ETFs de la lista. El diccionario de cripto está
@@ -220,9 +224,12 @@ export function Watchlist() {
         <span className="text-right">Precio</span>
         <span className="text-right">24h</span>
       </div>
-      <ScrollArea className="flex-1">
+      {/* `min-h-0` es lo que hace que esto scrollee: sin eso, en una
+          columna flex el hijo no puede achicarse por debajo de su
+          contenido y la lista se derramaba fuera de la pantalla. */}
+      <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col">
-          {watchlist.map((q) => {
+          {watchlist.map((q, indice) => {
             const row = rows[q];
             const isActive = q === symbol;
             const f = flash[q];
@@ -237,10 +244,43 @@ export function Watchlist() {
               <div
                 key={q}
                 onClick={() => setSymbol(q)}
+                draggable
+                onDragStart={(e) => {
+                  setArrastrando(indice);
+                  // Firefox no arranca el arrastre sin datos cargados.
+                  e.dataTransfer.effectAllowed = "move";
+                  e.dataTransfer.setData("text/plain", q);
+                }}
+                onDragOver={(e) => {
+                  if (arrastrando === null) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                  // Mitad de arriba: antes de esta fila. Mitad de abajo:
+                  // después. Si no, no habría forma de soltar al final.
+                  const caja = e.currentTarget.getBoundingClientRect();
+                  setRanura(e.clientY < caja.top + caja.height / 2 ? indice : indice + 1);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (arrastrando !== null && ranura !== null) {
+                    reordenar(arrastrando, ranura);
+                  }
+                  setArrastrando(null);
+                  setRanura(null);
+                }}
+                onDragEnd={() => {
+                  setArrastrando(null);
+                  setRanura(null);
+                }}
                 className={cn(
-                  "group grid cursor-pointer grid-cols-[1fr_auto_auto] items-center gap-2 px-3 py-1.5 text-xs transition-colors",
+                  "group relative grid cursor-pointer grid-cols-[1fr_auto_auto] items-center gap-2 px-3 py-1.5 text-xs transition-colors",
                   "hover:bg-tv-panel-hover",
                   isActive && "bg-tv-panel-hover",
+                  arrastrando === indice && "opacity-40",
+                  // La raya marca dónde va a caer.
+                  ranura === indice && "before:absolute before:inset-x-0 before:top-0 before:h-0.5 before:bg-tv-blue",
+                  ranura === indice + 1 &&
+                    "after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-tv-blue",
                 )}
               >
                 <div className="flex min-w-0 flex-col gap-0.5">

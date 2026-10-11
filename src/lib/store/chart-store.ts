@@ -5,6 +5,7 @@ import { persist } from "zustand/middleware";
 import type { Timeframe } from "@/lib/binance/types";
 import { ZONA_POR_DEFECTO, type ChartTimezone } from "@/lib/chart/timezone";
 import { HISTORIA_POR_DEFECTO, OPCIONES_HISTORIA } from "@/lib/binance/paginado";
+import { mover } from "@/lib/watchlist/orden";
 import {
   dibujoNuevo,
   sanearDibujos,
@@ -639,6 +640,8 @@ export interface ChartState {
   addToWatchlist: (s: string, listaId?: string) => void;
   /** Quita de la lista activa, o de `listaId` si se pasa. */
   removeFromWatchlist: (s: string, listaId?: string) => void;
+  /** Mueve un activo dentro de la lista (arrastrando). */
+  reordenarWatchlist: (desde: number, hasta: number, listaId?: string) => void;
   crearLista: (nombre: string, simbolos?: string[]) => void;
   renombrarLista: (id: string, nombre: string) => void;
   duplicarLista: (id: string) => void;
@@ -979,6 +982,15 @@ export const useChartStore = create<ChartState>()(
               l.id !== destino
                 ? l
                 : { ...l, simbolos: l.simbolos.filter((x) => x !== qualified) },
+            ),
+          };
+        }),
+      reordenarWatchlist: (desde, hasta, listaId) =>
+        set((state) => {
+          const destino = listaId ?? state.listaActivaId;
+          return {
+            listas: state.listas.map((l) =>
+              l.id !== destino ? l : { ...l, simbolos: mover(l.simbolos, desde, hasta) },
             ),
           };
         }),
