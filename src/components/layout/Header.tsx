@@ -7,6 +7,7 @@ import { TimeframeSelector } from "@/components/chart/TimeframeSelector";
 import { IndicatorMenu } from "@/components/chart/IndicatorMenu";
 import { DistribucionMenu } from "@/components/chart/DistribucionMenu";
 import { PanelAlertas } from "@/components/alertas/PanelAlertas";
+import { BotonReplay } from "@/components/chart/BotonReplay";
 import { TimezoneSelector } from "@/components/chart/TimezoneSelector";
 import { Separator } from "@/components/ui/separator";
 import { useChartStore } from "@/lib/store/chart-store";
@@ -50,6 +51,8 @@ export function Header() {
         <DistribucionMenu />
         <Separator orientation="vertical" className="mx-1 h-6 bg-tv-border" />
         <PanelAlertas />
+        <Separator orientation="vertical" className="mx-1 h-6 bg-tv-border" />
+        <BotonReplay />
         <Separator orientation="vertical" className="mx-1 h-6 bg-tv-border" />
         <TimezoneSelector />
       </div>

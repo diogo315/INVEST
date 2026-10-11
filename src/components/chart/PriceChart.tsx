@@ -73,6 +73,7 @@ import {
 } from "@/lib/chart/sincronia";
 import { formatPrice, formatVolume } from "@/lib/format";
 import { IndicatorPill } from "./IndicatorPill";
+import { ControlReplay } from "./ControlReplay";
 import { MeasureOverlay } from "./MeasureOverlay";
 
 interface MeasurePoint {
@@ -410,6 +411,13 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
   const timezone = useChartStore((s) => s.timezone);
   const refreshNonce = useChartStore((s) => s.refreshNonce);
   const velasHistoria = useChartStore((s) => s.velasHistoria);
+  const replay = useChartStore((s) => s.replay);
+  const elegirIndiceReplay = useChartStore((s) => s.elegirIndiceReplay);
+  const totalReplay = useChartStore((s) => s.totalReplay);
+  /** Este gráfico es el que está en replay. */
+  const enReplay = replay?.graficoId === graficoId;
+  /** Esperando que se elija la vela de arranque con un clic. */
+  const eligiendoReplay = enReplay && replay?.indice === null;
   const refreshChart = useChartStore((s) => s.refreshChart);
   const setChartLoading = useChartStore((s) => s.setChartLoading);
 
@@ -424,6 +432,15 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
   configRef.current = config;
   const velasRef = useRef(velasHistoria);
   velasRef.current = velasHistoria;
+  // Todas las velas bajadas. En replay, `candlesRef` tiene solo las que ya
+  // "pasaron" y esta guarda la serie entera para poder avanzar.
+  const todasRef = useRef<Candle[]>([]);
+  const enReplayRef = useRef(enReplay);
+  enReplayRef.current = enReplay;
+  const eligiendoRef = useRef(eligiendoReplay);
+  eligiendoRef.current = eligiendoReplay;
+  const elegirIndiceReplayRef = useRef(elegirIndiceReplay);
+  elegirIndiceReplayRef.current = elegirIndiceReplay;
   // La lista de medias, para leerla desde los callbacks que no son reactivos.
   const listaMediasRef = useRef(medias);
   listaMediasRef.current = medias;
@@ -696,6 +713,14 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
 
     // Click handler — add horizontal price line when hline tool is active
     chart.subscribeClick((param) => {
+      // Elegir dónde empieza el replay gana a cualquier herramienta: es un
+      // modo, y lo primero que uno hace al entrar es marcar la vela.
+      if (eligiendoRef.current && param.time) {
+        const t = Number(param.time);
+        const i = todasRef.current.findIndex((k) => k.time >= t);
+        elegirIndiceReplayRef.current(i >= 0 ? i : todasRef.current.length - 1);
+        return;
+      }
       if (!param.point || !candleSeriesRef.current) return;
       const price = candleSeriesRef.current.coordinateToPrice(param.point.y);
       if (price === null || !isFinite(price)) return;
@@ -1556,6 +1581,65 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
     requestAnimationFrame(() => recomputePaneOffsets());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [indicators.srsi]);
+
+  /**
+   * Replay: deja a la vista solo hasta la vela `indice` y recalcula TODOS
+   * los indicadores con ese pedazo. Es la parte importante del modo: si los
+   * indicadores siguieran calculados con la serie entera, estarían mirando
+   * el futuro y el ejercicio no serviría de nada.
+   */
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || todasRef.current.length === 0) return;
+
+    const todas = todasRef.current;
+    if (enReplay) totalReplay(todas.length);
+
+    const hasta =
+      enReplay && replay?.indice !== null && replay?.indice !== undefined
+        ? Math.max(1, Math.min(todas.length, replay.indice + 1))
+        : todas.length;
+    const visibles = hasta === todas.length ? todas : todas.slice(0, hasta);
+    candlesRef.current = visibles;
+
+    candleSeriesRef.current?.setData(
+      visibles.map((k) => ({
+        time: k.time as UTCTimestamp,
+        open: k.open,
+        high: k.high,
+        low: k.low,
+        close: k.close,
+      })),
+    );
+    volumeSeriesRef.current?.setData(
+      visibles.map((k) => ({
+        time: k.time as UTCTimestamp,
+        value: k.volume,
+        color: k.close >= k.open ? `${TV_COLORS.green}66` : `${TV_COLORS.red}66`,
+      })),
+    );
+
+    sincronizarMedias();
+    updateEMAs();
+    updateRSI();
+    updateMACD();
+    updateBB();
+    updateVWAP();
+    updateStochastic();
+    updateStochRsi();
+    updateCipher();
+    actualizarNuevos();
+    // El precio de la cabecera pasa a ser el de la vela en la que estamos.
+    const ultima = visibles[visibles.length - 1];
+    if (enReplay && ultima) {
+      setLastPrice({
+        value: ultima.close,
+        pct:
+          ultima.open === 0 ? 0 : ((ultima.close - ultima.open) / ultima.open) * 100,
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enReplay, replay?.indice]);
 
   // Indicadores nuevos: un solo efecto para los diez. Depende de la lista de
   // prendidos, no de diez banderas sueltas.
@@ -3086,6 +3170,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
 
     function paint(klines: Candle[]) {
       candlesRef.current = klines;
+      todasRef.current = klines;
       // Para la cruz compartida: la vela de ESTE activo que contiene la
       // fecha, así la línea horizontal se apoya en su propio precio y
       // funciona aunque los gráficos estén en temporalidades distintas.
@@ -3197,6 +3282,9 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
           interval: timeframe,
           onCandle: (k) => {
             if (!candleSeriesRef.current) return;
+            // En replay el gráfico está "en el pasado": un tick de ahora
+            // dibujaría una vela futura en el medio de la reproducción.
+            if (enReplayRef.current) return;
             const arr = candlesRef.current;
             const lastCandle = arr[arr.length - 1];
             if (lastCandle && lastCandle.time === k.time) {
@@ -3569,6 +3657,9 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
           ).map(chapaNueva)}
         </div>
       </div>
+
+      {/* Barra de reproducción, solo en el gráfico que está en replay */}
+      <ControlReplay graficoId={graficoId} />
 
       {/* Chapas de los indicadores nuevos que tienen panel propio */}
       {INDICADORES_NUEVOS.filter((d) => d.conPanel && indicators[d.clave]).map(

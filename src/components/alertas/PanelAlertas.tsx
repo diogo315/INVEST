@@ -35,14 +35,22 @@ function cuandoTexto(ms: number): string {
 /** Campanita con el contador + el panel de alertas. */
 export function PanelAlertas() {
   const [abierto, setAbierto] = useState(false);
+  // Hasta cuándo se vio la lista. Se compara contra el último disparo en
+  // vez de contra la hora actual: así no hace falta mirar el reloj en
+  // medio del render (y el punto rojo no aparece y desaparece solo).
+  const [vistoHasta, setVistoHasta] = useState(0);
   const alertas = useChartStore((s) => s.alertas);
   const disparos = useChartStore((s) => s.disparos);
   const activas = alertas.filter((a) => a.activa).length;
+  const haySinVer = (disparos[0]?.cuando ?? 0) > vistoHasta;
 
   return (
     <>
       <button
-        onClick={() => setAbierto(true)}
+        onClick={() => {
+          setAbierto(true);
+          setVistoHasta(disparos[0]?.cuando ?? 0);
+        }}
         title="Alertas"
         aria-label="Alertas"
         className="relative flex items-center gap-1.5 rounded px-2.5 py-1.5 text-xs text-tv-text hover:bg-tv-panel-hover"
@@ -54,8 +62,8 @@ export function PanelAlertas() {
             {activas}
           </span>
         )}
-        {/* Punto rojo: saltó algo en la última hora y puede no haberlo visto */}
-        {disparos.some((d) => Date.now() - d.cuando < 3_600_000) && (
+        {/* Punto rojo: saltó algo que todavía no miró */}
+        {haySinVer && (
           <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-tv-red" />
         )}
       </button>

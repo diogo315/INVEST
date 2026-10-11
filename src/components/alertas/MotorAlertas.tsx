@@ -35,11 +35,15 @@ export function MotorAlertas() {
   const registrarDisparo = useChartStore((s) => s.registrarDisparo);
 
   const registrarRef = useRef(registrarDisparo);
-  registrarRef.current = registrarDisparo;
   const previos = useRef<Map<string, number>>(new Map());
-
   const alertasRef = useRef(alertas);
-  alertasRef.current = alertas;
+
+  // Las copias en ref se refrescan después de cada render, no durante: los
+  // suscriptores las leen cuando llega un precio, siempre después.
+  useEffect(() => {
+    alertasRef.current = alertas;
+    registrarRef.current = registrarDisparo;
+  });
 
   /** Avisa: deja el disparo guardado, suena y notifica. */
   const avisar = useRef((a: Alerta, valor: number) => {

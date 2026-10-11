@@ -506,6 +506,29 @@ export const GRAFICOS_DE: Record<Distribucion, number> = {
 export const MAX_GRAFICOS = 4;
 
 /**
+ * Reproducción barra por barra ("replay"): el gráfico oculta todo lo que
+ * pasó después de cierta vela y avanza de a una, recalculando los
+ * indicadores con lo que se sabía hasta ese momento. Sirve para practicar
+ * sin ver el futuro.
+ *
+ * Es estado de pantalla, no se guarda: al recargar la app se vuelve al
+ * gráfico normal.
+ */
+export interface EstadoReplay {
+  /** Gráfico que está en replay (los demás siguen en vivo). */
+  graficoId: string;
+  /** Vela en la que está parado. null mientras se elige dónde empezar. */
+  indice: number | null;
+  /** Cuántas velas tiene el gráfico en total. */
+  total: number;
+  reproduciendo: boolean;
+  /** Velas por segundo. */
+  velocidad: number;
+}
+
+export const VELOCIDADES_REPLAY = [0.5, 1, 2, 5, 10];
+
+/**
  * Un juego de indicadores guardado con nombre, para aplicarlo a cualquier
  * gráfico. Guarda exactamente lo mismo que define a un gráfico menos el
  * activo y la temporalidad: qué indicadores están puestos, cuáles con el
@@ -571,6 +594,8 @@ export interface ChartState {
   chartLoading: boolean;
   /** Qué indicador de qué gráfico tiene abierto el diálogo (null = cerrado) */
   settingsTarget: { grafico: string; key: IndicatorKey } | null;
+  /** Reproducción barra por barra, o null si no hay ninguna. */
+  replay: EstadoReplay | null;
 
   // Actions. Las que tocan un gráfico aceptan su id; sin id, van al activo.
   setSymbol: (s: string, grafico?: string) => void;
@@ -618,6 +643,17 @@ export interface ChartState {
   refreshChart: () => void;
   setChartLoading: (v: boolean) => void;
   setSettingsTarget: (k: IndicatorKey | null, grafico?: string) => void;
+  /** Entra en replay en un gráfico, a la espera de que se elija la vela. */
+  iniciarReplay: (grafico?: string) => void;
+  /** El gráfico avisa cuántas velas tiene. */
+  totalReplay: (total: number) => void;
+  /** Se eligió la vela de arranque (índice dentro de la serie). */
+  elegirIndiceReplay: (indice: number) => void;
+  /** Adelanta o retrocede velas. */
+  avanzarReplay: (n: number) => void;
+  reproducirReplay: (v: boolean) => void;
+  velocidadReplay: (v: number) => void;
+  salirReplay: () => void;
 }
 
 /** Indicadores apagados, uno por clave. */
@@ -792,6 +828,7 @@ export const useChartStore = create<ChartState>()(
       refreshNonce: 0,
       chartLoading: false,
       settingsTarget: null,
+      replay: null,
 
       setSymbol: (symbol, grafico) =>
         tocar(set, grafico, () => ({ symbol: migrateSymbol(symbol) })),
@@ -1094,6 +1131,48 @@ export const useChartStore = create<ChartState>()(
           // Hay que volver a pedir los datos: el cambio no se ve solo.
           refreshNonce: s.refreshNonce + 1,
         })),
+      iniciarReplay: (grafico) =>
+        set((state) => ({
+          replay: {
+            graficoId: grafico ?? state.graficoActivoId,
+            indice: null,
+            total: 0,
+            reproduciendo: false,
+            velocidad: 2,
+          },
+        })),
+      totalReplay: (total) =>
+        set((state) => (state.replay ? { replay: { ...state.replay, total } } : {})),
+      elegirIndiceReplay: (indice) =>
+        set((state) =>
+          state.replay
+            ? {
+                replay: {
+                  ...state.replay,
+                  // Siempre quedan al menos unas velas a la izquierda: con
+                  // dos no se puede calcular ningún indicador.
+                  indice: Math.max(10, Math.min(state.replay.total - 1, indice)),
+                },
+              }
+            : {},
+        ),
+      avanzarReplay: (n) =>
+        set((state) => {
+          const r = state.replay;
+          if (!r || r.indice === null) return {};
+          const siguiente = r.indice + n;
+          // Al llegar al final se frena solo: seguir corriendo no agrega
+          // nada y deja el botón de play encendido sin que pase nada.
+          if (siguiente >= r.total - 1) {
+            return { replay: { ...r, indice: r.total - 1, reproduciendo: false } };
+          }
+          return { replay: { ...r, indice: Math.max(10, siguiente) } };
+        }),
+      reproducirReplay: (reproduciendo) =>
+        set((state) => (state.replay ? { replay: { ...state.replay, reproduciendo } } : {})),
+      velocidadReplay: (velocidad) =>
+        set((state) => (state.replay ? { replay: { ...state.replay, velocidad } } : {})),
+      salirReplay: () => set({ replay: null }),
       refreshChart: () => set((s) => ({ refreshNonce: s.refreshNonce + 1 })),
       setChartLoading: (chartLoading) => set({ chartLoading }),
       setSettingsTarget: (key, grafico) =>
