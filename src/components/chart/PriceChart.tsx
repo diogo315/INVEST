@@ -18,7 +18,15 @@ import {
   type Logical,
   type Time,
   type UTCTimestamp,
+  type DeepPartial,
+  type ChartOptions,
+  type CandlestickSeriesPartialOptions,
 } from "lightweight-charts";
+import {
+  colorVolumen,
+  opcionesDeChart,
+  opcionesDeVelas,
+} from "@/lib/chart/apariencia";
 import { Maximize2, Minimize2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { fetchKlinesCached } from "@/lib/binance/multi-tf";
@@ -412,6 +420,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
   const setSettingsTarget = (k: IndicatorKey | null) =>
     setSettingsTargetStore(k, graficoId);
   const timezone = useChartStore((s) => s.timezone);
+  const apariencia = useChartStore((s) => s.apariencia);
   const refreshNonce = useChartStore((s) => s.refreshNonce);
   const velasHistoria = useChartStore((s) => s.velasHistoria);
   const seleccionarDibujo = useChartStore((s) => s.seleccionarDibujo);
@@ -558,6 +567,10 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
   // recrearlo, y un efecto aparte reaplica los formateadores.
   const tzRef = useRef(timezone);
   tzRef.current = timezone;
+  // Lo visual se lee desde callbacks que no pueden depender del estado (el
+  // websocket, la carga de velas): si fuera dependencia, cambiar un color
+  // volvería a bajar todo el histórico.
+  const aparienciaRef = useRef(apariencia);
   function scheduleHeavyUpdate() {
     if (heavyTimerRef.current !== null) return;
     heavyTimerRef.current = window.setTimeout(() => {
@@ -604,29 +617,23 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
   useEffect(() => {
     if (!containerRef.current) return;
 
+    // Lo que el usuario eligió en «Estilo»; lo que no depende de él
+    // (tipografía, márgenes, formateadores de fecha) se mezcla encima.
+    const vis = opcionesDeChart(aparienciaRef.current);
     const chart = createChart(containerRef.current, {
+      ...vis,
       layout: {
-        background: { color: TV_COLORS.bg },
-        textColor: TV_COLORS.text,
+        ...vis.layout,
         fontFamily: "var(--font-sans), Inter, system-ui, sans-serif",
         fontSize: 11,
-        panes: { separatorColor: TV_COLORS.border, separatorHoverColor: TV_COLORS.border },
-      },
-      grid: {
-        vertLines: { color: TV_COLORS.grid },
-        horzLines: { color: TV_COLORS.grid },
       },
       crosshair: {
-        mode: CrosshairMode.Normal,
-        vertLine: { color: TV_COLORS.textMuted, width: 1, style: 3, labelBackgroundColor: TV_COLORS.panel },
-        horzLine: { color: TV_COLORS.textMuted, width: 1, style: 3, labelBackgroundColor: TV_COLORS.panel },
-      },
-      rightPriceScale: {
-        borderColor: TV_COLORS.border,
-        textColor: TV_COLORS.textMuted,
+        ...vis.crosshair,
+        vertLine: { ...vis.crosshair.vertLine, width: 1 },
+        horzLine: { ...vis.crosshair.horzLine, width: 1 },
       },
       timeScale: {
-        borderColor: TV_COLORS.border,
+        ...vis.timeScale,
         timeVisible: true,
         secondsVisible: false,
         rightOffset: MARGEN_DERECHO,
@@ -635,19 +642,13 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
       },
       localization: { timeFormatter: timeFormatter(tzRef.current) },
       autoSize: true,
-    });
+    } as DeepPartial<ChartOptions>);
 
     // PANE 0 — Candles + EMAs
     candleSeriesRef.current = chart.addSeries(CandlestickSeries, {
-      upColor: TV_COLORS.green,
-      downColor: TV_COLORS.red,
-      borderUpColor: TV_COLORS.green,
-      borderDownColor: TV_COLORS.red,
-      wickUpColor: TV_COLORS.green,
-      wickDownColor: TV_COLORS.red,
-      priceLineColor: TV_COLORS.textMuted,
+      ...opcionesDeVelas(aparienciaRef.current),
       priceLineStyle: 2,
-    });
+    } as CandlestickSeriesPartialOptions);
 
     // Bollinger Bands — upper / middle / lower (pane 0, hidden by default)
     bbUpperRef.current = chart.addSeries(LineSeries, {
@@ -931,6 +932,43 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
     };
   }, []);
 
+  // Apariencia: colores, cuadrícula, cruz y escalas.
+  useEffect(() => {
+    aparienciaRef.current = apariencia;
+    const chart = chartRef.current;
+    if (!chart) return;
+    chart.applyOptions(opcionesDeChart(apariencia) as DeepPartial<ChartOptions>);
+    candleSeriesRef.current?.applyOptions(
+      opcionesDeVelas(apariencia) as CandlestickSeriesPartialOptions,
+    );
+
+    // Las barras de un histograma llevan el color dentro de cada dato, así
+    // que `applyOptions` no las toca: hay que repintarlas una por una.
+    // Se recolorea lo que la serie tiene puesto ahora —no todo el
+    // histórico— para no resucitar velas ocultas durante el replay.
+    const porTiempo = new Map(candlesRef.current.map((k) => [k.time, k]));
+    const vol = volumeSeriesRef.current;
+    if (vol) {
+      const actual = vol.data() as Array<{ time: UTCTimestamp; value?: number }>;
+      vol.setData(
+        actual.map((d) => {
+          const k = porTiempo.get(d.time as number);
+          return { ...d, color: colorVolumen(apariencia, !k || k.close >= k.open) };
+        }),
+      );
+    }
+    const hist = macdHistRef.current;
+    if (hist) {
+      const actual = hist.data() as Array<{ time: UTCTimestamp; value?: number }>;
+      hist.setData(
+        actual.map((d) => ({
+          ...d,
+          color: colorVolumen(apariencia, (d.value ?? 0) >= 0),
+        })),
+      );
+    }
+  }, [apariencia]);
+
   // Manage volume — overlay at the bottom of the main pane
   useEffect(() => {
     if (!chartRef.current) return;
@@ -940,7 +978,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
         {
           priceFormat: { type: "volume" },
           priceScaleId: "volume",
-          color: TV_COLORS.textMuted,
+          color: aparienciaRef.current.texto,
           priceLineVisible: false,
           lastValueVisible: false,
         },
@@ -951,7 +989,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
       const data = candlesRef.current.map((k) => ({
         time: k.time as UTCTimestamp,
         value: k.volume,
-        color: k.close >= k.open ? `${TV_COLORS.green}66` : `${TV_COLORS.red}66`,
+        color: colorVolumen(aparienciaRef.current, k.close >= k.open),
       }));
       v.setData(data);
     } else if (!indicators.volume && volumeSeriesRef.current && chartRef.current) {
@@ -1621,7 +1659,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
       visibles.map((k) => ({
         time: k.time as UTCTimestamp,
         value: k.volume,
-        color: k.close >= k.open ? `${TV_COLORS.green}66` : `${TV_COLORS.red}66`,
+        color: colorVolumen(aparienciaRef.current, k.close >= k.open),
       })),
     );
 
@@ -3133,7 +3171,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
       m.map((p) => ({
         time: p.time as UTCTimestamp,
         value: p.histogram,
-        color: p.histogram >= 0 ? `${TV_COLORS.green}80` : `${TV_COLORS.red}80`,
+        color: colorVolumen(aparienciaRef.current, p.histogram >= 0),
       })),
     );
     const last = m.at(-1);
@@ -3197,7 +3235,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
             time: k.time as UTCTimestamp,
             value: k.volume,
             color:
-              k.close >= k.open ? `${TV_COLORS.green}66` : `${TV_COLORS.red}66`,
+              colorVolumen(aparienciaRef.current, k.close >= k.open),
           })),
         );
       }
@@ -3313,7 +3351,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
               volumeSeriesRef.current.update({
                 time: k.time as UTCTimestamp,
                 value: k.volume,
-                color: k.close >= k.open ? `${TV_COLORS.green}66` : `${TV_COLORS.red}66`,
+                color: colorVolumen(aparienciaRef.current, k.close >= k.open),
               });
             }
             updateEMAs();

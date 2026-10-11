@@ -4,6 +4,13 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { Timeframe } from "@/lib/binance/types";
 import { ZONA_POR_DEFECTO, type ChartTimezone } from "@/lib/chart/timezone";
+import {
+  APARIENCIA_POR_DEFECTO,
+  aplicarTema as aplicarTemaA,
+  sanearApariencia,
+  tocaColores,
+  type Apariencia,
+} from "@/lib/chart/apariencia";
 import { HISTORIA_POR_DEFECTO, OPCIONES_HISTORIA } from "@/lib/binance/paginado";
 import {
   mover,
@@ -598,6 +605,9 @@ export interface ChartState {
   mostrarNombres: boolean;
   /** Zona horaria de las etiquetas del chart ("utc", "local" o un id IANA). */
   timezone: ChartTimezone;
+  /** Colores, cuadrícula y demás ajustes visuales. Vale para todos los
+   * gráficos a la vez: es el tema, no una propiedad de cada panel. */
+  apariencia: Apariencia;
   /** Cuántas velas de historia se piden por gráfico (1.000 a 10.000). */
   velasHistoria: number;
   /** Juegos de indicadores guardados con nombre. */
@@ -684,6 +694,12 @@ export interface ChartState {
   toggleMostrarNombres: () => void;
   setTimezone: (tz: ChartTimezone) => void;
   setVelasHistoria: (n: number) => void;
+  /** Cambia uno o varios ajustes visuales sueltos. */
+  setApariencia: (parche: Partial<Apariencia>) => void;
+  /** Aplica un preset de colores sin tocar los interruptores. */
+  usarTema: (id: string) => void;
+  /** Vuelve todo lo visual a como viene de fábrica. */
+  reiniciarApariencia: () => void;
   /** Guarda los indicadores de un gráfico como plantilla. */
   guardarPlantilla: (nombre: string, grafico?: string) => void;
   /** Vuelca una plantilla sobre un gráfico. */
@@ -889,6 +905,7 @@ export const useChartStore = create<ChartState>()(
       futuresSeeded: true,
       bolsaSeeded: true,
       timezone: ZONA_POR_DEFECTO,
+      apariencia: APARIENCIA_POR_DEFECTO,
       velasHistoria: HISTORIA_POR_DEFECTO,
       plantillas: [],
       dibujos: {},
@@ -1223,6 +1240,20 @@ export const useChartStore = create<ChartState>()(
       toggleMostrarNombres: () =>
         set((s) => ({ mostrarNombres: !s.mostrarNombres })),
       setTimezone: (timezone) => set({ timezone }),
+      // Tocar un color a mano desmarca el preset: ya no es "Claro", es
+      // "Claro con el verde cambiado", y el menú no debe mentir sobre eso.
+      // Los interruptores no son del tema, así que no lo desmarcan.
+      setApariencia: (parche) =>
+        set((s) => ({
+          apariencia: {
+            ...s.apariencia,
+            ...parche,
+            tema: tocaColores(parche) ? "" : s.apariencia.tema,
+          },
+        })),
+      usarTema: (id) =>
+        set((s) => ({ apariencia: aplicarTemaA(s.apariencia, id) })),
+      reiniciarApariencia: () => set({ apariencia: APARIENCIA_POR_DEFECTO }),
       guardarPlantilla: (nombre, grafico) =>
         set((state) => {
           if (state.plantillas.length >= MAX_PLANTILLAS) return {};
@@ -1468,6 +1499,7 @@ export const useChartStore = create<ChartState>()(
         futuresSeeded: s.futuresSeeded,
         bolsaSeeded: s.bolsaSeeded,
         timezone: s.timezone,
+        apariencia: s.apariencia,
         velasHistoria: s.velasHistoria,
         plantillas: s.plantillas,
         alertas: s.alertas,
@@ -1644,6 +1676,9 @@ export const useChartStore = create<ChartState>()(
           // zona por defecto actual. Una zona elegida a mano se respeta.
           timezone:
             !p.timezone || p.timezone === "utc" ? current.timezone : p.timezone,
+          // Lo visual puede venir de una versión sin estos campos: se
+          // completa con los valores de fábrica en vez de quedar en undefined.
+          apariencia: sanearApariencia(p.apariencia),
           listas,
           listaActivaId,
           graficos,
