@@ -1,4 +1,6 @@
 import type { Candle, SymbolInfo, Ticker24h, Timeframe } from "./types";
+import { traerPaginado } from "./paginado";
+import { TIMEFRAME_SECONDS } from "./types";
 
 /**
  * REST de Binance Futures (USDⓈ-M). Mismo formato de klines que spot, pero
@@ -6,12 +8,16 @@ import type { Candle, SymbolInfo, Ticker24h, Timeframe } from "./types";
  */
 const BASE = "https://fapi.binance.com/fapi/v1";
 
-export async function fetchFuturesKlines(
+async function unaPaginaDeFuturos(
   symbol: string,
   interval: Timeframe,
-  limit = 1000,
+  limit: number,
+  finMs?: number,
 ): Promise<Candle[]> {
-  const url = `${BASE}/klines?symbol=${symbol.toUpperCase()}&interval=${interval}&limit=${limit}`;
+  const url =
+    `${BASE}/klines?symbol=${symbol.toUpperCase()}&interval=${interval}` +
+    `&limit=${Math.min(limit, 1000)}` +
+    (finMs !== undefined ? `&endTime=${Math.floor(finMs)}` : "");
   const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) throw new Error(`futures klines ${res.status}`);
   const data = (await res.json()) as unknown[][];
@@ -24,6 +30,19 @@ export async function fetchFuturesKlines(
     volume: parseFloat(k[5] as string),
     isFinal: true,
   }));
+}
+
+/** Igual que en spot: más de 1.000 velas salen de varias páginas. */
+export async function fetchFuturesKlines(
+  symbol: string,
+  interval: Timeframe,
+  limit = 1000,
+): Promise<Candle[]> {
+  return traerPaginado(
+    (finMs, n) => unaPaginaDeFuturos(symbol, interval, n, finMs),
+    TIMEFRAME_SECONDS[interval],
+    limit,
+  );
 }
 
 function mapTicker(t: Record<string, string>): Ticker24h {

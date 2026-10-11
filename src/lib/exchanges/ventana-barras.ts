@@ -49,8 +49,12 @@ export function desdeCuando(
 const DIAS_POR_VENTANA = 30;
 /** Días de rueda que entran en esos 30 de calendario, con margen. */
 const RUEDA_POR_VENTANA = 21;
-/** Tope de ventanas que se piden en paralelo. */
-export const MAX_VENTANAS = 10;
+/**
+ * Tope de ventanas en paralelo. Con 10 alcanzaba para 1.000 velas; desde
+ * que se pueden pedir 10.000 hace falta más, pero con techo para no tirarle
+ * cien pedidos juntos a Alpaca.
+ */
+export const MAX_VENTANAS = 40;
 
 /**
  * Alpaca **no pagina por cantidad de velas sino por cuántos datos crudos

@@ -409,6 +409,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
     setSettingsTargetStore(k, graficoId);
   const timezone = useChartStore((s) => s.timezone);
   const refreshNonce = useChartStore((s) => s.refreshNonce);
+  const velasHistoria = useChartStore((s) => s.velasHistoria);
   const refreshChart = useChartStore((s) => s.refreshChart);
   const setChartLoading = useChartStore((s) => s.setChartLoading);
 
@@ -421,6 +422,8 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
   symbolRef.current = symbol;
   const configRef = useRef(config);
   configRef.current = config;
+  const velasRef = useRef(velasHistoria);
+  velasRef.current = velasHistoria;
   // La lista de medias, para leerla desde los callbacks que no son reactivos.
   const listaMediasRef = useRef(medias);
   listaMediasRef.current = medias;
@@ -3143,7 +3146,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
           reactivarAutoescala(chartRef.current);
         }
 
-        const klines = await adapter.fetchKlines(rawSymbol, timeframe, 1000);
+        const klines = await adapter.fetchKlines(rawSymbol, timeframe, velasRef.current);
         if (cancelled) return;
         setSinDatos(klines.length === 0);
         if (klines.length === 0) {
@@ -3200,7 +3203,9 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
               arr[arr.length - 1] = k;
             } else if (!lastCandle || k.time > lastCandle.time) {
               arr.push(k);
-              if (arr.length > 2000) arr.shift();
+              // El tope sigue a lo pedido, con aire: antes recortaba a 2.000
+              // y con 10.000 de historia se perdía todo lo viejo al primer tick.
+              if (arr.length > velasRef.current * 2) arr.shift();
             } else {
               return;
             }

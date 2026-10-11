@@ -7,11 +7,13 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
   DISTRIBUCIONES,
   GRAFICOS_DE,
+  OPCIONES_HISTORIA,
   useChartStore,
   type Distribucion,
 } from "@/lib/store/chart-store";
@@ -64,6 +66,8 @@ function Miniatura({ id, activa }: { id: Distribucion; activa: boolean }) {
 export function DistribucionMenu() {
   const distribucion = useChartStore((s) => s.distribucion);
   const setDistribucion = useChartStore((s) => s.setDistribucion);
+  const velas = useChartStore((s) => s.velasHistoria);
+  const setVelas = useChartStore((s) => s.setVelasHistoria);
 
   return (
     <DropdownMenu>
@@ -102,6 +106,33 @@ export function DistribucionMenu() {
           Cada gráfico tiene su activo, su temporalidad y sus indicadores. El
           del borde azul es el que recibe lo que elegís acá arriba: hacé clic
           en otro para cambiarlo.
+        </div>
+        <DropdownMenuSeparator />
+        <DropdownMenuGroup>
+          <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-tv-text-muted">
+            Historia (velas por gráfico)
+          </DropdownMenuLabel>
+          <div className="flex gap-1 px-2 pb-1">
+            {OPCIONES_HISTORIA.map((n) => (
+              <button
+                key={n}
+                type="button"
+                onClick={() => setVelas(n)}
+                className={cn(
+                  "flex-1 rounded px-1.5 py-1 text-[11px] tabular-nums transition-colors",
+                  n === velas
+                    ? "bg-tv-blue text-white"
+                    : "bg-tv-bg text-tv-text-muted hover:bg-tv-panel-hover hover:text-tv-text",
+                )}
+              >
+                {n >= 1000 ? `${n / 1000}k` : n}
+              </button>
+            ))}
+          </div>
+        </DropdownMenuGroup>
+        <div className="px-2 pb-1.5 text-[10px] leading-relaxed text-tv-text-muted">
+          Más historia es más scroll hacia atrás, pero también más datos que
+          bajar y más cuenta para los indicadores en cada gráfico.
         </div>
       </DropdownMenuContent>
     </DropdownMenu>

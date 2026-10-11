@@ -4,6 +4,8 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { Timeframe } from "@/lib/binance/types";
 import { ZONA_POR_DEFECTO, type ChartTimezone } from "@/lib/chart/timezone";
+import { HISTORIA_POR_DEFECTO, OPCIONES_HISTORIA } from "@/lib/binance/paginado";
+export { OPCIONES_HISTORIA } from "@/lib/binance/paginado";
 import {
   MAX_MEDIAS,
   mediasPorDefecto,
@@ -521,6 +523,8 @@ export interface ChartState {
   mostrarNombres: boolean;
   /** Zona horaria de las etiquetas del chart ("utc", "local" o un id IANA). */
   timezone: ChartTimezone;
+  /** Cuántas velas de historia se piden por gráfico (1.000 a 10.000). */
+  velasHistoria: number;
   /** Marca de que ya se sembraron los perpetuos en un watchlist viejo. */
   futuresSeeded: boolean;
   /** Marca de que ya se agregó la lista de bolsa a un estado guardado. */
@@ -567,6 +571,7 @@ export interface ChartState {
   toggleWatchlistCollapsed: () => void;
   toggleMostrarNombres: () => void;
   setTimezone: (tz: ChartTimezone) => void;
+  setVelasHistoria: (n: number) => void;
   refreshChart: () => void;
   setChartLoading: (v: boolean) => void;
   setSettingsTarget: (k: IndicatorKey | null, grafico?: string) => void;
@@ -734,6 +739,7 @@ export const useChartStore = create<ChartState>()(
       futuresSeeded: true,
       bolsaSeeded: true,
       timezone: ZONA_POR_DEFECTO,
+      velasHistoria: HISTORIA_POR_DEFECTO,
       tool: "cursor",
       priceLines: [],
       symbolDialogOpen: false,
@@ -935,6 +941,16 @@ export const useChartStore = create<ChartState>()(
       toggleMostrarNombres: () =>
         set((s) => ({ mostrarNombres: !s.mostrarNombres })),
       setTimezone: (timezone) => set({ timezone }),
+      setVelasHistoria: (velasHistoria) =>
+        set((s) => ({
+          velasHistoria: OPCIONES_HISTORIA.includes(
+            velasHistoria as (typeof OPCIONES_HISTORIA)[number],
+          )
+            ? velasHistoria
+            : s.velasHistoria,
+          // Hay que volver a pedir los datos: el cambio no se ve solo.
+          refreshNonce: s.refreshNonce + 1,
+        })),
       refreshChart: () => set((s) => ({ refreshNonce: s.refreshNonce + 1 })),
       setChartLoading: (chartLoading) => set({ chartLoading }),
       setSettingsTarget: (key, grafico) =>
@@ -958,6 +974,7 @@ export const useChartStore = create<ChartState>()(
         futuresSeeded: s.futuresSeeded,
         bolsaSeeded: s.bolsaSeeded,
         timezone: s.timezone,
+        velasHistoria: s.velasHistoria,
       }),
       // Deep-merge so config/indicators/hidden keys added in newer versions
       // get their defaults instead of staying undefined from older persisted state.

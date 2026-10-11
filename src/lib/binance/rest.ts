@@ -1,13 +1,20 @@
 import type { Candle, SymbolInfo, Ticker24h, Timeframe } from "./types";
+import { TIMEFRAME_SECONDS } from "./types";
+import { traerPaginado } from "./paginado";
 
 const BASE = "https://api.binance.com/api/v3";
 
-export async function fetchKlines(
+/** Una página: Binance devuelve como mucho 1.000 velas por pedido. */
+async function unaPaginaDeKlines(
   symbol: string,
   interval: Timeframe,
-  limit = 1000,
+  limit: number,
+  finMs?: number,
 ): Promise<Candle[]> {
-  const url = `${BASE}/klines?symbol=${symbol.toUpperCase()}&interval=${interval}&limit=${limit}`;
+  const url =
+    `${BASE}/klines?symbol=${symbol.toUpperCase()}&interval=${interval}` +
+    `&limit=${Math.min(limit, 1000)}` +
+    (finMs !== undefined ? `&endTime=${Math.floor(finMs)}` : "");
   const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) throw new Error(`klines ${res.status}`);
   const data = (await res.json()) as unknown[][];
@@ -20,6 +27,18 @@ export async function fetchKlines(
     volume: parseFloat(k[5] as string),
     isFinal: true,
   }));
+}
+
+export async function fetchKlines(
+  symbol: string,
+  interval: Timeframe,
+  limit = 1000,
+): Promise<Candle[]> {
+  return traerPaginado(
+    (finMs, n) => unaPaginaDeKlines(symbol, interval, n, finMs),
+    TIMEFRAME_SECONDS[interval],
+    limit,
+  );
 }
 
 export async function fetchTicker24h(symbol: string): Promise<Ticker24h> {

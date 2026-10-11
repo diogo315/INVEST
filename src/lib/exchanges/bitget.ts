@@ -4,6 +4,8 @@ import type {
   Ticker24h,
   Timeframe,
 } from "@/lib/binance/types";
+import { TIMEFRAME_SECONDS } from "@/lib/binance/types";
+import { traerPaginado } from "@/lib/binance/paginado";
 import type {
   ExchangeAdapter,
   KlineSubscription,
@@ -81,16 +83,19 @@ async function fetchSymbols(): Promise<SymbolInfo[]> {
   return cachedSymbols;
 }
 
-async function fetchKlines(
+async function unaPagina(
   symbol: string,
   tf: Timeframe,
-  limit = 1000,
+  limit: number,
+  finMs?: number,
 ): Promise<Candle[]> {
   const gran = granularityFor(tf);
   if (!gran) return []; // unsupported tf on Bitget
   const url =
     `${REST_BASE}/market/candles` +
-    `?symbol=${symbol.toUpperCase()}&granularity=${gran}&limit=${Math.min(limit, 1000)}`;
+    `?symbol=${symbol.toUpperCase()}&granularity=${gran}&limit=${Math.min(limit, 1000)}` +
+    // Bitget llama "endTime" al fin de la ventana, igual que Binance.
+    (finMs !== undefined ? `&endTime=${Math.floor(finMs)}` : "");
   const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) throw new Error(`bitget klines ${res.status}`);
   const json = await res.json();
@@ -108,6 +113,19 @@ async function fetchKlines(
       isFinal: true,
     }))
     .sort((a, b) => a.time - b.time);
+}
+
+/** Más de 1.000 velas: varias páginas en paralelo, como en Binance. */
+async function fetchKlines(
+  symbol: string,
+  tf: Timeframe,
+  limit = 1000,
+): Promise<Candle[]> {
+  return traerPaginado(
+    (finMs, n) => unaPagina(symbol, tf, n, finMs),
+    TIMEFRAME_SECONDS[tf],
+    limit,
+  );
 }
 
 async function fetchTickers24h(symbols: string[]): Promise<Ticker24h[]> {
