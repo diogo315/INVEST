@@ -1,7 +1,16 @@
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
-import { ChevronRight, Plus, Tag, X } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  FolderPlus,
+  Pencil,
+  Plus,
+  Tag,
+  Trash2,
+  X,
+} from "lucide-react";
 import { ADAPTERS, EXCHANGE_BADGE, parseSymbol, partirPar } from "@/lib/exchanges";
 import type { ExchangeId } from "@/lib/exchanges";
 import {
@@ -12,9 +21,16 @@ import {
 import { CLASE_MERCADO } from "@/lib/exchanges/buscar";
 import { traerNombresAcciones } from "@/lib/exchanges/alpaca-acciones";
 import { ListasMenu } from "@/components/watchlist/ListasMenu";
-import { simbolosActivosDe, useChartStore,
+import {
   graficoActivo,
+  listaActivaDe,
+  simbolosActivosDe,
+  useChartStore,
 } from "@/lib/store/chart-store";
+import {
+  agruparParaMostrar,
+  type Seccion,
+} from "@/lib/watchlist/orden";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { formatPrice, formatPct } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -40,6 +56,13 @@ export function Watchlist() {
   const [arrastrando, setArrastrando] = useState<number | null>(null);
   const [ranura, setRanura] = useState<number | null>(null);
   const reordenar = useChartStore((s) => s.reordenarWatchlist);
+  const crearSeccion = useChartStore((s) => s.crearSeccion);
+  const lista = useChartStore(listaActivaDe);
+  // Los activos repartidos en categorías, listos para dibujar.
+  const bloques = useMemo(
+    () => agruparParaMostrar(watchlist, lista.grupo ?? {}, lista.secciones ?? []),
+    [watchlist, lista.grupo, lista.secciones],
+  );
   // Se incrementa al volver a la pestaña para rehacer el snapshot de 24 h.
   const [revision, setRevision] = useState(0);
   // Nombres de las acciones/ETFs de la lista. El diccionario de cripto está
@@ -201,6 +224,14 @@ export function Watchlist() {
             <Tag className="h-3.5 w-3.5" />
           </button>
           <button
+            onClick={() => crearSeccion("Categoría")}
+            className="rounded p-1 text-tv-text-muted hover:bg-tv-panel-hover hover:text-tv-text"
+            title="Nueva categoría para agrupar activos"
+            aria-label="Nueva categoría"
+          >
+            <FolderPlus className="h-3.5 w-3.5" />
+          </button>
+          <button
             onClick={() => openSymbolDialog(true)}
             className="rounded p-1 text-tv-text-muted hover:bg-tv-panel-hover hover:text-tv-text"
             title="Agregar símbolo"
@@ -229,7 +260,42 @@ export function Watchlist() {
           contenido y la lista se derramaba fuera de la pantalla. */}
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col">
-          {watchlist.map((q, indice) => {
+          {bloques.map((bloque) => (
+            <div key={bloque.seccion?.id ?? "sueltos"} className="flex flex-col">
+              {bloque.seccion && (
+                <EncabezadoSeccion
+                  seccion={bloque.seccion}
+                  cuantos={bloque.simbolos.length}
+                  arrastrando={arrastrando !== null}
+                  onSoltar={() => {
+                    if (arrastrando === null) return;
+                    // Soltar sobre el título: entra a esa categoría, al
+                    // principio de lo que ya tenga.
+                    const primero = bloque.simbolos[0];
+                    const hasta = primero
+                      ? watchlist.indexOf(primero)
+                      : watchlist.length;
+                    reordenar(arrastrando, hasta, undefined, bloque.seccion!.id);
+                    setArrastrando(null);
+                    setRanura(null);
+                  }}
+                />
+              )}
+              {bloque.seccion?.plegada
+                ? null
+                : bloque.simbolos.map((q) => {
+                    const indice = watchlist.indexOf(q);
+                    return filaDeActivo(q, indice, bloque.seccion?.id ?? null);
+                  })}
+            </div>
+          ))}
+        </div>
+      </ScrollArea>
+    </div>
+  );
+
+  function filaDeActivo(q: string, indice: number, seccionId: string | null) {
+    {
             const row = rows[q];
             const isActive = q === symbol;
             const f = flash[q];
@@ -263,7 +329,9 @@ export function Watchlist() {
                 onDrop={(e) => {
                   e.preventDefault();
                   if (arrastrando !== null && ranura !== null) {
-                    reordenar(arrastrando, ranura);
+                    // Soltar sobre una fila de otra categoría mueve el
+                    // activo a ESA categoría, no solo de lugar.
+                    reordenar(arrastrando, ranura, undefined, seccionId);
                   }
                   setArrastrando(null);
                   setRanura(null);
@@ -347,14 +415,114 @@ export function Watchlist() {
                 </div>
               </div>
             );
-          })}
-          {watchlist.length === 0 && (
-            <div className="p-4 text-center text-xs text-tv-text-muted">
-              Esta lista está vacía. Agregá activos con el + de arriba.
-            </div>
-          )}
-        </div>
-      </ScrollArea>
+    }
+  }
+}
+
+/**
+ * Título de una categoría: se pliega con un clic, se renombra con doble
+ * clic y acepta que le suelten activos encima.
+ */
+function EncabezadoSeccion({
+  seccion,
+  cuantos,
+  arrastrando,
+  onSoltar,
+}: {
+  seccion: Seccion;
+  cuantos: number;
+  arrastrando: boolean;
+  onSoltar: () => void;
+}) {
+  const plegar = useChartStore((s) => s.plegarSeccion);
+  const renombrar = useChartStore((s) => s.renombrarSeccion);
+  const borrar = useChartStore((s) => s.borrarSeccion);
+  const [editando, setEditando] = useState(false);
+  const [texto, setTexto] = useState(seccion.nombre);
+  const [encima, setEncima] = useState(false);
+
+  const confirmar = () => {
+    setEditando(false);
+    if (texto.trim() && texto !== seccion.nombre) renombrar(seccion.id, texto);
+    else setTexto(seccion.nombre);
+  };
+
+  return (
+    <div
+      onDragOver={(e) => {
+        if (!arrastrando) return;
+        e.preventDefault();
+        setEncima(true);
+      }}
+      onDragLeave={() => setEncima(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setEncima(false);
+        onSoltar();
+      }}
+      className={cn(
+        "group/sec flex items-center gap-1 border-y border-tv-border bg-tv-bg/60 px-2 py-1",
+        encima && "bg-tv-blue/15",
+      )}
+    >
+      <button
+        onClick={() => plegar(seccion.id)}
+        title={seccion.plegada ? "Desplegar" : "Plegar"}
+        aria-label={`${seccion.plegada ? "Desplegar" : "Plegar"} ${seccion.nombre}`}
+        aria-expanded={!seccion.plegada}
+        className="rounded p-0.5 text-tv-text-muted hover:text-tv-text"
+      >
+        {seccion.plegada ? (
+          <ChevronRight className="h-3 w-3" />
+        ) : (
+          <ChevronDown className="h-3 w-3" />
+        )}
+      </button>
+
+      {editando ? (
+        <input
+          autoFocus
+          value={texto}
+          onChange={(e) => setTexto(e.target.value.slice(0, 30))}
+          onBlur={confirmar}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            if (e.key === "Escape") {
+              setTexto(seccion.nombre);
+              setEditando(false);
+            }
+          }}
+          aria-label="Nombre de la categoría"
+          className="min-w-0 flex-1 rounded border border-tv-blue bg-tv-panel px-1 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-tv-text outline-none"
+        />
+      ) : (
+        <button
+          onClick={() => plegar(seccion.id)}
+          onDoubleClick={() => setEditando(true)}
+          title="Doble clic para renombrar"
+          className="min-w-0 flex-1 truncate text-left text-[10px] font-semibold uppercase tracking-wider text-tv-text-muted"
+        >
+          {seccion.nombre}
+          <span className="ml-1 text-tv-text-dim">{cuantos}</span>
+        </button>
+      )}
+
+      <button
+        onClick={() => setEditando(true)}
+        title="Renombrar la categoría"
+        aria-label={`Renombrar ${seccion.nombre}`}
+        className="invisible rounded p-0.5 text-tv-text-dim hover:text-tv-text group-hover/sec:visible"
+      >
+        <Pencil className="h-3 w-3" />
+      </button>
+      <button
+        onClick={() => borrar(seccion.id)}
+        title="Borrar la categoría (los activos quedan sueltos)"
+        aria-label={`Borrar la categoría ${seccion.nombre}`}
+        className="invisible rounded p-0.5 text-tv-text-dim hover:text-tv-red group-hover/sec:visible"
+      >
+        <Trash2 className="h-3 w-3" />
+      </button>
     </div>
   );
 }

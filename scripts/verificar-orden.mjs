@@ -5,7 +5,13 @@
  *   node --experimental-strip-types scripts/verificar-orden.mjs
  */
 
-import { mover, ranuraEn } from "../src/lib/watchlist/orden.ts";
+import {
+  agruparParaMostrar,
+  mover,
+  nombreDeSeccionLibre,
+  ranuraEn,
+  sanearSecciones,
+} from "../src/lib/watchlist/orden.ts";
 
 let fallos = 0;
 const ok = (que, cond, detalle = "") => {
@@ -54,7 +60,62 @@ ok("mitad de abajo de la segunda: ranura 2", ranuraEn(35, filas) === 2);
 ok("abajo de todo: la última ranura", ranuraEn(100, filas) === 3);
 ok("sin filas, ranura 0", ranuraEn(50, []) === 0);
 
+// ── categorías ────────────────────────────────────────────────────────
+const sec = (id, nombre, plegada = false) => ({ id, nombre, plegada });
+
+{
+  const simbolos = ["BTC", "ETH", "AAPL", "SOL", "TSLA"];
+  const grupo = { AAPL: "bolsa", TSLA: "bolsa", BTC: "cripto" };
+  const secciones = [sec("cripto", "Cripto"), sec("bolsa", "Bolsa")];
+  const b = agruparParaMostrar(simbolos, grupo, secciones);
+
+  ok("primero van los sueltos, después cada categoría", b.length === 3);
+  ok("los sueltos no llevan título", b[0].seccion === null);
+  ok("y son los que no están en ninguna", b[0].simbolos.join(",") === "ETH,SOL", b[0].simbolos.join(","));
+  ok("cada categoría trae los suyos", b[1].simbolos.join(",") === "BTC" && b[2].simbolos.join(",") === "AAPL,TSLA");
+  ok(
+    "dentro de la categoría se respeta el orden de la lista",
+    agruparParaMostrar(["TSLA", "AAPL"], grupo, secciones)[1].simbolos.join(",") === "TSLA,AAPL",
+  );
+}
+
+{
+  // Lo importante: una categoría borrada no se puede llevar activos.
+  const b = agruparParaMostrar(["BTC", "ETH"], { BTC: "fantasma" }, []);
+  ok("sin categorías, todos los activos están igual", b.length === 1 && b[0].simbolos.join(",") === "BTC,ETH");
+  const c = agruparParaMostrar(["BTC", "ETH"], { BTC: "fantasma" }, [sec("otra", "Otra")]);
+  ok(
+    "un activo que apunta a una categoría que ya no existe vuelve a estar suelto",
+    c[0].simbolos.join(",") === "BTC,ETH",
+    JSON.stringify(c.map((x) => x.simbolos)),
+  );
+}
+
+{
+  const vacia = agruparParaMostrar([], {}, [sec("a", "A")]);
+  ok("una categoría vacía se muestra igual (para poder soltarle algo)", vacia.some((x) => x.seccion?.id === "a"));
+  ok("con lista vacía y sin categorías hay un bloque vacío", agruparParaMostrar([], {}, []).length === 1);
+}
+
+ok(
+  "un nombre repetido se numera",
+  nombreDeSeccionLibre([sec("a", "Cripto")], "Cripto") === "Cripto (2)",
+  nombreDeSeccionLibre([sec("a", "Cripto")], "Cripto"),
+);
+ok("uno libre se respeta", nombreDeSeccionLibre([sec("a", "Cripto")], "Bolsa") === "Bolsa");
+ok("un nombre vacío cae en el genérico", nombreDeSeccionLibre([], "   ") === "Categoría");
+
+ok(
+  "lo guardado se limpia",
+  sanearSecciones([sec("a", "A"), { nada: 1 }, null, { id: "b" }]).length === 2,
+);
+ok(
+  "una categoría sin nombre recibe uno",
+  sanearSecciones([{ id: "b" }])[0].nombre === "Categoría",
+);
+ok("lo que no es lista devuelve vacío", sanearSecciones("x").length === 0);
+
 console.log(
-  fallos === 0 ? "\n✓ orden del watchlist correcto" : `\n✗ ${fallos} fallos`,
+  fallos === 0 ? "\n✓ orden y categorías del watchlist correctos" : `\n✗ ${fallos} fallos`,
 );
 process.exit(fallos === 0 ? 0 : 1);

@@ -5,7 +5,16 @@ import { persist } from "zustand/middleware";
 import type { Timeframe } from "@/lib/binance/types";
 import { ZONA_POR_DEFECTO, type ChartTimezone } from "@/lib/chart/timezone";
 import { HISTORIA_POR_DEFECTO, OPCIONES_HISTORIA } from "@/lib/binance/paginado";
-import { mover } from "@/lib/watchlist/orden";
+import {
+  mover,
+  nombreDeSeccionLibre,
+  sanearSecciones,
+  type Seccion,
+} from "@/lib/watchlist/orden";
+export type { Seccion } from "@/lib/watchlist/orden";
+
+/** Tope de categorías por lista. */
+export const MAX_SECCIONES = 20;
 import {
   dibujoNuevo,
   sanearDibujos,
@@ -436,7 +445,12 @@ export const NOMBRE_LISTA_BOLSA = "Bolsa y ETFs";
 export interface ListaActivos {
   id: string;
   nombre: string;
+  /** Todos los activos de la lista, en orden. */
   simbolos: string[];
+  /** Categorías dentro de la lista, en el orden en que se muestran. */
+  secciones?: Seccion[];
+  /** En qué categoría cae cada activo. Los que no están acá van sueltos. */
+  grupo?: Record<string, string>;
 }
 
 export const ID_LISTA_INICIAL = "principal";
@@ -640,8 +654,23 @@ export interface ChartState {
   addToWatchlist: (s: string, listaId?: string) => void;
   /** Quita de la lista activa, o de `listaId` si se pasa. */
   removeFromWatchlist: (s: string, listaId?: string) => void;
-  /** Mueve un activo dentro de la lista (arrastrando). */
-  reordenarWatchlist: (desde: number, hasta: number, listaId?: string) => void;
+  /**
+   * Mueve un activo dentro de la lista (arrastrando). Con `seccion` además
+   * lo cambia de categoría: null lo saca de todas.
+   */
+  reordenarWatchlist: (
+    desde: number,
+    hasta: number,
+    listaId?: string,
+    seccion?: string | null,
+  ) => void;
+  crearSeccion: (nombre: string, listaId?: string) => void;
+  renombrarSeccion: (id: string, nombre: string, listaId?: string) => void;
+  /** Borra la categoría; sus activos quedan sueltos, no se pierden. */
+  borrarSeccion: (id: string, listaId?: string) => void;
+  plegarSeccion: (id: string, listaId?: string) => void;
+  /** Manda un activo a una categoría (o lo saca, con null). */
+  moverASeccion: (simbolo: string, seccion: string | null, listaId?: string) => void;
   crearLista: (nombre: string, simbolos?: string[]) => void;
   renombrarLista: (id: string, nombre: string) => void;
   duplicarLista: (id: string) => void;
@@ -985,13 +1014,114 @@ export const useChartStore = create<ChartState>()(
             ),
           };
         }),
-      reordenarWatchlist: (desde, hasta, listaId) =>
+      reordenarWatchlist: (desde, hasta, listaId, seccion) =>
+        set((state) => {
+          const destino = listaId ?? state.listaActivaId;
+          return {
+            listas: state.listas.map((l) => {
+              if (l.id !== destino) return l;
+              const simbolo = l.simbolos[desde];
+              const simbolos = mover(l.simbolos, desde, hasta);
+              if (seccion === undefined || !simbolo) return { ...l, simbolos };
+              const grupo = { ...(l.grupo ?? {}) };
+              if (seccion === null) delete grupo[simbolo];
+              else grupo[simbolo] = seccion;
+              return { ...l, simbolos, grupo };
+            }),
+          };
+        }),
+      crearSeccion: (nombre, listaId) =>
+        set((state) => {
+          const destino = listaId ?? state.listaActivaId;
+          return {
+            listas: state.listas.map((l) => {
+              if (l.id !== destino) return l;
+              const secciones = l.secciones ?? [];
+              if (secciones.length >= MAX_SECCIONES) return l;
+              return {
+                ...l,
+                secciones: [
+                  ...secciones,
+                  {
+                    id: nuevoId(),
+                    nombre: nombreDeSeccionLibre(secciones, nombre),
+                    plegada: false,
+                  },
+                ],
+              };
+            }),
+          };
+        }),
+      renombrarSeccion: (id, nombre, listaId) =>
         set((state) => {
           const destino = listaId ?? state.listaActivaId;
           return {
             listas: state.listas.map((l) =>
-              l.id !== destino ? l : { ...l, simbolos: mover(l.simbolos, desde, hasta) },
+              l.id !== destino
+                ? l
+                : {
+                    ...l,
+                    secciones: (l.secciones ?? []).map((sec) =>
+                      sec.id !== id
+                        ? sec
+                        : {
+                            ...sec,
+                            nombre: nombreDeSeccionLibre(
+                              (l.secciones ?? []).filter((o) => o.id !== id),
+                              nombre,
+                            ),
+                          },
+                    ),
+                  },
             ),
+          };
+        }),
+      borrarSeccion: (id, listaId) =>
+        set((state) => {
+          const destino = listaId ?? state.listaActivaId;
+          return {
+            listas: state.listas.map((l) => {
+              if (l.id !== destino) return l;
+              // Los activos de esa categoría quedan sueltos: borrar una
+              // categoría no puede llevarse activos puestos.
+              const grupo = Object.fromEntries(
+                Object.entries(l.grupo ?? {}).filter(([, g]) => g !== id),
+              );
+              return {
+                ...l,
+                secciones: (l.secciones ?? []).filter((sec) => sec.id !== id),
+                grupo,
+              };
+            }),
+          };
+        }),
+      plegarSeccion: (id, listaId) =>
+        set((state) => {
+          const destino = listaId ?? state.listaActivaId;
+          return {
+            listas: state.listas.map((l) =>
+              l.id !== destino
+                ? l
+                : {
+                    ...l,
+                    secciones: (l.secciones ?? []).map((sec) =>
+                      sec.id === id ? { ...sec, plegada: !sec.plegada } : sec,
+                    ),
+                  },
+            ),
+          };
+        }),
+      moverASeccion: (simbolo, seccion, listaId) =>
+        set((state) => {
+          const destino = listaId ?? state.listaActivaId;
+          return {
+            listas: state.listas.map((l) => {
+              if (l.id !== destino) return l;
+              const grupo = { ...(l.grupo ?? {}) };
+              if (seccion === null) delete grupo[simbolo];
+              else grupo[simbolo] = seccion;
+              return { ...l, grupo };
+            }),
           };
         }),
       crearLista: (nombre, simbolos = []) =>
@@ -1383,6 +1513,13 @@ export const useChartStore = create<ChartState>()(
                     ? l.nombre
                     : NOMBRE_LISTA_INICIAL,
                 simbolos: l.simbolos.map(migrateSymbol),
+                secciones: sanearSecciones(l.secciones),
+                // Las claves del grupo también llevan prefijo de exchange.
+                grupo: Object.fromEntries(
+                  Object.entries(l.grupo ?? {})
+                    .filter(([, g]) => typeof g === "string")
+                    .map(([sim, g]) => [migrateSymbol(sim), g as string]),
+                ),
               }))
           : [];
 
