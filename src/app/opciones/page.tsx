@@ -5,6 +5,7 @@ import Link from "next/link";
 import { CandlestickChart, Zap } from "lucide-react";
 import { Cadena } from "@/components/options/Cadena";
 import { Calculadora } from "@/components/options/Calculadora";
+import { Operacion } from "@/components/options/Operacion";
 import { MatrizSimulacion } from "@/components/options/MatrizSimulacion";
 import { Estrategias } from "@/components/options/Estrategias";
 
@@ -50,6 +51,7 @@ export default function OpcionesPage() {
             <>
               <Cadena />
               <Calculadora />
+              <Operacion />
               <MatrizSimulacion />
               <Estrategias />
             </>

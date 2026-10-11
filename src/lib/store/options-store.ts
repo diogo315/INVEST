@@ -23,6 +23,18 @@ export interface EstadoOpciones {
   /** Precio de mercado para despejar la volatilidad implícita. */
   precioMercado: number;
 
+  // ── Simulación de la operación ───────────────────────────────────────
+  /** Cuántos contratos. Negativo = posición vendida (cobrás la prima). */
+  contratos: number;
+  /** Lo que pagaste (o cobraste) por contrato, por acción. */
+  entrada: number;
+  /** Precio del subyacente en el escenario. */
+  objetivoS: number;
+  /** Cuántos días pasaron desde hoy en el escenario. */
+  objetivoDias: number;
+  /** Volatilidad en el escenario, en puntos de porcentaje. */
+  objetivoVolPct: number;
+
   // ── Matriz de simulación ─────────────────────────────────────────────
   /** Rango del subyacente a simular, en % alrededor del precio actual. */
   rangoPct: number;
@@ -30,6 +42,8 @@ export interface EstadoOpciones {
   // ── Estrategia ───────────────────────────────────────────────────────
   patas: Pata[];
 
+  /** Deja el escenario igual a hoy, como punto de partida. */
+  reiniciarEscenario: () => void;
   setCampo: <K extends keyof EstadoOpciones>(
     campo: K,
     valor: EstadoOpciones[K],
@@ -81,10 +95,31 @@ export const useOptionsStore = create<EstadoOpciones>()(
       divPct: 0.6,
       tipo: "call",
       precioMercado: 7.5,
+      contratos: 1,
+      entrada: 7.5,
+      objetivoS: 250.5,
+      objetivoDias: 0,
+      objetivoVolPct: 28,
       rangoPct: 20,
       patas: PATAS_EJEMPLO,
 
-      setCampo: (campo, valor) => set({ [campo]: valor } as Partial<EstadoOpciones>),
+      reiniciarEscenario: () =>
+        set((st) => ({
+          objetivoS: st.S,
+          objetivoDias: 0,
+          objetivoVolPct: st.volPct,
+        })),
+      setCampo: (campo, valor) =>
+        set(() => {
+          const patch = { [campo]: valor } as Partial<EstadoOpciones>;
+          // Al cambiar el contrato (precio del subyacente o volatilidad), el
+          // escenario arranca igualado a hoy: comparar contra un escenario
+          // que quedó de otro contrato no dice nada.
+          if (campo === "S") patch.objetivoS = valor as number;
+          if (campo === "volPct") patch.objetivoVolPct = valor as number;
+          if (campo === "precioMercado") patch.entrada = valor as number;
+          return patch;
+        }),
       agregarPata: (p) => set((s) => ({ patas: [...s.patas, p] })),
       actualizarPata: (id, patch) =>
         set((s) => ({
