@@ -171,6 +171,33 @@ function anclarDerecha(chart: IChartApi | null) {
   chart?.timeScale().scrollToPosition(MARGEN_DERECHO, false);
 }
 
+/**
+ * Vuelve a prender el autoajuste de TODAS las escalas de precio.
+ *
+ * Arrastrar el eje de precios con el mouse apaga el autoajuste de esa escala
+ * y lightweight-charts lo deja apagado para siempre: al cambiar de activo la
+ * escala se queda con el rango del anterior y el gráfico desaparece de la
+ * pantalla (hay que hacer doble clic en el eje para recuperarlo). Por eso se
+ * reactiva al cambiar de símbolo o de temporalidad, que es lo que hace
+ * TradingView.
+ *
+ * Se recorre serie por serie en vez de pedir `priceScale("right")`: así
+ * entran también las escalas superpuestas (volumen, liquidez) y las de los
+ * paneles de indicadores, cada una con la suya.
+ */
+function reactivarAutoescala(chart: IChartApi | null) {
+  if (!chart) return;
+  for (const pane of chart.panes()) {
+    for (const serie of pane.getSeries()) {
+      try {
+        serie.priceScale().applyOptions({ autoScale: true });
+      } catch {
+        // Una serie recién removida tira: no es un problema.
+      }
+    }
+  }
+}
+
 // Colores del RSI estándar de TradingView (Pine v6)
 const RSI_COLORS = {
   ma: "#ffeb3b", // color.yellow
@@ -3061,6 +3088,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
         if (cached && cached.length > 0 && !cancelled) {
           paint(cached);
           anclarDerecha(chartRef.current);
+          reactivarAutoescala(chartRef.current);
         }
 
         const klines = await adapter.fetchKlines(rawSymbol, timeframe, 1000);
@@ -3076,6 +3104,10 @@ export function PriceChart({ symbol, timeframe }: Props) {
         // Pintamos velas + EMAs y recién en el frame siguiente calculamos
         // los osciladores pesados: el chart aparece sin esperar al cómputo.
         anclarDerecha(chartRef.current);
+        // El activo nuevo puede valer 80.000 donde el anterior valía 60: si
+        // el usuario había arrastrado el eje, sin esto el gráfico queda
+        // fuera de la pantalla.
+        reactivarAutoescala(chartRef.current);
         sincronizarMedias();
         updateEMAs();
         requestAnimationFrame(() => {
@@ -3089,6 +3121,8 @@ export function PriceChart({ symbol, timeframe }: Props) {
           updateStochRsi();
           updateCipher();
           actualizarNuevos();
+          // Los paneles de indicadores también tienen su escala.
+          reactivarAutoescala(chartRef.current);
           // Recién acá encuadramos: los indicadores ya están recalculados,
           // así que la última posición de la escala de tiempo es la de esta
           // temporalidad y no la de la anterior.
