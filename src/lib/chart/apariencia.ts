@@ -40,6 +40,8 @@ export interface Apariencia {
   // ── cruz y escalas ────────────────────────────────────────────────
   cruz: ModoCruz;
   estiloCruz: EstiloCruz;
+  /** Grosor de las líneas de la cruz, de 1 a 3 píxeles. */
+  grosorCruz: number;
   /** La línea horizontal punteada del último precio. */
   lineaPrecio: boolean;
   escalaLog: boolean;
@@ -137,6 +139,7 @@ export const APARIENCIA_POR_DEFECTO: Apariencia = {
   cuadriculaH: true,
   cruz: "libre",
   estiloCruz: "punteada",
+  grosorCruz: 1,
   lineaPrecio: true,
   escalaLog: false,
   opacidadVolumen: 40,
@@ -215,8 +218,20 @@ export function opcionesDeChart(a: Apariencia) {
     },
     crosshair: {
       mode: CRUZ[a.cruz],
-      vertLine: { color: a.texto, style: estilo, labelBackgroundColor: a.borde },
-      horzLine: { color: a.texto, style: estilo, labelBackgroundColor: a.borde },
+      // La cruz vertical ya cruza todos los paneles sola: es cosa de
+      // lightweight-charts. Lo que faltaba era poder verla.
+      vertLine: {
+        color: a.texto,
+        style: estilo,
+        width: a.grosorCruz,
+        labelBackgroundColor: a.borde,
+      },
+      horzLine: {
+        color: a.texto,
+        style: estilo,
+        width: a.grosorCruz,
+        labelBackgroundColor: a.borde,
+      },
     },
     rightPriceScale: {
       borderColor: a.borde,
@@ -283,6 +298,10 @@ export function sanearApariencia(crudo: unknown): Apariencia {
         ? c.cruz
         : d.cruz,
     estiloCruz: c.estiloCruz === "solida" ? "solida" : d.estiloCruz,
+    grosorCruz:
+      typeof c.grosorCruz === "number" && Number.isFinite(c.grosorCruz)
+        ? Math.min(3, Math.max(1, Math.round(c.grosorCruz)))
+        : d.grosorCruz,
     lineaPrecio: bool(c.lineaPrecio, d.lineaPrecio),
     escalaLog: bool(c.escalaLog, d.escalaLog),
     opacidadVolumen:

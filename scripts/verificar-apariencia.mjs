@@ -114,6 +114,16 @@ console.log("Opciones del chart");
   comprobar("log es modo 1", o.rightPriceScale.mode === 1);
 }
 comprobar("cruz oculta es modo 2", opcionesDeChart({ ...D, cruz: "oculta" }).crosshair.mode === 2);
+comprobar("la cruz arranca de 1 px", opcionesDeChart(D).crosshair.vertLine.width === 1);
+comprobar(
+  "el grosor llega a las dos líneas",
+  opcionesDeChart({ ...D, grosorCruz: 3 }).crosshair.vertLine.width === 3 &&
+    opcionesDeChart({ ...D, grosorCruz: 3 }).crosshair.horzLine.width === 3,
+);
+comprobar("grosor se recorta arriba", sanearApariencia({ grosorCruz: 9 }).grosorCruz === 3);
+comprobar("grosor se recorta abajo", sanearApariencia({ grosorCruz: 0 }).grosorCruz === 1);
+comprobar("grosor basura cae al por defecto", sanearApariencia({ grosorCruz: "gordo" }).grosorCruz === 1);
+comprobar("cambiar el grosor no desmarca el tema", !tocaColores({ grosorCruz: 3 }));
 
 // ── opciones de las velas ───────────────────────────────────────────
 console.log("Opciones de las velas");

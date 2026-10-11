@@ -19,9 +19,24 @@ interface Props {
   /** Cuál de los gráficos abiertos es este. */
   graficoId: string;
   simbolo: string;
-  /** Ancho y alto del área del gráfico, en píxeles. */
+  /** Ancho del área del gráfico, en píxeles. */
   ancho: number;
+  /**
+   * Alto de TODO el gráfico, paneles de indicadores incluidos.
+   *
+   * La capa se extiende hasta abajo para que una línea vertical cruce el
+   * precio y los indicadores de una sola pieza, como en TradingView: una
+   * referencia temporal que se corta en el RSI no sirve de nada.
+   */
   alto: number;
+  /**
+   * Alto solo del panel de precios.
+   *
+   * Los precios únicamente existen ahí: convertir la altura del panel del
+   * RSI a dólares daría un número inventado, así que toda conversión a
+   * precio se recorta a esta franja.
+   */
+  altoPrecios: number;
   /** Conversión entre el mercado y la pantalla. */
   aX: (t: number) => number | null;
   aY: (p: number) => number | null;
@@ -59,6 +74,7 @@ export function CapaDibujos({
   simbolo,
   ancho,
   alto,
+  altoPrecios,
   aX,
   aY,
   aTiempo,
@@ -158,7 +174,11 @@ export function CapaDibujos({
 
   const aMercado = (p: EnPantalla): PuntoDibujo | null => {
     const t = aTiempo(p.x);
-    const precio = aPrecio(p.y);
+    // Un clic sobre el panel del RSI está fuera de la escala de precios:
+    // se recorta al borde del panel de velas en vez de extrapolar un
+    // precio que no existe. A la vertical le da igual —no usa el precio—
+    // y a las demás les deja un valor del rango real del gráfico.
+    const precio = aPrecio(Math.min(Math.max(p.y, 0), altoPrecios));
     if (t === null || precio === null) return null;
     return { time: t, price: precio };
   };
@@ -302,7 +322,10 @@ export function CapaDibujos({
             <rect
               key={i}
               x={(sel.tipo === "horizontal" ? ancho / 2 : p.x) - 4}
-              y={(sel.tipo === "vertical" ? alto / 2 : p.y) - 4}
+              // El tirador de la vertical va a media altura del panel de
+              // precios, no de todo el gráfico: ahí es donde el ojo lo
+              // busca y donde no tapa un indicador.
+              y={(sel.tipo === "vertical" ? altoPrecios / 2 : p.y) - 4}
               width={8}
               height={8}
               rx={1}

@@ -281,6 +281,33 @@ export function AparienciaMenu() {
               activo={a.estiloCruz === "punteada"}
               onChange={(v) => set({ estiloCruz: v ? "punteada" : "solida" })}
             />
+            <div className="flex items-center gap-2 px-2 py-1.5">
+              <span className="flex-1 text-xs text-tv-text">
+                Grosor de la cruz
+              </span>
+              {[1, 2, 3].map((g) => (
+                <button
+                  key={g}
+                  type="button"
+                  onClick={() => set({ grosorCruz: g })}
+                  aria-label={`Grosor ${g}`}
+                  aria-pressed={a.grosorCruz === g}
+                  className={cn(
+                    "w-8 rounded px-2 py-1 text-[11px] tabular-nums transition-colors",
+                    a.grosorCruz === g
+                      ? "bg-tv-blue text-white"
+                      : "bg-tv-bg text-tv-text-muted hover:bg-tv-panel-hover hover:text-tv-text",
+                  )}
+                >
+                  {g}
+                </button>
+              ))}
+            </div>
+            <p className="px-2 pb-1 text-[10px] leading-relaxed text-tv-text-dim">
+              La cruz ya cruza el precio y todos los indicadores: aparece al
+              pasar el mouse. Subí el grosor o apagá «punteada» si te cuesta
+              verla.
+            </p>
             <Interruptor
               etiqueta="Línea del último precio"
               activo={a.lineaPrecio}

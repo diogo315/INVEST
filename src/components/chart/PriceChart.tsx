@@ -627,11 +627,6 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
         fontFamily: "var(--font-sans), Inter, system-ui, sans-serif",
         fontSize: 11,
       },
-      crosshair: {
-        ...vis.crosshair,
-        vertLine: { ...vis.crosshair.vertLine, width: 1 },
-        horzLine: { ...vis.crosshair.horzLine, width: 1 },
-      },
       timeScale: {
         ...vis.timeScale,
         timeVisible: true,
@@ -3448,16 +3443,20 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
     const ts = chartRef.current.timeScale();
     const serie = candleSeriesRef.current;
     const anchoCapa = Math.max(0, (containerRef.current?.clientWidth ?? 0) - anchoEscala);
+    // La capa llega hasta el final del último panel para que una línea
+    // vertical cruce el precio y los indicadores de una sola pieza.
+    const altoTotal = paneOffsets.reduce((suma, o) => suma + o.height, 0);
     capaDibujos = (
       <div
         className="pointer-events-none absolute left-0 top-0 z-10"
-        style={{ width: anchoCapa, height: paneOffsets[0].height }}
+        style={{ width: anchoCapa, height: altoTotal }}
       >
         <CapaDibujos
           graficoId={graficoId}
           simbolo={symbol}
           ancho={anchoCapa}
-          alto={paneOffsets[0].height}
+          alto={altoTotal}
+          altoPrecios={paneOffsets[0].height}
           // De fecha a píxel por la posición CONTINUA en la escala, no por
           // `timeToCoordinate`: esa solo ubica fechas que existan como vela
           // exacta y devuelve null para el aire de la derecha o el hueco de
