@@ -449,7 +449,13 @@ export function nombreLibre(listas: ListaActivos[], deseado: string): string {
   return `${base} ${nuevoId().slice(0, 4)}`;
 }
 
-export interface ChartState {
+/**
+ * Un gráfico de la pantalla. Con la vista de 2, 3 o 4 gráficos, cada uno
+ * tiene **su** activo, **su** temporalidad y **sus** indicadores: se puede
+ * mirar BTC con el Supertrend al lado de ETH con medias nada más.
+ */
+export interface Grafico {
+  id: string;
   symbol: string;
   timeframe: Timeframe;
   /** Indicator is added to the chart (appears in pill + renders unless hidden) */
@@ -460,6 +466,51 @@ export interface ChartState {
   config: IndicatorConfig;
   /** Líneas del indicador de medias móviles, en el orden en que se dibujan. */
   medias: MediaMovil[];
+}
+
+/**
+ * Cómo se reparten los gráficos en la pantalla:
+ *  · 1  — uno solo, como siempre
+ *  · 2v — dos, lado a lado
+ *  · 2h — dos, uno arriba del otro
+ *  · 3  — uno grande arriba y dos abajo
+ *  · 4  — cuatro en grilla
+ */
+export type Distribucion = "1" | "2v" | "2h" | "3" | "4";
+
+export const DISTRIBUCIONES: Array<{ id: Distribucion; etiqueta: string }> = [
+  { id: "1", etiqueta: "1 gráfico" },
+  { id: "2v", etiqueta: "2 lado a lado" },
+  { id: "2h", etiqueta: "2 arriba y abajo" },
+  { id: "3", etiqueta: "3 gráficos" },
+  { id: "4", etiqueta: "4 en grilla" },
+];
+
+export const GRAFICOS_DE: Record<Distribucion, number> = {
+  "1": 1,
+  "2v": 2,
+  "2h": 2,
+  "3": 3,
+  "4": 4,
+};
+
+export const MAX_GRAFICOS = 4;
+
+/** Activos con los que se estrena cada gráfico nuevo, en orden. */
+const SIMBOLOS_INICIALES = [
+  "BIN:BTCUSDT",
+  "BIN:ETHUSDT",
+  "BIN:SOLUSDT",
+  "BIN:BNBUSDT",
+];
+
+export interface ChartState {
+  /** Los gráficos abiertos (entre 1 y 4). */
+  graficos: Grafico[];
+  /** El gráfico que recibe lo que se hace en la barra de arriba. */
+  graficoActivoId: string;
+  /** Cómo se reparten en la pantalla. */
+  distribucion: Distribucion;
   /** Listas de activos guardadas, en el orden en que se muestran. */
   listas: ListaActivos[];
   /** Id de la lista que se está viendo en el panel derecho. */
@@ -483,19 +534,23 @@ export interface ChartState {
   refreshNonce: number;
   /** El chart está pidiendo datos (para el spinner del botón). */
   chartLoading: boolean;
-  /** Which indicator's settings dialog is open (null = closed) */
-  settingsTarget: IndicatorKey | null;
+  /** Qué indicador de qué gráfico tiene abierto el diálogo (null = cerrado) */
+  settingsTarget: { grafico: string; key: IndicatorKey } | null;
 
-  // Actions
-  setSymbol: (s: string) => void;
-  setTimeframe: (t: Timeframe) => void;
-  toggleIndicator: (key: IndicatorKey) => void;
-  removeIndicator: (key: IndicatorKey) => void;
-  toggleHidden: (key: IndicatorKey) => void;
-  setConfig: (patch: Partial<IndicatorConfig>) => void;
-  agregarMedia: (periodo: number) => void;
-  editarMedia: (id: string, patch: Partial<MediaMovil>) => void;
-  quitarMedia: (id: string) => void;
+  // Actions. Las que tocan un gráfico aceptan su id; sin id, van al activo.
+  setSymbol: (s: string, grafico?: string) => void;
+  setTimeframe: (t: Timeframe, grafico?: string) => void;
+  toggleIndicator: (key: IndicatorKey, grafico?: string) => void;
+  removeIndicator: (key: IndicatorKey, grafico?: string) => void;
+  toggleHidden: (key: IndicatorKey, grafico?: string) => void;
+  setConfig: (patch: Partial<IndicatorConfig>, grafico?: string) => void;
+  agregarMedia: (periodo: number, grafico?: string) => void;
+  editarMedia: (id: string, patch: Partial<MediaMovil>, grafico?: string) => void;
+  quitarMedia: (id: string, grafico?: string) => void;
+  /** Cambia la distribución, creando o guardando gráficos según haga falta. */
+  setDistribucion: (d: Distribucion) => void;
+  /** Marca cuál recibe lo que se hace en la barra de arriba. */
+  activarGrafico: (id: string) => void;
   /** Agrega a la lista activa, o a `listaId` si se pasa. */
   addToWatchlist: (s: string, listaId?: string) => void;
   /** Quita de la lista activa, o de `listaId` si se pasa. */
@@ -514,60 +569,153 @@ export interface ChartState {
   setTimezone: (tz: ChartTimezone) => void;
   refreshChart: () => void;
   setChartLoading: (v: boolean) => void;
-  setSettingsTarget: (k: IndicatorKey | null) => void;
+  setSettingsTarget: (k: IndicatorKey | null, grafico?: string) => void;
+}
+
+/** Indicadores apagados, uno por clave. */
+function indicadoresVacios(): Record<IndicatorKey, boolean> {
+  return {
+    medias: false,
+    rsi: false,
+    macd: false,
+    volume: false,
+    bb: false,
+    stoch: false,
+    vwap: false,
+    cipher: false,
+    gli: false,
+    srsi: false,
+    alligator: false,
+    dema: false,
+    keltner: false,
+    sar: false,
+    supertrend: false,
+    ao: false,
+    atr: false,
+    aroon: false,
+    adr: false,
+    obv: false,
+  };
+}
+
+/** Un gráfico recién abierto: lo mismo que veía la app de un solo gráfico. */
+export function graficoNuevo(symbol: string, timeframe: Timeframe = "15m" as Timeframe): Grafico {
+  return {
+    id: nuevoId(),
+    symbol,
+    timeframe,
+    indicators: { ...indicadoresVacios(), medias: true, rsi: true, volume: true },
+    hidden: indicadoresVacios(),
+    config: { ...DEFAULT_CONFIG },
+    medias: mediasPorDefecto(),
+  };
+}
+
+/**
+ * Deja un gráfico guardado en condiciones de usarse: completa las claves que
+ * no existían en versiones viejas, migra las tres EMA sueltas a la lista de
+ * medias y respeta el tope de paneles.
+ *
+ * Toda esta migración vivía dentro de `merge` cuando había un solo gráfico;
+ * ahora hay hasta cuatro, así que se aplica a cada uno.
+ */
+function sanearGrafico(
+  crudo: unknown,
+  indice: number,
+  stripNullish: <T extends object>(o: T | undefined) => Partial<T>,
+): Grafico {
+  const g = (crudo ?? {}) as Record<string, unknown>;
+  const base = graficoNuevo(SIMBOLOS_INICIALES[indice] ?? SIMBOLOS_INICIALES[0]);
+
+  // Medias móviles: antes eran tres indicadores sueltos (ema20/50/200) con su
+  // período en el config. Se convierten en la lista nueva una sola vez,
+  // conservando períodos y ojos apagados.
+  const viejoConfig = (g.config ?? {}) as Record<string, unknown>;
+  const viejoInd = (g.indicators ?? {}) as Record<string, unknown>;
+  const viejoOcu = (g.hidden ?? {}) as Record<string, unknown>;
+  const migracion = migrarMedias({
+    periodos: {
+      ema20: viejoConfig.ema20,
+      ema50: viejoConfig.ema50,
+      ema200: viejoConfig.ema200,
+    },
+    prendidos: {
+      ema20: viejoInd.ema20,
+      ema50: viejoInd.ema50,
+      ema200: viejoInd.ema200,
+    },
+    ocultos: {
+      ema20: viejoOcu.ema20,
+      ema50: viejoOcu.ema50,
+      ema200: viejoOcu.ema200,
+    },
+  });
+  const medias = sanearMedias(g.medias) ?? migracion.medias;
+  const mediasPrendidas =
+    typeof viejoInd.medias === "boolean" ? viejoInd.medias : migracion.prendido;
+
+  // Prendidos, con el tope de paneles respetado. Un estado guardado puede
+  // traer más osciladores que paneles disponibles (otra pestaña, o una
+  // versión con otro tope): sin esto quedan prendidos en el menú pero sin
+  // dibujar nada ni chapa, que es imposible de entender. Se apagan los que
+  // sobran, los últimos de la lista primero.
+  const indicators = {
+    ...base.indicators,
+    ...stripNullish(g.indicators as Record<IndicatorKey, boolean> | undefined),
+    medias: mediasPrendidas,
+  } as Record<IndicatorKey, boolean>;
+  let conPanel = 0;
+  for (const k of INDICADORES_CON_PANEL) {
+    if (!indicators[k]) continue;
+    conPanel++;
+    if (conPanel > MAX_PANELES_INDICADOR) indicators[k] = false;
+  }
+
+  return {
+    id: typeof g.id === "string" && g.id ? g.id : base.id,
+    // Símbolos sin prefijo venían de antes de Bitget → "BIN:..."
+    symbol: typeof g.symbol === "string" ? migrateSymbol(g.symbol) : base.symbol,
+    timeframe: (typeof g.timeframe === "string" ? g.timeframe : base.timeframe) as Timeframe,
+    indicators,
+    hidden: {
+      ...base.hidden,
+      ...stripNullish(g.hidden as Record<IndicatorKey, boolean> | undefined),
+    },
+    config: { ...DEFAULT_CONFIG, ...stripNullish(g.config as IndicatorConfig | undefined) },
+    medias,
+  };
+}
+
+/**
+ * Aplica un cambio a UN gráfico: el que se pasa por id, o el activo. El
+ * parche devuelve solo los campos que cambian, o `null` para no tocar nada.
+ *
+ * Está acá y no repetido en cada acción porque son doce acciones que hacen
+ * exactamente lo mismo: encontrar el gráfico y reemplazarlo en la lista.
+ */
+function tocar(
+  set: (fn: (s: ChartState) => Partial<ChartState>) => void,
+  id: string | undefined,
+  parche: (g: Grafico) => Partial<Grafico> | null,
+) {
+  set((s) => {
+    const destino = id ?? s.graficoActivoId;
+    const actual = s.graficos.find((g) => g.id === destino) ?? s.graficos[0];
+    if (!actual) return {};
+    const cambios = parche(actual);
+    if (!cambios) return {};
+    return {
+      graficos: s.graficos.map((g) => (g.id === actual.id ? { ...g, ...cambios } : g)),
+    };
+  });
 }
 
 export const useChartStore = create<ChartState>()(
   persist(
     (set) => ({
-      symbol: "BIN:BTCUSDT",
-      timeframe: "15m" as Timeframe,
-      indicators: {
-        medias: true,
-        rsi: true,
-        macd: false,
-        volume: true,
-        bb: false,
-        stoch: false,
-        vwap: false,
-        cipher: false,
-        gli: false,
-        srsi: false,
-        alligator: false,
-        dema: false,
-        keltner: false,
-        sar: false,
-        supertrend: false,
-        ao: false,
-        atr: false,
-        aroon: false,
-        adr: false,
-        obv: false,
-      },
-      hidden: {
-        medias: false,
-        rsi: false,
-        macd: false,
-        volume: false,
-        bb: false,
-        stoch: false,
-        vwap: false,
-        cipher: false,
-        gli: false,
-        srsi: false,
-        alligator: false,
-        dema: false,
-        keltner: false,
-        sar: false,
-        supertrend: false,
-        ao: false,
-        atr: false,
-        aroon: false,
-        adr: false,
-        obv: false,
-      },
-      config: { ...DEFAULT_CONFIG },
-      medias: mediasPorDefecto(),
+      graficos: [graficoNuevo(SIMBOLOS_INICIALES[0])],
+      graficoActivoId: "",
+      distribucion: "1" as Distribucion,
       listas: [
         {
           id: ID_LISTA_INICIAL,
@@ -593,58 +741,91 @@ export const useChartStore = create<ChartState>()(
       chartLoading: false,
       settingsTarget: null,
 
-      setSymbol: (symbol) => set({ symbol: migrateSymbol(symbol) }),
-      setTimeframe: (timeframe) => set({ timeframe }),
-      toggleIndicator: (key) =>
-        set((s) => {
-          const prendiendo = !s.indicators[key];
+      setSymbol: (symbol, grafico) =>
+        tocar(set, grafico, () => ({ symbol: migrateSymbol(symbol) })),
+      setTimeframe: (timeframe, grafico) => tocar(set, grafico, () => ({ timeframe })),
+      toggleIndicator: (key, grafico) =>
+        tocar(set, grafico, (g) => {
+          const prendiendo = !g.indicators[key];
           // Tope de paneles: no se pueden tener más de
           // MAX_PANELES_INDICADOR osciladores abiertos a la vez.
           if (
             prendiendo &&
             INDICADORES_CON_PANEL.includes(key) &&
-            panelesActivos(s.indicators) >= MAX_PANELES_INDICADOR
+            panelesActivos(g.indicators) >= MAX_PANELES_INDICADOR
           ) {
-            return {};
+            return null;
           }
           return {
-            indicators: { ...s.indicators, [key]: prendiendo },
+            indicators: { ...g.indicators, [key]: prendiendo },
             // When re-adding, ensure not hidden
-            hidden: prendiendo ? { ...s.hidden, [key]: false } : s.hidden,
+            hidden: prendiendo ? { ...g.hidden, [key]: false } : g.hidden,
           };
         }),
-      removeIndicator: (key) =>
-        set((s) => ({
-          indicators: { ...s.indicators, [key]: false },
-          hidden: { ...s.hidden, [key]: false },
+      removeIndicator: (key, grafico) =>
+        tocar(set, grafico, (g) => ({
+          indicators: { ...g.indicators, [key]: false },
+          hidden: { ...g.hidden, [key]: false },
         })),
-      toggleHidden: (key) =>
-        set((s) => ({ hidden: { ...s.hidden, [key]: !s.hidden[key] } })),
-      setConfig: (patch) =>
-        set((s) => ({ config: { ...s.config, ...patch } })),
-      agregarMedia: (periodo) =>
-        set((s) => {
-          if (s.medias.length >= MAX_MEDIAS) return {};
+      toggleHidden: (key, grafico) =>
+        tocar(set, grafico, (g) => ({ hidden: { ...g.hidden, [key]: !g.hidden[key] } })),
+      setConfig: (patch, grafico) =>
+        tocar(set, grafico, (g) => ({ config: { ...g.config, ...patch } })),
+      agregarMedia: (periodo, grafico) =>
+        tocar(set, grafico, (g) => {
+          if (g.medias.length >= MAX_MEDIAS) return null;
           const media = nuevaMedia(
             periodo,
-            s.medias.map((m) => m.color),
+            g.medias.map((m) => m.color),
           );
           // Se agrega al final y NO se reordena: si la lista se reacomoda
           // sola, al escribir un período la fila se mueve y el cursor salta
           // a otra — es justo lo que pasaba.
           return {
-            medias: [...s.medias, media],
-            indicators: { ...s.indicators, medias: true },
+            medias: [...g.medias, media],
+            indicators: { ...g.indicators, medias: true },
           };
         }),
-      editarMedia: (id, patch) =>
-        set((s) => ({
+      editarMedia: (id, patch, grafico) =>
+        tocar(set, grafico, (g) => ({
           // Sin reordenar: la fila que se está editando tiene que quedarse
           // donde está mientras se escribe.
-          medias: s.medias.map((m) => (m.id === id ? { ...m, ...patch } : m)),
+          medias: g.medias.map((m) => (m.id === id ? { ...m, ...patch } : m)),
         })),
-      quitarMedia: (id) =>
-        set((s) => ({ medias: s.medias.filter((m) => m.id !== id) })),
+      quitarMedia: (id, grafico) =>
+        tocar(set, grafico, (g) => ({ medias: g.medias.filter((m) => m.id !== id) })),
+      setDistribucion: (distribucion) =>
+        set((state) => {
+          const quiere = GRAFICOS_DE[distribucion];
+          let graficos = state.graficos;
+          // Al agrandar la vista se abren gráficos nuevos con activos que no
+          // estén ya en pantalla; al achicarla NO se borran, quedan
+          // guardados para cuando se vuelva a abrir.
+          if (graficos.length < quiere) {
+            const puestos = new Set(graficos.map((g) => g.symbol));
+            const libres = [
+              ...SIMBOLOS_INICIALES.filter((x) => !puestos.has(x)),
+              ...SIMBOLOS_INICIALES,
+            ];
+            const extra = Array.from({ length: quiere - graficos.length }, (_, i) =>
+              graficoNuevo(libres[i] ?? SIMBOLOS_INICIALES[0], graficos[0]?.timeframe),
+            );
+            graficos = [...graficos, ...extra];
+          }
+          const visibles = graficos.slice(0, quiere);
+          return {
+            distribucion,
+            graficos,
+            // Si el activo quedaba fuera de la vista nueva, pasa al primero.
+            graficoActivoId: visibles.some((g) => g.id === state.graficoActivoId)
+              ? state.graficoActivoId
+              : visibles[0].id,
+          };
+        }),
+      activarGrafico: (graficoActivoId) =>
+        set((state) =>
+          state.graficos.some((g) => g.id === graficoActivoId) ? { graficoActivoId } : {},
+        ),
       addToWatchlist: (s, listaId) =>
         set((state) => {
           const qualified = migrateSymbol(s);
@@ -756,17 +937,20 @@ export const useChartStore = create<ChartState>()(
       setTimezone: (timezone) => set({ timezone }),
       refreshChart: () => set((s) => ({ refreshNonce: s.refreshNonce + 1 })),
       setChartLoading: (chartLoading) => set({ chartLoading }),
-      setSettingsTarget: (settingsTarget) => set({ settingsTarget }),
+      setSettingsTarget: (key, grafico) =>
+        set((state) => ({
+          settingsTarget:
+            key === null
+              ? null
+              : { grafico: grafico ?? state.graficoActivoId, key },
+        })),
     }),
     {
       name: "tv-gratis-chart-state",
       partialize: (s) => ({
-        symbol: s.symbol,
-        timeframe: s.timeframe,
-        indicators: s.indicators,
-        hidden: s.hidden,
-        config: s.config,
-        medias: s.medias,
+        graficos: s.graficos,
+        graficoActivoId: s.graficoActivoId,
+        distribucion: s.distribucion,
         listas: s.listas,
         listaActivaId: s.listaActivaId,
         watchlistCollapsed: s.watchlistCollapsed,
@@ -843,57 +1027,43 @@ export const useChartStore = create<ChartState>()(
           ];
         }
 
-        // Medias móviles: antes eran tres indicadores sueltos (ema20/50/200)
-        // con su período en el config. Se convierten en la lista nueva una
-        // sola vez, conservando períodos y ojos apagados.
-        const guardadasMedias = sanearMedias(p.medias);
-        const viejoConfig = (p.config ?? {}) as Record<string, unknown>;
-        const viejoInd = (p.indicators ?? {}) as Record<string, unknown>;
-        const viejoOcu = (p.hidden ?? {}) as Record<string, unknown>;
-        const migracion = migrarMedias({
-          periodos: {
-            ema20: viejoConfig.ema20,
-            ema50: viejoConfig.ema50,
-            ema200: viejoConfig.ema200,
-          },
-          prendidos: {
-            ema20: viejoInd.ema20,
-            ema50: viejoInd.ema50,
-            ema200: viejoInd.ema200,
-          },
-          ocultos: {
-            ema20: viejoOcu.ema20,
-            ema50: viejoOcu.ema50,
-            ema200: viejoOcu.ema200,
-          },
-        });
-        const medias = guardadasMedias ?? migracion.medias;
-        // Si ya había `medias` guardadas, el estado de prendido también.
-        const mediasPrendidas =
-          typeof viejoInd.medias === "boolean"
-            ? viejoInd.medias
-            : migracion.prendido;
-
         const listaActivaId = listas.some((l) => l.id === p.listaActivaId)
           ? (p.listaActivaId as string)
           : listas[0].id;
 
-        // Prendidos, con el tope de paneles respetado. Un estado guardado
-        // puede traer más osciladores que paneles disponibles (otra pestaña,
-        // o una versión con otro tope): sin esto quedan prendidos en el menú
-        // pero sin dibujar nada ni chapa, que es imposible de entender. Se
-        // apagan los que sobran, los últimos de la lista primero.
-        const prendidos = {
-          ...current.indicators,
-          ...stripNullish(p.indicators),
-          medias: mediasPrendidas,
-        } as Record<IndicatorKey, boolean>;
-        let conPanel = 0;
-        for (const k of INDICADORES_CON_PANEL) {
-          if (!prendidos[k]) continue;
-          conPanel++;
-          if (conPanel > MAX_PANELES_INDICADOR) prendidos[k] = false;
+        // Gráficos. Hasta octubre de 2026 había uno solo y su estado vivía
+        // suelto en la raíz (symbol, timeframe, indicators, hidden, config,
+        // medias): eso se convierte en el gráfico 1 sin perder nada.
+        const crudos: unknown[] = Array.isArray(p.graficos) && p.graficos.length > 0
+          ? p.graficos
+          : [
+              {
+                id: "g1",
+                symbol: (p as Record<string, unknown>).symbol,
+                timeframe: (p as Record<string, unknown>).timeframe,
+                indicators: (p as Record<string, unknown>).indicators,
+                hidden: (p as Record<string, unknown>).hidden,
+                config: (p as Record<string, unknown>).config,
+                medias: (p as Record<string, unknown>).medias,
+              },
+            ];
+
+        const graficos = crudos
+          .slice(0, MAX_GRAFICOS)
+          .map((g, i) => sanearGrafico(g, i, stripNullish));
+
+        const distribucion: Distribucion =
+          typeof p.distribucion === "string" && p.distribucion in GRAFICOS_DE
+            ? (p.distribucion as Distribucion)
+            : "1";
+        // Nunca menos gráficos que los que pide la distribución guardada.
+        while (graficos.length < GRAFICOS_DE[distribucion]) {
+          graficos.push(graficoNuevo(SIMBOLOS_INICIALES[graficos.length] ?? SIMBOLOS_INICIALES[0]));
         }
+        const visibles = graficos.slice(0, GRAFICOS_DE[distribucion]);
+        const graficoActivoId = visibles.some((g) => g.id === p.graficoActivoId)
+          ? (p.graficoActivoId as string)
+          : visibles[0].id;
 
         return {
           ...current,
@@ -904,19 +1074,35 @@ export const useChartStore = create<ChartState>()(
           // zona por defecto actual. Una zona elegida a mano se respeta.
           timezone:
             !p.timezone || p.timezone === "utc" ? current.timezone : p.timezone,
-          // Migrate legacy unprefixed symbols (pre-Bitget) → "BIN:..."
-          symbol: p.symbol ? migrateSymbol(p.symbol) : current.symbol,
           listas,
           listaActivaId,
-          config: { ...DEFAULT_CONFIG, ...stripNullish(p.config) },
-          medias,
-          indicators: prendidos,
-          hidden: { ...current.hidden, ...stripNullish(p.hidden) },
+          graficos,
+          graficoActivoId,
+          distribucion,
         };
       },
     },
   ),
 );
+
+/**
+ * El gráfico que recibe lo que se hace en la barra de arriba (activo,
+ * temporalidad, indicadores). Siempre devuelve uno.
+ */
+export function graficoActivo(s: ChartState): Grafico {
+  return s.graficos.find((g) => g.id === s.graficoActivoId) ?? s.graficos[0];
+}
+
+/** Un gráfico por id, cayendo en el activo si ese id ya no existe. */
+export function graficoPorId(s: ChartState, id?: string): Grafico {
+  if (!id) return graficoActivo(s);
+  return s.graficos.find((g) => g.id === id) ?? graficoActivo(s);
+}
+
+/** Los gráficos que se están viendo, según la distribución elegida. */
+export function graficosVisibles(s: ChartState): Grafico[] {
+  return s.graficos.slice(0, GRAFICOS_DE[s.distribucion]);
+}
 
 /**
  * La lista que se está viendo. Siempre devuelve una: si el id guardado no

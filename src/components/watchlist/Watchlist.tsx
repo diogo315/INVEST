@@ -12,7 +12,9 @@ import {
 import { CLASE_MERCADO } from "@/lib/exchanges/buscar";
 import { traerNombresAcciones } from "@/lib/exchanges/alpaca-acciones";
 import { ListasMenu } from "@/components/watchlist/ListasMenu";
-import { simbolosActivosDe, useChartStore } from "@/lib/store/chart-store";
+import { simbolosActivosDe, useChartStore,
+  graficoActivo,
+} from "@/lib/store/chart-store";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { formatPrice, formatPct } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -25,7 +27,7 @@ interface Row {
 
 export function Watchlist() {
   const watchlist = useChartStore(simbolosActivosDe);
-  const symbol = useChartStore((s) => s.symbol);
+  const symbol = useChartStore((s) => graficoActivo(s).symbol);
   const setSymbol = useChartStore((s) => s.setSymbol);
   const removeFromWatchlist = useChartStore((s) => s.removeFromWatchlist);
   const openSymbolDialog = useChartStore((s) => s.setSymbolDialogOpen);

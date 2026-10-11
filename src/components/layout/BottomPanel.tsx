@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useChartStore } from "@/lib/store/chart-store";
+import { useChartStore, graficoActivo } from "@/lib/store/chart-store";
 import { getAdapter, parseSymbol, partirPar } from "@/lib/exchanges";
 import { CLASE_MERCADO } from "@/lib/exchanges/buscar";
 import type { Ticker24h } from "@/lib/binance/types";
@@ -9,7 +9,7 @@ import { formatPrice, formatPct, formatVolume } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export function BottomPanel() {
-  const symbol = useChartStore((s) => s.symbol);
+  const symbol = useChartStore((s) => graficoActivo(s).symbol);
   const [t, setT] = useState<Ticker24h | null>(null);
 
   useEffect(() => {

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { SymbolSelector } from "@/components/chart/SymbolSelector";
 import { TimeframeSelector } from "@/components/chart/TimeframeSelector";
 import { IndicatorMenu } from "@/components/chart/IndicatorMenu";
+import { DistribucionMenu } from "@/components/chart/DistribucionMenu";
 import { TimezoneSelector } from "@/components/chart/TimezoneSelector";
 import { Separator } from "@/components/ui/separator";
 import { useChartStore } from "@/lib/store/chart-store";
@@ -44,6 +45,8 @@ export function Header() {
         <TimeframeSelector />
         <Separator orientation="vertical" className="mx-1 h-6 bg-tv-border" />
         <IndicatorMenu />
+        <Separator orientation="vertical" className="mx-1 h-6 bg-tv-border" />
+        <DistribucionMenu />
         <Separator orientation="vertical" className="mx-1 h-6 bg-tv-border" />
         <TimezoneSelector />
       </div>

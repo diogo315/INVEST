@@ -30,7 +30,9 @@ import {
   type ActivoBuscable,
   type FiltroTipo,
 } from "@/lib/exchanges/buscar";
-import { listaActivaDe, useChartStore } from "@/lib/store/chart-store";
+import { listaActivaDe, useChartStore,
+  graficoActivo,
+} from "@/lib/store/chart-store";
 import { cn } from "@/lib/utils";
 import type { ExchangeId } from "@/lib/exchanges";
 
@@ -93,7 +95,7 @@ function Resaltado({ texto, consulta }: { texto: string; consulta: string }) {
 }
 
 export function SymbolSelector() {
-  const symbol = useChartStore((s) => s.symbol);
+  const symbol = useChartStore((s) => graficoActivo(s).symbol);
   const setSymbol = useChartStore((s) => s.setSymbol);
   const addToWatchlist = useChartStore((s) => s.addToWatchlist);
   const removeFromWatchlist = useChartStore((s) => s.removeFromWatchlist);

@@ -61,9 +61,16 @@ import { reconnectAllBinanceWS } from "@/lib/binance/ws";
 import {
   INDICATOR_COLORS,
   MAX_PANELES_INDICADOR,
+  graficoPorId,
   useChartStore,
   type IndicatorKey,
 } from "@/lib/store/chart-store";
+import {
+  actualizarPrecios,
+  buscadorDeVelas,
+  difundirCruz,
+  registrarGrafico,
+} from "@/lib/chart/sincronia";
 import { formatPrice, formatVolume } from "@/lib/format";
 import { IndicatorPill } from "./IndicatorPill";
 import { MeasureOverlay } from "./MeasureOverlay";
@@ -90,8 +97,12 @@ function durationLabel(aTime: number, bTime: number): string {
 }
 
 interface Props {
+  /** Cuál de los gráficos abiertos es este: define de quién lee y a quién escribe. */
+  graficoId: string;
   symbol: string;
   timeframe: Timeframe;
+  /** En la vista de varios gráficos: cabecera y chapas más chicas. */
+  compacto?: boolean;
 }
 
 const TV_COLORS = {
@@ -267,7 +278,7 @@ const MAPA_MA: Record<TipoMedia, MaType> = {
   SMMA: "SMMA (RMA)",
 };
 
-export function PriceChart({ symbol, timeframe }: Props) {
+export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -378,16 +389,24 @@ export function PriceChart({ symbol, timeframe }: Props) {
     >
   >(new Map());
 
-  const indicators = useChartStore((s) => s.indicators);
-  const hidden = useChartStore((s) => s.hidden);
-  const config = useChartStore((s) => s.config);
-  const medias = useChartStore((s) => s.medias);
+  // Todo lo que define este gráfico sale de SU entrada en el store, no de
+  // un estado global: en la vista de varios, cada uno tiene lo suyo.
+  const indicators = useChartStore((s) => graficoPorId(s, graficoId).indicators);
+  const hidden = useChartStore((s) => graficoPorId(s, graficoId).hidden);
+  const config = useChartStore((s) => graficoPorId(s, graficoId).config);
+  const medias = useChartStore((s) => graficoPorId(s, graficoId).medias);
   const tool = useChartStore((s) => s.tool);
   const priceLines = useChartStore((s) => s.priceLines);
   const addPriceLine = useChartStore((s) => s.addPriceLine);
-  const removeIndicator = useChartStore((s) => s.removeIndicator);
-  const toggleHidden = useChartStore((s) => s.toggleHidden);
-  const setSettingsTarget = useChartStore((s) => s.setSettingsTarget);
+  // Las acciones se atan a ESTE gráfico una sola vez acá, así los
+  // cuarenta y pico de usos de abajo quedan igual que cuando había uno solo.
+  const removeIndicatorStore = useChartStore((s) => s.removeIndicator);
+  const toggleHiddenStore = useChartStore((s) => s.toggleHidden);
+  const setSettingsTargetStore = useChartStore((s) => s.setSettingsTarget);
+  const removeIndicator = (k: IndicatorKey) => removeIndicatorStore(k, graficoId);
+  const toggleHidden = (k: IndicatorKey) => toggleHiddenStore(k, graficoId);
+  const setSettingsTarget = (k: IndicatorKey | null) =>
+    setSettingsTargetStore(k, graficoId);
   const timezone = useChartStore((s) => s.timezone);
   const refreshNonce = useChartStore((s) => s.refreshNonce);
   const refreshChart = useChartStore((s) => s.refreshChart);
@@ -727,6 +746,10 @@ export function PriceChart({ symbol, timeframe }: Props) {
         }
       }
 
+      // La cruz se replica en los demás gráficos abiertos, en la misma
+      // fecha: es lo que permite comparar el mismo día entre activos.
+      difundirCruz(graficoId, param.time ? Number(param.time) : null);
+
       if (!param.time || !candleSeriesRef.current) {
         setHover(null);
         return;
@@ -771,6 +794,30 @@ export function PriceChart({ symbol, timeframe }: Props) {
       });
     });
     ro.observe(containerRef.current);
+    // Alta en el registro de la cruz compartida.
+    const bajaSincronia = registrarGrafico(graficoId, {
+      chart,
+      serie: candleSeriesRef.current!,
+      velaEn: () => undefined,
+      // La fila O/H/L/C se arma con las velas de ESTE gráfico.
+      mostrarVela: (t) => {
+        if (t === null) {
+          setHover(null);
+          return;
+        }
+        const k = buscadorDeVelas(candlesRef.current)(t);
+        if (!k) return;
+        setHover({
+          o: k.open,
+          h: k.high,
+          l: k.low,
+          c: k.close,
+          v: k.volume,
+          time: k.time,
+          pct: k.open === 0 ? 0 : ((k.close - k.open) / k.open) * 100,
+        });
+      },
+    });
     recomputePaneOffsets();
     // Las medias son series dinámicas: hay que crearlas cada vez que nace
     // un chart nuevo, no solo cuando cambia la lista.
@@ -779,6 +826,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
     return () => {
       chart.timeScale().unsubscribeVisibleTimeRangeChange(tsRangeHandler);
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(logicalRangeHandler);
+      bajaSincronia();
       ro.disconnect();
       chart.remove();
       chartRef.current = null;
@@ -3035,6 +3083,10 @@ export function PriceChart({ symbol, timeframe }: Props) {
 
     function paint(klines: Candle[]) {
       candlesRef.current = klines;
+      // Para la cruz compartida: la vela de ESTE activo que contiene la
+      // fecha, así la línea horizontal se apoya en su propio precio y
+      // funciona aunque los gráficos estén en temporalidades distintas.
+      actualizarPrecios(graficoId, buscadorDeVelas(klines));
       if (candleSeriesRef.current) {
         candleSeriesRef.current.setData(
           klines.map((k) => ({
@@ -3390,10 +3442,18 @@ export function PriceChart({ symbol, timeframe }: Props) {
         </div>
 
         {/* Row 2: big live price (always present — reserves space even while loading) */}
-        <div className="flex h-7 items-center gap-2">
+        {/* Con varios gráficos el precio va más chico: en una celda de medio
+            alto, el número grande se come el espacio de las velas. */}
+        <div className={cn("flex items-center gap-2", compacto ? "h-5" : "h-7")}>
           {lastPrice ? (
             <>
-              <span className={`text-lg font-semibold tabular-nums ${greenOrRed(lastPrice.pct)}`}>
+              <span
+                className={cn(
+                  "font-semibold tabular-nums",
+                  compacto ? "text-sm" : "text-lg",
+                  greenOrRed(lastPrice.pct),
+                )}
+              >
                 {formatPrice(lastPrice.value)}
               </span>
               <span className={`text-xs ${greenOrRed(lastPrice.pct)}`}>

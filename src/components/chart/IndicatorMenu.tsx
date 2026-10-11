@@ -17,6 +17,7 @@ import {
   useChartStore,
   type IndicatorConfig,
   type IndicatorKey,
+  graficoActivo,
 } from "@/lib/store/chart-store";
 
 interface Entry {
@@ -121,8 +122,8 @@ const ENTRIES: Entry[] = [
 ];
 
 export function IndicatorMenu() {
-  const indicators = useChartStore((s) => s.indicators);
-  const config = useChartStore((s) => s.config);
+  const indicators = useChartStore((s) => graficoActivo(s).indicators);
+  const config = useChartStore((s) => graficoActivo(s).config);
   const toggle = useChartStore((s) => s.toggleIndicator);
 
   const groups = ENTRIES.reduce<Record<string, Entry[]>>((acc, i) => {

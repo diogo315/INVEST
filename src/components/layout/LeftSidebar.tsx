@@ -2,7 +2,9 @@
 
 import { MousePointer2, Minus, Ruler, Trash2, Lock } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useChartStore, type DrawingTool } from "@/lib/store/chart-store";
+import { useChartStore, type DrawingTool,
+  graficoActivo,
+} from "@/lib/store/chart-store";
 import { cn } from "@/lib/utils";
 
 interface ToolDef {
@@ -38,7 +40,7 @@ export function LeftSidebar() {
   const tool = useChartStore((s) => s.tool);
   const setTool = useChartStore((s) => s.setTool);
   const clearPriceLines = useChartStore((s) => s.clearPriceLines);
-  const symbol = useChartStore((s) => s.symbol);
+  const symbol = useChartStore((s) => graficoActivo(s).symbol);
 
   return (
     <aside className="flex w-11 flex-col items-center gap-0.5 border-r border-tv-border bg-tv-panel py-1.5">

@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { TIPOS_MEDIA, tipoValido } from "@/lib/chart/medias";
 import {
   useChartStore,
+  graficoPorId,
   DEFAULT_CONFIG,
   MAX_MEDIAS,
   type IndicatorKey,
@@ -116,11 +117,17 @@ const AYUDA_NUEVOS: Partial<Record<IndicatorKey, string>> = {
 };
 
 export function IndicatorSettingsDialog() {
-  const target = useChartStore((s) => s.settingsTarget);
+  // El diálogo pertenece a UN gráfico: el que tenía la chapa que se tocó.
+  // Con cuatro en pantalla, cambiar el RSI de uno no puede tocar los otros.
+  const destino = useChartStore((s) => s.settingsTarget);
   const setTarget = useChartStore((s) => s.setSettingsTarget);
-  const config = useChartStore((s) => s.config);
-  const setConfig = useChartStore((s) => s.setConfig);
+  const setConfigStore = useChartStore((s) => s.setConfig);
+  const config = useChartStore((s) => graficoPorId(s, destino?.grafico).config);
 
+  const target = destino?.key ?? null;
+  const grafico = destino?.grafico;
+  const setConfig = (patch: Partial<typeof DEFAULT_CONFIG>) =>
+    setConfigStore(patch, grafico);
   const open = target !== null;
 
   return (
@@ -139,6 +146,7 @@ export function IndicatorSettingsDialog() {
         {target && (
           <SettingsForm
             target={target}
+            grafico={grafico}
             config={config}
             onApply={(patch) => setConfig(patch)}
             onSave={(patch) => {
@@ -158,13 +166,15 @@ export function IndicatorSettingsDialog() {
 
 interface FormProps {
   target: IndicatorKey;
+  /** Gráfico dueño de este indicador (las medias se editan en el suyo). */
+  grafico?: string;
   config: typeof DEFAULT_CONFIG;
   onApply: (patch: Partial<typeof DEFAULT_CONFIG>) => void;
   onSave: (patch: Partial<typeof DEFAULT_CONFIG>) => void;
   onReset: () => void;
 }
 
-function SettingsForm({ target, config, onApply, onSave, onReset }: FormProps) {
+function SettingsForm({ target, grafico, config, onApply, onSave, onReset }: FormProps) {
   // Local draft state to avoid recalculating chart on every keystroke
   const [draft, setDraft] = useState({
     rsi: config.rsi,
@@ -294,7 +304,7 @@ function SettingsForm({ target, config, onApply, onSave, onReset }: FormProps) {
 
   return (
     <div className="flex flex-col gap-3">
-      {target === "medias" && <EditorMedias />}
+      {target === "medias" && <EditorMedias grafico={grafico} />}
       {target === "rsi" && (
         <div className="flex max-h-[60vh] flex-col gap-3 overflow-y-auto pr-2">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-tv-text-dim">
@@ -1448,11 +1458,15 @@ function clampF(n: number, min: number, max: number): number {
  * aplican al instante (no hay "Guardar" para esta parte) porque cada uno es
  * una línea distinta y se ve enseguida en el gráfico.
  */
-function EditorMedias() {
-  const medias = useChartStore((s) => s.medias);
-  const agregar = useChartStore((s) => s.agregarMedia);
-  const editar = useChartStore((s) => s.editarMedia);
-  const quitar = useChartStore((s) => s.quitarMedia);
+function EditorMedias({ grafico }: { grafico?: string }) {
+  const medias = useChartStore((s) => graficoPorId(s, grafico).medias);
+  const agregarStore = useChartStore((s) => s.agregarMedia);
+  const editarStore = useChartStore((s) => s.editarMedia);
+  const quitarStore = useChartStore((s) => s.quitarMedia);
+  const agregar = (periodo: number) => agregarStore(periodo, grafico);
+  const editar = (id: string, patch: Partial<MediaMovil>) =>
+    editarStore(id, patch, grafico);
+  const quitar = (id: string) => quitarStore(id, grafico);
   const [nuevo, setNuevo] = useState("");
 
   const sugerido = () => {
