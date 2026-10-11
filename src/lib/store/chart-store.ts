@@ -498,6 +498,24 @@ export const GRAFICOS_DE: Record<Distribucion, number> = {
 
 export const MAX_GRAFICOS = 4;
 
+/**
+ * Un juego de indicadores guardado con nombre, para aplicarlo a cualquier
+ * gráfico. Guarda exactamente lo mismo que define a un gráfico menos el
+ * activo y la temporalidad: qué indicadores están puestos, cuáles con el
+ * ojo apagado, toda la configuración y la lista de medias.
+ */
+export interface PlantillaIndicadores {
+  id: string;
+  nombre: string;
+  indicators: Record<IndicatorKey, boolean>;
+  hidden: Record<IndicatorKey, boolean>;
+  config: IndicatorConfig;
+  medias: MediaMovil[];
+}
+
+/** Tope de plantillas, para que el menú siga siendo usable. */
+export const MAX_PLANTILLAS = 20;
+
 /** Activos con los que se estrena cada gráfico nuevo, en orden. */
 const SIMBOLOS_INICIALES = [
   "BIN:BTCUSDT",
@@ -525,6 +543,8 @@ export interface ChartState {
   timezone: ChartTimezone;
   /** Cuántas velas de historia se piden por gráfico (1.000 a 10.000). */
   velasHistoria: number;
+  /** Juegos de indicadores guardados con nombre. */
+  plantillas: PlantillaIndicadores[];
   /** Marca de que ya se sembraron los perpetuos en un watchlist viejo. */
   futuresSeeded: boolean;
   /** Marca de que ya se agregó la lista de bolsa a un estado guardado. */
@@ -572,6 +592,12 @@ export interface ChartState {
   toggleMostrarNombres: () => void;
   setTimezone: (tz: ChartTimezone) => void;
   setVelasHistoria: (n: number) => void;
+  /** Guarda los indicadores de un gráfico como plantilla. */
+  guardarPlantilla: (nombre: string, grafico?: string) => void;
+  /** Vuelca una plantilla sobre un gráfico. */
+  aplicarPlantilla: (id: string, grafico?: string) => void;
+  renombrarPlantilla: (id: string, nombre: string) => void;
+  borrarPlantilla: (id: string) => void;
   refreshChart: () => void;
   setChartLoading: (v: boolean) => void;
   setSettingsTarget: (k: IndicatorKey | null, grafico?: string) => void;
@@ -740,6 +766,7 @@ export const useChartStore = create<ChartState>()(
       bolsaSeeded: true,
       timezone: ZONA_POR_DEFECTO,
       velasHistoria: HISTORIA_POR_DEFECTO,
+      plantillas: [],
       tool: "cursor",
       priceLines: [],
       symbolDialogOpen: false,
@@ -941,6 +968,66 @@ export const useChartStore = create<ChartState>()(
       toggleMostrarNombres: () =>
         set((s) => ({ mostrarNombres: !s.mostrarNombres })),
       setTimezone: (timezone) => set({ timezone }),
+      guardarPlantilla: (nombre, grafico) =>
+        set((state) => {
+          if (state.plantillas.length >= MAX_PLANTILLAS) return {};
+          const g =
+            state.graficos.find((x) => x.id === (grafico ?? state.graficoActivoId)) ??
+            state.graficos[0];
+          if (!g) return {};
+          const usados = state.plantillas.map((p) => p.nombre.toLowerCase());
+          const base = nombre.trim().slice(0, 40) || "Plantilla";
+          let libre = base;
+          for (let i = 2; usados.includes(libre.toLowerCase()); i++) {
+            libre = `${base} (${i})`;
+          }
+          return {
+            plantillas: [
+              ...state.plantillas,
+              {
+                id: nuevoId(),
+                nombre: libre,
+                // Copias, no referencias: después se edita el gráfico y la
+                // plantilla tiene que quedarse como estaba.
+                indicators: { ...g.indicators },
+                hidden: { ...g.hidden },
+                config: { ...g.config },
+                medias: g.medias.map((m) => ({ ...m })),
+              },
+            ],
+          };
+        }),
+      aplicarPlantilla: (id, grafico) =>
+        set((state) => {
+          const p = state.plantillas.find((x) => x.id === id);
+          const destino = grafico ?? state.graficoActivoId;
+          const g =
+            state.graficos.find((x) => x.id === destino) ?? state.graficos[0];
+          if (!p || !g) return {};
+          // El activo y la temporalidad del gráfico NO se tocan: la
+          // plantilla es solo el juego de indicadores.
+          return {
+            graficos: state.graficos.map((x) =>
+              x.id === g.id
+                ? {
+                    ...x,
+                    indicators: { ...p.indicators },
+                    hidden: { ...p.hidden },
+                    config: { ...p.config },
+                    medias: p.medias.map((m) => ({ ...m })),
+                  }
+                : x,
+            ),
+          };
+        }),
+      renombrarPlantilla: (id, nombre) =>
+        set((state) => ({
+          plantillas: state.plantillas.map((p) =>
+            p.id === id ? { ...p, nombre: nombre.trim().slice(0, 40) || p.nombre } : p,
+          ),
+        })),
+      borrarPlantilla: (id) =>
+        set((state) => ({ plantillas: state.plantillas.filter((p) => p.id !== id) })),
       setVelasHistoria: (velasHistoria) =>
         set((s) => ({
           velasHistoria: OPCIONES_HISTORIA.includes(
@@ -975,6 +1062,7 @@ export const useChartStore = create<ChartState>()(
         bolsaSeeded: s.bolsaSeeded,
         timezone: s.timezone,
         velasHistoria: s.velasHistoria,
+        plantillas: s.plantillas,
       }),
       // Deep-merge so config/indicators/hidden keys added in newer versions
       // get their defaults instead of staying undefined from older persisted state.
@@ -1077,6 +1165,30 @@ export const useChartStore = create<ChartState>()(
         while (graficos.length < GRAFICOS_DE[distribucion]) {
           graficos.push(graficoNuevo(SIMBOLOS_INICIALES[graficos.length] ?? SIMBOLOS_INICIALES[0]));
         }
+        // Plantillas guardadas: se las pasa por el mismo saneo que a un
+        // gráfico, así una guardada antes de los indicadores nuevos no deja
+        // claves sin definir.
+        const plantillas: PlantillaIndicadores[] = (Array.isArray(p.plantillas)
+          ? p.plantillas
+          : []
+        )
+          .slice(0, MAX_PLANTILLAS)
+          .map((pl, i) => {
+            const g = sanearGrafico(pl, i, stripNullish);
+            const crudo = (pl ?? {}) as unknown as Record<string, unknown>;
+            return {
+              id: typeof crudo.id === "string" && crudo.id ? crudo.id : g.id,
+              nombre:
+                typeof crudo.nombre === "string" && crudo.nombre.trim()
+                  ? crudo.nombre
+                  : `Plantilla ${i + 1}`,
+              indicators: g.indicators,
+              hidden: g.hidden,
+              config: g.config,
+              medias: g.medias,
+            };
+          });
+
         const visibles = graficos.slice(0, GRAFICOS_DE[distribucion]);
         const graficoActivoId = visibles.some((g) => g.id === p.graficoActivoId)
           ? (p.graficoActivoId as string)
@@ -1096,6 +1208,7 @@ export const useChartStore = create<ChartState>()(
           graficos,
           graficoActivoId,
           distribucion,
+          plantillas,
         };
       },
     },
