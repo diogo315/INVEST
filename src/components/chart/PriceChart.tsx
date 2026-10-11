@@ -74,6 +74,7 @@ import {
 import { formatPrice, formatVolume } from "@/lib/format";
 import { IndicatorPill } from "./IndicatorPill";
 import { ControlReplay } from "./ControlReplay";
+import { CapaDibujos } from "./CapaDibujos";
 import { MeasureOverlay } from "./MeasureOverlay";
 
 interface MeasurePoint {
@@ -724,11 +725,6 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
       if (!param.point || !candleSeriesRef.current) return;
       const price = candleSeriesRef.current.coordinateToPrice(param.point.y);
       if (price === null || !isFinite(price)) return;
-
-      if (toolRef.current === "hline") {
-        addPriceLineRef.current(price, symbolRef.current);
-        return;
-      }
 
       if (toolRef.current === "measure") {
         if (!param.time) return;
@@ -2021,8 +2017,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
   // Cursor style when drawing tools are active + reset measure on tool change
   useEffect(() => {
     if (containerRef.current) {
-      containerRef.current.style.cursor =
-        tool === "hline" || tool === "measure" ? "crosshair" : "";
+      containerRef.current.style.cursor = tool === "measure" ? "crosshair" : "";
     }
     if (tool !== "measure") setMeasure(INITIAL_MEASURE);
   }, [tool]);
@@ -3397,6 +3392,51 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
     />
   );
 
+  // Capa de dibujo: va sobre el área del precio (el panel 0), que es
+  // donde se dibuja. Las conversiones se le pasan armadas porque solo el
+  // chart sabe convertir entre fecha/precio y píxeles.
+  let capaDibujos: React.ReactNode = null;
+  if (chartRef.current && candleSeriesRef.current && paneOffsets[0]) {
+    const ts = chartRef.current.timeScale();
+    const serie = candleSeriesRef.current;
+    const anchoCapa = Math.max(0, (containerRef.current?.clientWidth ?? 0) - anchoEscala);
+    capaDibujos = (
+      <div
+        className="pointer-events-none absolute left-0 top-0 z-10"
+        style={{ width: anchoCapa, height: paneOffsets[0].height }}
+      >
+        <CapaDibujos
+          simbolo={symbol}
+          ancho={anchoCapa}
+          alto={paneOffsets[0].height}
+          aX={(t) => ts.timeToCoordinate(t as UTCTimestamp)}
+          aY={(precio) => serie.priceToCoordinate(precio)}
+          aTiempo={(x) => {
+            const t = ts.coordinateToTime(x);
+            if (t !== null) return Number(t);
+            // Más allá de la última vela no hay tiempo definido: se
+            // extrapola con el paso entre velas para poder dibujar en el
+            // aire de la derecha.
+            const velas = candlesRef.current;
+            if (velas.length < 2) return null;
+            const paso = velas[velas.length - 1].time - velas[velas.length - 2].time;
+            const xUlt = ts.timeToCoordinate(
+              velas[velas.length - 1].time as UTCTimestamp,
+            );
+            if (xUlt === null) return null;
+            const ancho1 = ts.options().barSpacing || 8;
+            return (
+              velas[velas.length - 1].time +
+              Math.round((x - xUlt) / ancho1) * paso
+            );
+          }}
+          aPrecio={(y) => serie.coordinateToPrice(y)}
+          tick={renderTick}
+        />
+      </div>
+    );
+  }
+
   let measureRender: React.ReactNode = null;
   if (
     measure.a &&
@@ -3446,6 +3486,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
   return (
     <div className="relative h-full w-full">
       <div ref={containerRef} className="h-full w-full" />
+      {capaDibujos}
       {measureRender}
       {sinDatos && (
         <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">

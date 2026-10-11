@@ -6,6 +6,14 @@ import type { Timeframe } from "@/lib/binance/types";
 import { ZONA_POR_DEFECTO, type ChartTimezone } from "@/lib/chart/timezone";
 import { HISTORIA_POR_DEFECTO, OPCIONES_HISTORIA } from "@/lib/binance/paginado";
 import {
+  dibujoNuevo,
+  sanearDibujos,
+  type Dibujo,
+  type PuntoDibujo,
+  type TipoDibujo,
+} from "@/lib/dibujos/tipos";
+export type { Dibujo, PuntoDibujo, TipoDibujo } from "@/lib/dibujos/tipos";
+import {
   MAX_ALERTAS,
   MAX_DISPAROS,
   type Alerta,
@@ -51,7 +59,11 @@ export type IndicatorKey =
   | "adr"
   | "obv";
 
-export type DrawingTool = "cursor" | "hline" | "measure" | "eraser";
+/**
+ * Herramienta activa del panel izquierdo: el cursor normal, la regla, el
+ * borrador o una de las herramientas de dibujo.
+ */
+export type DrawingTool = "cursor" | "measure" | "eraser" | TipoDibujo;
 
 export interface PriceLine {
   id: string;
@@ -575,6 +587,13 @@ export interface ChartState {
   velasHistoria: number;
   /** Juegos de indicadores guardados con nombre. */
   plantillas: PlantillaIndicadores[];
+  /** Dibujos por activo: una línea puesta en BTC se ve en todos los
+   * gráficos que muestren BTC, y en cualquier temporalidad. */
+  dibujos: Record<string, Dibujo[]>;
+  /** Dibujo seleccionado (para editarlo). No se guarda. */
+  dibujoSeleccionado: string | null;
+  /** Activo cuyo dibujo seleccionado tiene abierto el diálogo de edición. */
+  dibujoEnDialogo: string | null;
   /** Alertas de precio e indicador. */
   alertas: Alerta[];
   /** Las últimas veces que saltó alguna, de la más nueva a la más vieja. */
@@ -634,6 +653,16 @@ export interface ChartState {
   aplicarPlantilla: (id: string, grafico?: string) => void;
   renombrarPlantilla: (id: string, nombre: string) => void;
   borrarPlantilla: (id: string) => void;
+  /** Agrega un dibujo al activo y lo deja seleccionado. */
+  agregarDibujo: (simbolo: string, tipo: TipoDibujo, puntos: PuntoDibujo[]) => void;
+  editarDibujo: (simbolo: string, id: string, patch: Partial<Dibujo>) => void;
+  borrarDibujo: (simbolo: string, id: string) => void;
+  /** Borra todos los dibujos de un activo. */
+  borrarDibujosDe: (simbolo: string) => void;
+  duplicarDibujo: (simbolo: string, id: string) => void;
+  seleccionarDibujo: (id: string | null) => void;
+  /** Abre (con el símbolo) o cierra (null) el diálogo de edición. */
+  setDibujoEnDialogo: (simbolo: string | null) => void;
   crearAlerta: (a: Omit<Alerta, "id" | "creada">) => void;
   editarAlerta: (id: string, patch: Partial<Alerta>) => void;
   borrarAlerta: (id: string) => void;
@@ -820,6 +849,9 @@ export const useChartStore = create<ChartState>()(
       timezone: ZONA_POR_DEFECTO,
       velasHistoria: HISTORIA_POR_DEFECTO,
       plantillas: [],
+      dibujos: {},
+      dibujoSeleccionado: null,
+      dibujoEnDialogo: null,
       alertas: [],
       disparos: [],
       tool: "cursor",
@@ -1084,6 +1116,68 @@ export const useChartStore = create<ChartState>()(
         })),
       borrarPlantilla: (id) =>
         set((state) => ({ plantillas: state.plantillas.filter((p) => p.id !== id) })),
+      agregarDibujo: (simbolo, tipo, puntos) =>
+        set((state) => {
+          const d = dibujoNuevo(nuevoId(), tipo, puntos);
+          return {
+            dibujos: {
+              ...state.dibujos,
+              [simbolo]: [...(state.dibujos[simbolo] ?? []), d],
+            },
+            dibujoSeleccionado: d.id,
+          };
+        }),
+      editarDibujo: (simbolo, id, patch) =>
+        set((state) => ({
+          dibujos: {
+            ...state.dibujos,
+            [simbolo]: (state.dibujos[simbolo] ?? []).map((d) =>
+              d.id === id ? { ...d, ...patch } : d,
+            ),
+          },
+        })),
+      borrarDibujo: (simbolo, id) =>
+        set((state) => ({
+          dibujos: {
+            ...state.dibujos,
+            [simbolo]: (state.dibujos[simbolo] ?? []).filter((d) => d.id !== id),
+          },
+          dibujoSeleccionado:
+            state.dibujoSeleccionado === id ? null : state.dibujoSeleccionado,
+        })),
+      borrarDibujosDe: (simbolo) =>
+        set((state) => ({
+          dibujos: { ...state.dibujos, [simbolo]: [] },
+          dibujoSeleccionado: null,
+        })),
+      duplicarDibujo: (simbolo, id) =>
+        set((state) => {
+          const orig = (state.dibujos[simbolo] ?? []).find((d) => d.id === id);
+          if (!orig) return {};
+          // La copia queda un poco corrida para que no tape al original.
+          const corrimiento =
+            orig.puntos.length > 1
+              ? Math.abs(orig.puntos[1].time - orig.puntos[0].time) * 0.15
+              : 0;
+          const copia: Dibujo = {
+            ...orig,
+            id: nuevoId(),
+            puntos: orig.puntos.map((p) => ({
+              time: p.time + corrimiento,
+              price: p.price,
+            })),
+            creado: Date.now(),
+          };
+          return {
+            dibujos: {
+              ...state.dibujos,
+              [simbolo]: [...(state.dibujos[simbolo] ?? []), copia],
+            },
+            dibujoSeleccionado: copia.id,
+          };
+        }),
+      seleccionarDibujo: (dibujoSeleccionado) => set({ dibujoSeleccionado }),
+      setDibujoEnDialogo: (dibujoEnDialogo) => set({ dibujoEnDialogo }),
       crearAlerta: (a) =>
         set((state) => {
           if (state.alertas.length >= MAX_ALERTAS) return {};
@@ -1200,6 +1294,7 @@ export const useChartStore = create<ChartState>()(
         plantillas: s.plantillas,
         alertas: s.alertas,
         disparos: s.disparos,
+        dibujos: s.dibujos,
       }),
       // Deep-merge so config/indicators/hidden keys added in newer versions
       // get their defaults instead of staying undefined from older persisted state.
@@ -1326,6 +1421,30 @@ export const useChartStore = create<ChartState>()(
             };
           });
 
+        // Dibujos por activo. Las "líneas de precio" que antes eran una
+        // lista aparte pasan a ser dibujos horizontales, así se pueden
+        // editar y mover como todo lo demás.
+        const dibujos: Record<string, Dibujo[]> = {};
+        const guardadosDibujos = (p.dibujos ?? {}) as Record<string, unknown>;
+        for (const [simbolo, lista] of Object.entries(guardadosDibujos)) {
+          dibujos[migrateSymbol(simbolo)] = sanearDibujos(lista);
+        }
+        const lineasViejas = (p as { priceLines?: unknown }).priceLines;
+        if (Array.isArray(lineasViejas)) {
+          for (const l of lineasViejas as Array<{ symbol?: string; price?: number }>) {
+            if (!l || typeof l.symbol !== "string" || !Number.isFinite(l.price)) {
+              continue;
+            }
+            const sim = migrateSymbol(l.symbol);
+            const d = dibujoNuevo(
+              `hl-${sim}-${l.price}`,
+              "horizontal",
+              [{ time: 0, price: l.price as number }],
+            );
+            dibujos[sim] = [...(dibujos[sim] ?? []), d];
+          }
+        }
+
         const visibles = graficos.slice(0, GRAFICOS_DE[distribucion]);
         const graficoActivoId = visibles.some((g) => g.id === p.graficoActivoId)
           ? (p.graficoActivoId as string)
@@ -1346,6 +1465,7 @@ export const useChartStore = create<ChartState>()(
           graficoActivoId,
           distribucion,
           plantillas,
+          dibujos,
           // Lo guardado puede venir de una versión anterior: se filtra lo
           // que no tenga forma de alerta en vez de confiar.
           alertas: (Array.isArray(p.alertas) ? p.alertas : [])
