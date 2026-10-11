@@ -6,7 +6,29 @@
  *   node --experimental-strip-types scripts/verificar-medias.mjs
  */
 
-export type TipoMedia = "EMA" | "SMA";
+/**
+ * Tipos de media, con los nombres que usa TradingView:
+ *  · MA   — simple, el promedio a secas
+ *  · EMA  — exponencial, pesa más las velas recientes
+ *  · WMA  — ponderada lineal
+ *  · VWMA — ponderada por volumen
+ *  · SMMA — suavizada de Wilder (la RMA de Pine)
+ */
+export type TipoMedia = "MA" | "EMA" | "WMA" | "VWMA" | "SMMA";
+
+export const TIPOS_MEDIA: Array<{ id: TipoMedia; etiqueta: string }> = [
+  { id: "MA", etiqueta: "MA" },
+  { id: "EMA", etiqueta: "EMA" },
+  { id: "WMA", etiqueta: "WMA" },
+  { id: "VWMA", etiqueta: "VWMA" },
+  { id: "SMMA", etiqueta: "SMMA" },
+];
+
+/** Normaliza lo que venga guardado. "SMA" era el nombre viejo de "MA". */
+export function tipoValido(v: unknown): TipoMedia {
+  if (v === "SMA") return "MA";
+  return TIPOS_MEDIA.some((t) => t.id === v) ? (v as TipoMedia) : "EMA";
+}
 
 export interface MediaMovil {
   id: string;
@@ -140,7 +162,7 @@ export function sanearMedias(crudo: unknown): MediaMovil[] | null {
     .slice(0, MAX_MEDIAS)
     .map((m) => ({
       id: m.id,
-      tipo: m.tipo === "SMA" ? ("SMA" as const) : ("EMA" as const),
+      tipo: tipoValido(m.tipo),
       periodo: Math.round(Math.min(2000, Math.max(1, m.periodo))),
       color: typeof m.color === "string" && m.color ? m.color : COLORES_MEDIA[0],
       grosor: m.grosor === 2 ? 2 : 1,

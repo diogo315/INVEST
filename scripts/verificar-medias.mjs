@@ -9,9 +9,11 @@
 import {
   COLORES_MEDIA,
   MAX_MEDIAS,
+  TIPOS_MEDIA,
   migrarMedias,
   nuevaMedia,
   sanearMedias,
+  tipoValido,
 } from "../src/lib/chart/medias.ts";
 
 let fallos = 0;
@@ -128,6 +130,25 @@ ok(
 ok(
   "dos medias seguidas no comparten id",
   nuevaMedia(10).id !== nuevaMedia(10).id,
+);
+
+// ── tipos de media ────────────────────────────────────────────────────
+ok(
+  "están los cinco tipos: MA, EMA, WMA, VWMA y SMMA",
+  TIPOS_MEDIA.map((t) => t.id).join(",") === "MA,EMA,WMA,VWMA,SMMA",
+  TIPOS_MEDIA.map((t) => t.id).join(","),
+);
+ok(
+  '"SMA" guardado de antes pasa a ser "MA"',
+  tipoValido("SMA") === "MA",
+);
+ok("un tipo desconocido cae en EMA", tipoValido("cualquiera") === "EMA");
+ok("los tipos válidos se respetan", tipoValido("VWMA") === "VWMA");
+ok(
+  "una lista guardada con SMA se migra a MA",
+  sanearMedias([
+    { id: "a", tipo: "SMA", periodo: 20, color: "#fff", grosor: 1, visible: true },
+  ])?.[0].tipo === "MA",
 );
 
 console.log(

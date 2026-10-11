@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { TIPOS_MEDIA, tipoValido } from "@/lib/chart/medias";
 import {
   useChartStore,
   DEFAULT_CONFIG,
@@ -1295,9 +1296,17 @@ function EditorMedias() {
         </p>
       )}
       <p className="text-[10px] text-tv-text-muted">
-        Las líneas se guardan y siguen puestas al cambiar de temporalidad o de
-        activo: el período es en velas, así que una EMA 50 en 4H son 50 velas
-        de 4 horas.
+        <strong className="font-medium text-tv-text-muted">MA</strong> simple ·{" "}
+        <strong className="font-medium text-tv-text-muted">EMA</strong>{" "}
+        exponencial ·{" "}
+        <strong className="font-medium text-tv-text-muted">WMA</strong>{" "}
+        ponderada ·{" "}
+        <strong className="font-medium text-tv-text-muted">VWMA</strong> por
+        volumen ·{" "}
+        <strong className="font-medium text-tv-text-muted">SMMA</strong>{" "}
+        suavizada (la RMA de Pine). El período es en velas: una MA 50 en 4H son
+        50 velas de 4 horas, y las líneas siguen puestas al cambiar de
+        temporalidad o de activo.
       </p>
     </div>
   );
@@ -1339,14 +1348,16 @@ function FilaMedia({
       />
       <select
         value={m.tipo}
-        onChange={(e) =>
-          editar(m.id, { tipo: e.target.value === "SMA" ? "SMA" : "EMA" })
-        }
+        onChange={(e) => editar(m.id, { tipo: tipoValido(e.target.value) })}
         aria-label="Tipo de media"
+        title="MA simple · EMA exponencial · WMA ponderada · VWMA por volumen · SMMA suavizada"
         className="shrink-0 rounded bg-tv-panel px-1 py-0.5 text-[11px] text-tv-text outline-none"
       >
-        <option value="EMA">EMA</option>
-        <option value="SMA">SMA</option>
+        {TIPOS_MEDIA.map((t) => (
+          <option key={t.id} value={t.id}>
+            {t.etiqueta}
+          </option>
+        ))}
       </select>
       <Input
         type="text"

@@ -28,7 +28,6 @@ import { tickMarkFormatter, timeFormatter } from "@/lib/chart/timezone";
 import { getAdapter, parseSymbol } from "@/lib/exchanges";
 import {
   ema,
-  sma,
   rsi,
   rsiDivergences,
   maOverPoints,
@@ -53,6 +52,7 @@ import {
 } from "@/lib/indicators";
 import type { Candle, Timeframe } from "@/lib/binance/types";
 import { TIMEFRAME_SECONDS } from "@/lib/binance/types";
+import type { TipoMedia } from "@/lib/chart/medias";
 import { reconnectAllBinanceWS } from "@/lib/binance/ws";
 import {
   INDICATOR_COLORS,
@@ -224,6 +224,15 @@ interface PaneOffset {
   top: number;
   height: number;
 }
+
+/** Tipo de media de la app → el que entiende `maOverPoints`. */
+const MAPA_MA: Record<TipoMedia, MaType> = {
+  MA: "SMA",
+  EMA: "EMA",
+  WMA: "WMA",
+  VWMA: "VWMA",
+  SMMA: "SMMA (RMA)",
+};
 
 export function PriceChart({ symbol, timeframe }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1810,11 +1819,15 @@ export function PriceChart({ symbol, timeframe }: Props) {
     const c = candlesRef.current;
     if (c.length === 0) return;
     const ultimos: Record<string, number> = {};
+    // `maOverPoints` trabaja sobre puntos (tiempo, valor) y necesita los
+    // volúmenes aparte para la VWMA.
+    const cierres = c.map((k) => ({ time: k.time, value: k.close }));
+    const volumenes = new Map(c.map((k) => [k.time, k.volume]));
 
     for (const m of listaMediasRef.current) {
       const serie = mediasRef.current.get(m.id);
       if (!serie) continue;
-      const data = m.tipo === "SMA" ? sma(c, m.periodo) : ema(c, m.periodo);
+      const data = maOverPoints(cierres, m.periodo, MAPA_MA[m.tipo], volumenes);
       serie.setData(
         data.map((p) => ({ time: p.time as UTCTimestamp, value: p.value })),
       );
@@ -3090,7 +3103,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
               name="Medias"
               color={medias[0]?.color ?? INDICATOR_COLORS.medias}
               valores={medias.map((m) => ({
-                texto: `${m.tipo === "SMA" ? "SMA" : "EMA"} ${m.periodo}${
+                texto: `${m.tipo} ${m.periodo}${
                   lastValues.medias?.[m.id] !== undefined
                     ? ` ${formatPrice(lastValues.medias[m.id])}`
                     : ""
