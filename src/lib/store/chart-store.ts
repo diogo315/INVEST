@@ -28,7 +28,19 @@ export type IndicatorKey =
   | "vwap"
   | "cipher"
   | "gli"
-  | "srsi";
+  | "srsi"
+  // Superposiciones sobre las velas
+  | "alligator"
+  | "dema"
+  | "keltner"
+  | "sar"
+  | "supertrend"
+  // Osciladores, cada uno en su panel
+  | "ao"
+  | "atr"
+  | "aroon"
+  | "adr"
+  | "obv";
 
 export type DrawingTool = "cursor" | "hline" | "measure" | "eraser";
 
@@ -144,6 +156,43 @@ export interface IndicatorConfig {
   // MACD colors override (multi-TF)
   cipherShowMacdColors: boolean;
   cipherMacdColorsTF: string;
+
+  // ── Indicadores agregados en octubre ────────────────────────────────
+  // Alligator de Bill Williams: tres medias suavizadas adelantadas.
+  alligatorMandibula: number;
+  alligatorMandibulaDesp: number;
+  alligatorDientes: number;
+  alligatorDientesDesp: number;
+  alligatorLabios: number;
+  alligatorLabiosDesp: number;
+  // DEMA
+  demaLength: number;
+  // Canales de Keltner
+  keltnerLength: number;
+  keltnerMult: number;
+  keltnerAtrLength: number;
+  keltnerUseEma: boolean;
+  keltnerFill: boolean;
+  // Parabolic SAR
+  sarStart: number;
+  sarInc: number;
+  sarMax: number;
+  // Supertrend
+  supertrendAtr: number;
+  supertrendFactor: number;
+  // Awesome Oscillator
+  aoFast: number;
+  aoSlow: number;
+  // ATR
+  atrLength: number;
+  atrSmoothing: string; // RMA | SMA | EMA | WMA
+  // Aroon
+  aroonLength: number;
+  // ADR (rango promedio)
+  adrLength: number;
+  // OBV con media opcional
+  obvSmoothType: string; // None | SMA | EMA | WMA | RMA
+  obvSmoothLength: number;
 }
 
 export const DEFAULT_CONFIG: IndicatorConfig = {
@@ -242,6 +291,31 @@ export const DEFAULT_CONFIG: IndicatorConfig = {
   cipherSommiDiamondWTBullLevel: 0,
   cipherShowMacdColors: false,
   cipherMacdColorsTF: "4h",
+  alligatorMandibula: 13,
+  alligatorMandibulaDesp: 8,
+  alligatorDientes: 8,
+  alligatorDientesDesp: 5,
+  alligatorLabios: 5,
+  alligatorLabiosDesp: 3,
+  demaLength: 20,
+  keltnerLength: 20,
+  keltnerMult: 2,
+  keltnerAtrLength: 10,
+  keltnerUseEma: true,
+  keltnerFill: true,
+  sarStart: 0.02,
+  sarInc: 0.02,
+  sarMax: 0.2,
+  supertrendAtr: 10,
+  supertrendFactor: 3,
+  aoFast: 5,
+  aoSlow: 34,
+  atrLength: 14,
+  atrSmoothing: "RMA",
+  aroonLength: 14,
+  adrLength: 14,
+  obvSmoothType: "None",
+  obvSmoothLength: 20,
 };
 
 export const INDICATOR_COLORS: Record<IndicatorKey, string> = {
@@ -255,6 +329,16 @@ export const INDICATOR_COLORS: Record<IndicatorKey, string> = {
   cipher: "#4994ec",
   gli: "#f59e0b",
   srsi: "#2962ff",
+  alligator: "#2962ff",
+  dema: "#ff6d00",
+  keltner: "#26a69a",
+  sar: "#2962ff",
+  supertrend: "#26a69a",
+  ao: "#26a69a",
+  atr: "#b2b5be",
+  aroon: "#ff6d00",
+  adr: "#9c27b0",
+  obv: "#2962ff",
 };
 
 /** Perpetuos que se agregan a todo watchlist (también a los ya guardados). */
@@ -270,10 +354,19 @@ export const INDICADORES_CON_PANEL: IndicatorKey[] = [
   "stoch",
   "cipher",
   "srsi",
+  "ao",
+  "atr",
+  "aroon",
+  "adr",
+  "obv",
 ];
 
-/** Máximo de paneles de indicadores simultáneos. */
-export const MAX_PANELES_INDICADOR = 3;
+/**
+ * Máximo de paneles de indicadores simultáneos. Con cuatro ya quedan
+ * angostos, pero con la opción de maximizar uno se puede trabajar; más que
+ * eso no se lee.
+ */
+export const MAX_PANELES_INDICADOR = 4;
 
 /** Cuántos paneles de indicadores hay prendidos. */
 export function panelesActivos(ind: Record<IndicatorKey, boolean>): number {
@@ -440,6 +533,16 @@ export const useChartStore = create<ChartState>()(
         cipher: false,
         gli: false,
         srsi: false,
+        alligator: false,
+        dema: false,
+        keltner: false,
+        sar: false,
+        supertrend: false,
+        ao: false,
+        atr: false,
+        aroon: false,
+        adr: false,
+        obv: false,
       },
       hidden: {
         medias: false,
@@ -452,6 +555,16 @@ export const useChartStore = create<ChartState>()(
         cipher: false,
         gli: false,
         srsi: false,
+        alligator: false,
+        dema: false,
+        keltner: false,
+        sar: false,
+        supertrend: false,
+        ao: false,
+        atr: false,
+        aroon: false,
+        adr: false,
+        obv: false,
       },
       config: { ...DEFAULT_CONFIG },
       medias: mediasPorDefecto(),
@@ -765,6 +878,23 @@ export const useChartStore = create<ChartState>()(
           ? (p.listaActivaId as string)
           : listas[0].id;
 
+        // Prendidos, con el tope de paneles respetado. Un estado guardado
+        // puede traer más osciladores que paneles disponibles (otra pestaña,
+        // o una versión con otro tope): sin esto quedan prendidos en el menú
+        // pero sin dibujar nada ni chapa, que es imposible de entender. Se
+        // apagan los que sobran, los últimos de la lista primero.
+        const prendidos = {
+          ...current.indicators,
+          ...stripNullish(p.indicators),
+          medias: mediasPrendidas,
+        } as Record<IndicatorKey, boolean>;
+        let conPanel = 0;
+        for (const k of INDICADORES_CON_PANEL) {
+          if (!prendidos[k]) continue;
+          conPanel++;
+          if (conPanel > MAX_PANELES_INDICADOR) prendidos[k] = false;
+        }
+
         return {
           ...current,
           ...p,
@@ -780,11 +910,7 @@ export const useChartStore = create<ChartState>()(
           listaActivaId,
           config: { ...DEFAULT_CONFIG, ...stripNullish(p.config) },
           medias,
-          indicators: {
-            ...current.indicators,
-            ...stripNullish(p.indicators),
-            medias: mediasPrendidas,
-          },
+          indicators: prendidos,
           hidden: { ...current.hidden, ...stripNullish(p.hidden) },
         };
       },

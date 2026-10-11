@@ -53,6 +53,10 @@ import {
 import type { Candle, Timeframe } from "@/lib/binance/types";
 import { TIMEFRAME_SECONDS } from "@/lib/binance/types";
 import type { TipoMedia } from "@/lib/chart/medias";
+import {
+  INDICADORES_NUEVOS,
+  type IndicadorNuevo,
+} from "@/lib/chart/indicadores-nuevos";
 import { reconnectAllBinanceWS } from "@/lib/binance/ws";
 import {
   INDICATOR_COLORS,
@@ -203,6 +207,8 @@ interface LastValues {
   macdSignal?: number;
   macdHist?: number;
   volume?: number;
+  /** Últimos valores de los indicadores nuevos: clave → serie → valor. */
+  nuevos?: Record<string, Record<string, number | undefined>>;
   bbUpper?: number;
   bbMiddle?: number;
   bbLower?: number;
@@ -329,6 +335,21 @@ export function PriceChart({ symbol, timeframe }: Props) {
   const cipherMarkersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const candlesRef = useRef<Candle[]>([]);
   const priceLinesMapRef = useRef<Map<string, IPriceLine>>(new Map());
+
+  /**
+   * Indicadores nuevos (Alligator, Keltner, SAR, Supertrend, AO, ATR, Aroon,
+   * ADR, OBV): se crean y se recalculan con un solo bloque genérico a partir
+   * de `INDICADORES_NUEVOS`, en vez de un bloque por indicador.
+   */
+  const nuevosRef = useRef<
+    Map<
+      IndicatorKey,
+      {
+        series: Map<string, ISeriesApi<"Line"> | ISeriesApi<"Histogram">>;
+        relleno: BandFill | null;
+      }
+    >
+  >(new Map());
 
   const indicators = useChartStore((s) => s.indicators);
   const hidden = useChartStore((s) => s.hidden);
@@ -474,6 +495,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
       updateStochastic();
       updateStochRsi();
       updateCipher();
+      actualizarNuevos();
     }, 1000);
   }
 
@@ -1457,6 +1479,66 @@ export function PriceChart({ symbol, timeframe }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [indicators.srsi]);
 
+  // Indicadores nuevos: un solo efecto para los diez. Depende de la lista de
+  // prendidos, no de diez banderas sueltas.
+  useEffect(() => {
+    sincronizarNuevos();
+    requestAnimationFrame(() => recomputePaneOffsets());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    indicators.alligator,
+    indicators.dema,
+    indicators.keltner,
+    indicators.sar,
+    indicators.supertrend,
+    indicators.ao,
+    indicators.atr,
+    indicators.aroon,
+    indicators.adr,
+    indicators.obv,
+  ]);
+
+  // Cambió un parámetro de cualquiera de ellos: se recalcula todo el grupo.
+  useEffect(() => {
+    actualizarNuevos();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    config.alligatorMandibula,
+    config.alligatorMandibulaDesp,
+    config.alligatorDientes,
+    config.alligatorDientesDesp,
+    config.alligatorLabios,
+    config.alligatorLabiosDesp,
+    config.demaLength,
+    config.keltnerLength,
+    config.keltnerMult,
+    config.keltnerAtrLength,
+    config.keltnerUseEma,
+    config.sarStart,
+    config.sarInc,
+    config.sarMax,
+    config.supertrendAtr,
+    config.supertrendFactor,
+    config.aoFast,
+    config.aoSlow,
+    config.atrLength,
+    config.atrSmoothing,
+    config.aroonLength,
+    config.adrLength,
+    config.obvSmoothType,
+    config.obvSmoothLength,
+  ]);
+
+  // El relleno de Keltner se puede apagar sin apagar el indicador.
+  useEffect(() => {
+    const vivo = nuevosRef.current.get("keltner");
+    if (!vivo?.relleno) return;
+    vivo.relleno.setVisible(
+      config.keltnerFill && indicators.keltner && !hidden.keltner,
+    );
+    chartRef.current?.timeScale().applyOptions({});
+  }, [config.keltnerFill, indicators.keltner, hidden.keltner]);
+
   // Visibility — eye toggle (hidden state) + enabled state combined
   useEffect(() => {
     const v = (key: IndicatorKey) => indicators[key] && !hidden[key];
@@ -1540,6 +1622,14 @@ export function PriceChart({ symbol, timeframe }: Props) {
     cipherSommiHVwapRef.current?.applyOptions({
       visible: cipherOn && cfg.cipherShowSommiFastWave,
     });
+    // Indicadores nuevos: el ojo apaga todas las series del grupo.
+    for (const def of INDICADORES_NUEVOS) {
+      const vivo = nuevosRef.current.get(def.clave);
+      if (!vivo) continue;
+      const on = v(def.clave);
+      for (const s of vivo.series.values()) s.applyOptions({ visible: on });
+      vivo.relleno?.setVisible(on && cfg.keltnerFill);
+    }
   }, [indicators, hidden, config]);
 
   // Escape también restaura: es lo que uno intenta primero.
@@ -1837,6 +1927,171 @@ export function PriceChart({ symbol, timeframe }: Props) {
 
     const lastVol = c.at(-1)?.volume;
     setLastValues((prev) => ({ ...prev, medias: ultimos, volume: lastVol }));
+  }
+
+  /**
+   * Crea o borra las series de los indicadores nuevos según lo que esté
+   * prendido. Los que llevan panel propio se van al final; las
+   * superposiciones van al panel del precio, que siempre es el 0.
+   *
+   * Las dos formas de serie (línea y barras) aceptan los mismos datos
+   * (`{time, value, color?}` y `{time}` para los huecos), así que se guardan
+   * todas tipadas como línea para poder recorrerlas en un solo lazo.
+   */
+  function sincronizarNuevos() {
+    const chart = chartRef.current;
+    if (!chart) return;
+    let cambio = false;
+
+    for (const def of INDICADORES_NUEVOS) {
+      const prendido = indicatorsRef.current[def.clave];
+      const vivo = nuevosRef.current.get(def.clave);
+
+      if (prendido && !vivo) {
+        const pane = def.conPanel ? nuevoPane() : 0;
+        if (pane === null) continue; // se llegó al tope de paneles
+        const visible =
+          indicatorsRef.current[def.clave] && !hiddenRef.current[def.clave];
+        const series = new Map<string, ISeriesApi<"Line">>();
+        for (const s of def.series) {
+          if (s.forma === "histograma") {
+            series.set(
+              s.clave,
+              chart.addSeries(
+                HistogramSeries,
+                {
+                  color: s.color,
+                  priceLineVisible: false,
+                  lastValueVisible: false,
+                  visible,
+                },
+                pane,
+              ) as unknown as ISeriesApi<"Line">,
+            );
+          } else {
+            series.set(
+              s.clave,
+              chart.addSeries(
+                LineSeries,
+                {
+                  color: s.color,
+                  lineWidth: (s.grosor ?? 1) as 1 | 2,
+                  lineStyle: s.estilo ?? 0,
+                  // El SAR son puntos sueltos, no una línea continua.
+                  lineVisible: s.forma !== "puntos",
+                  pointMarkersVisible: s.forma === "puntos",
+                  pointMarkersRadius: 1.5,
+                  priceLineVisible: false,
+                  lastValueVisible: false,
+                  visible,
+                },
+                pane,
+              ),
+            );
+          }
+        }
+
+        let relleno: BandFill | null = null;
+        if (def.relleno) {
+          const base = series.get(def.relleno.arriba);
+          if (base) {
+            relleno = new BandFill(chart, base, def.relleno.color);
+            relleno.setVisible(visible);
+            base.attachPrimitive(relleno);
+          }
+        }
+
+        nuevosRef.current.set(def.clave, { series, relleno });
+        if (def.conPanel) {
+          try {
+            chart.panes()[pane]?.setStretchFactor(1);
+            chart.panes()[0]?.setStretchFactor(3);
+          } catch {
+            // El panel puede no estar listo: queda la proporción que haya.
+          }
+        }
+        cambio = true;
+      } else if (!prendido && vivo) {
+        for (const s of vivo.series.values()) {
+          try {
+            chart.removeSeries(s);
+          } catch {
+            // Ya removida: no pasa nada.
+          }
+        }
+        nuevosRef.current.delete(def.clave);
+        cambio = true;
+      }
+    }
+
+    if (cambio) actualizarNuevos();
+  }
+
+  /** Recalcula todos los indicadores nuevos que estén prendidos. */
+  function actualizarNuevos() {
+    const c = candlesRef.current;
+    const cfg = configRef.current;
+    if (nuevosRef.current.size === 0) return;
+    const ultimos: Record<string, Record<string, number | undefined>> = {};
+
+    for (const def of INDICADORES_NUEVOS) {
+      const vivo = nuevosRef.current.get(def.clave);
+      if (!vivo) continue;
+
+      let datos: Record<string, Array<{ time: number; value?: number; color?: string }>>;
+      try {
+        datos = c.length > 0 ? def.calcular(c, cfg) : {};
+      } catch (e) {
+        // Un parámetro imposible no puede tirar el gráfico entero.
+        console.error(`Indicador ${def.clave}:`, e);
+        continue;
+      }
+
+      const porClave: Record<string, number | undefined> = {};
+      for (const s of def.series) {
+        const serie = vivo.series.get(s.clave);
+        if (!serie) continue;
+        const pts = datos[s.clave] ?? [];
+        serie.setData(
+          pts.map((p) =>
+            p.value === undefined
+              ? { time: p.time as UTCTimestamp }
+              : {
+                  time: p.time as UTCTimestamp,
+                  value: p.value,
+                  ...(p.color ? { color: p.color } : {}),
+                },
+          ),
+        );
+        // Último punto con dato (el SAR y el Supertrend tienen huecos).
+        for (let i = pts.length - 1; i >= 0; i--) {
+          if (pts[i].value !== undefined) {
+            porClave[s.clave] = pts[i].value;
+            break;
+          }
+        }
+      }
+
+      if (vivo.relleno && def.relleno) {
+        const arriba = datos[def.relleno.arriba] ?? [];
+        const abajo = new Map(
+          (datos[def.relleno.abajo] ?? []).map((p) => [p.time, p.value]),
+        );
+        vivo.relleno.setData(
+          arriba
+            .filter((p) => p.value !== undefined && abajo.get(p.time) !== undefined)
+            .map((p) => ({
+              time: p.time,
+              upper: p.value as number,
+              lower: abajo.get(p.time) as number,
+            })),
+        );
+      }
+
+      ultimos[def.clave] = porClave;
+    }
+
+    setLastValues((prev) => ({ ...prev, nuevos: ultimos }));
   }
 
   function updateRSI() {
@@ -2833,6 +3088,7 @@ export function PriceChart({ symbol, timeframe }: Props) {
           updateStochastic();
           updateStochRsi();
           updateCipher();
+          actualizarNuevos();
           // Recién acá encuadramos: los indicadores ya están recalculados,
           // así que la última posición de la escala de tiempo es la de esta
           // temporalidad y no la de la anterior.
@@ -2941,6 +3197,26 @@ export function PriceChart({ symbol, timeframe }: Props) {
   const stochPaneIdx = paneDeSerie(stochKRef.current);
   const cipherPaneIdx = paneDeSerie(cipherWt1Ref.current);
   const srsiPaneIdx = paneDeSerie(srsiKRef.current);
+  /** Panel de cada indicador nuevo que lleva panel propio. */
+  const panelesNuevos: Record<string, number> = {};
+  for (const def of INDICADORES_NUEVOS) {
+    if (!def.conPanel) continue;
+    const primera = nuevosRef.current.get(def.clave)?.series.values().next().value;
+    panelesNuevos[def.clave] = paneDeSerie(primera ?? null);
+  }
+  /** La chapa de un indicador nuevo, con su último valor. */
+  const chapaNueva = (def: IndicadorNuevo) => (
+    <IndicatorPill
+      key={def.clave}
+      name={def.nombre(config)}
+      value={def.valor(lastValues.nuevos?.[def.clave] ?? {}, formatPrice)}
+      color={INDICATOR_COLORS[def.clave]}
+      hidden={hidden[def.clave]}
+      onToggleHide={() => toggleHidden(def.clave)}
+      onSettings={() => setSettingsTarget(def.clave)}
+      onRemove={() => removeIndicator(def.clave)}
+    />
+  );
 
   let measureRender: React.ReactNode = null;
   if (
@@ -3188,8 +3464,30 @@ export function PriceChart({ symbol, timeframe }: Props) {
               onRemove={() => removeIndicator("gli")}
             />
           )}
+          {/* Superposiciones nuevas: Alligator, DEMA, Keltner, SAR, Supertrend */}
+          {INDICADORES_NUEVOS.filter(
+            (d) => !d.conPanel && indicators[d.clave],
+          ).map(chapaNueva)}
         </div>
       </div>
+
+      {/* Chapas de los indicadores nuevos que tienen panel propio */}
+      {INDICADORES_NUEVOS.filter((d) => d.conPanel && indicators[d.clave]).map(
+        (def) => {
+          const idx = panelesNuevos[def.clave];
+          const off = paneOffsets[idx];
+          if (!off || !verPane(idx)) return null;
+          return (
+            <div
+              key={def.clave}
+              style={{ top: off.top + 6, left: 12 }}
+              className="pointer-events-none absolute z-10"
+            >
+              {chapaNueva(def)}
+            </div>
+          );
+        },
+      )}
 
       {/* RSI pane label */}
       {indicators.rsi && paneOffsets[rsiPaneIdx] && verPane(rsiPaneIdx) && (

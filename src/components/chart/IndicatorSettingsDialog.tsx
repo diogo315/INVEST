@@ -30,6 +30,89 @@ const TITLES: Record<IndicatorKey, string> = {
   cipher: "VuManChu Cipher B",
   gli: "Global Liquidity (M2)",
   srsi: "Stoch RSI",
+  alligator: "Alligator",
+  dema: "DEMA",
+  keltner: "Canales de Keltner",
+  sar: "Parabolic SAR",
+  supertrend: "Supertrend",
+  ao: "Awesome Oscillator",
+  atr: "ATR",
+  aroon: "Aroon",
+  adr: "Rango promedio (ADR)",
+  obv: "OBV",
+};
+
+/** Un parámetro numérico de los indicadores nuevos. */
+interface CampoNum {
+  clave: keyof typeof DEFAULT_CONFIG;
+  etiqueta: string;
+  min: number;
+  max: number;
+  /** Con paso, el campo acepta decimales. */
+  paso?: number;
+}
+
+/**
+ * Parámetros de los indicadores nuevos, declarados una vez. El formulario
+ * se arma solo con esto: cada campo se aplica al confirmar, igual que en el
+ * editor de medias móviles.
+ */
+const CAMPOS_NUEVOS: Partial<Record<IndicatorKey, CampoNum[]>> = {
+  alligator: [
+    { clave: "alligatorMandibula", etiqueta: "Mandíbula", min: 1, max: 500 },
+    { clave: "alligatorMandibulaDesp", etiqueta: "Adelanto", min: 0, max: 50 },
+    { clave: "alligatorDientes", etiqueta: "Dientes", min: 1, max: 500 },
+    { clave: "alligatorDientesDesp", etiqueta: "Adelanto", min: 0, max: 50 },
+    { clave: "alligatorLabios", etiqueta: "Labios", min: 1, max: 500 },
+    { clave: "alligatorLabiosDesp", etiqueta: "Adelanto", min: 0, max: 50 },
+  ],
+  dema: [{ clave: "demaLength", etiqueta: "Longitud", min: 1, max: 500 }],
+  keltner: [
+    { clave: "keltnerLength", etiqueta: "Longitud", min: 1, max: 500 },
+    { clave: "keltnerMult", etiqueta: "Multiplicador", min: 0.1, max: 50, paso: 0.1 },
+    { clave: "keltnerAtrLength", etiqueta: "Longitud del ATR", min: 1, max: 500 },
+  ],
+  sar: [
+    { clave: "sarStart", etiqueta: "Inicio", min: 0.001, max: 1, paso: 0.01 },
+    { clave: "sarInc", etiqueta: "Incremento", min: 0.001, max: 1, paso: 0.01 },
+    { clave: "sarMax", etiqueta: "Máximo", min: 0.01, max: 1, paso: 0.05 },
+  ],
+  supertrend: [
+    { clave: "supertrendAtr", etiqueta: "Longitud del ATR", min: 1, max: 500 },
+    { clave: "supertrendFactor", etiqueta: "Factor", min: 0.1, max: 50, paso: 0.1 },
+  ],
+  ao: [
+    { clave: "aoFast", etiqueta: "Rápida", min: 1, max: 200 },
+    { clave: "aoSlow", etiqueta: "Lenta", min: 2, max: 500 },
+  ],
+  atr: [{ clave: "atrLength", etiqueta: "Longitud", min: 1, max: 500 }],
+  aroon: [{ clave: "aroonLength", etiqueta: "Longitud", min: 1, max: 500 }],
+  adr: [{ clave: "adrLength", etiqueta: "Longitud", min: 1, max: 500 }],
+  obv: [{ clave: "obvSmoothLength", etiqueta: "Longitud", min: 1, max: 500 }],
+};
+
+/** Explicación corta de cada indicador nuevo, en el diálogo. */
+const AYUDA_NUEVOS: Partial<Record<IndicatorKey, string>> = {
+  alligator:
+    "Tres medias suavizadas del precio medio, adelantadas unas velas: labios (rápida), dientes y mandíbula (lenta). Cuando se abren en orden hay tendencia; cuando se entrelazan, el mercado está dormido.",
+  dema:
+    "Doble media exponencial: 2·EMA − EMA(EMA). Reacciona antes que una EMA del mismo período porque le descuenta el retraso.",
+  keltner:
+    "Un canal alrededor de una media, con el ancho dado por el ATR en vez de la desviación estándar. Más estable que Bollinger cuando hay huecos.",
+  sar:
+    "Puntos que acompañan la tendencia y aceleran mientras aguanta. Cuando el precio los toca, cambian de lado: es la señal de vuelta.",
+  supertrend:
+    "Una banda a varios ATR del precio medio que solo se aprieta a favor de la tendencia. Cambia de lado cuando el cierre la rompe.",
+  ao:
+    "SMA 5 menos SMA 34 del precio medio. Las barras se pintan según si subieron respecto de la anterior, igual que en TradingView.",
+  atr:
+    "Rango verdadero promedio: cuánto se mueve el activo por vela. Sirve para dimensionar stops, no para dirección.",
+  aroon:
+    "Hace cuántas velas se marcó el máximo y el mínimo, en porcentaje. 100 arriba significa que el máximo es de esta vela.",
+  adr:
+    "Promedio de (máximo − mínimo) de las últimas velas. En diario es el rango medio del día.",
+  obv:
+    "Suma el volumen de las velas que cierran arriba y resta el de las que cierran abajo. Importa la forma de la curva, no el número.",
 };
 
 export function IndicatorSettingsDialog() {
@@ -204,6 +287,9 @@ function SettingsForm({ target, config, onApply, onSave, onReset }: FormProps) {
         vwapOffset: Math.round(clampF(draft.vwapOffset, -500, 500)),
       });
     else if (target === "volume") onSave({});
+    // Los indicadores nuevos se aplican mientras se escribe (igual que las
+    // medias), así que el botón solo cierra.
+    else if (CAMPOS_NUEVOS[target]) onSave({});
   }
 
   return (
@@ -1009,9 +1095,81 @@ function SettingsForm({ target, config, onApply, onSave, onReset }: FormProps) {
         </div>
       )}
 
+      {CAMPOS_NUEVOS[target] && (
+        <div className="flex max-h-[60vh] flex-col gap-3 overflow-y-auto pr-2">
+          <div className="grid grid-cols-2 gap-2">
+            {CAMPOS_NUEVOS[target]!.map((campo) => (
+              <CampoVivo
+                key={campo.clave}
+                etiqueta={campo.etiqueta}
+                valor={config[campo.clave] as number}
+                min={campo.min}
+                max={campo.max}
+                decimales={campo.paso !== undefined}
+                onChange={(n) => onApply({ [campo.clave]: n })}
+              />
+            ))}
+          </div>
+
+          {target === "keltner" && (
+            <>
+              <PlainSelect
+                label="Tipo de media"
+                value={config.keltnerUseEma ? "ema" : "sma"}
+                options={[
+                  ["ema", "Exponencial (EMA)"],
+                  ["sma", "Simple (MA)"],
+                ]}
+                onChange={(v) => onApply({ keltnerUseEma: v === "ema" })}
+              />
+              <Toggle
+                label="Pintar el interior del canal"
+                checked={config.keltnerFill}
+                onChange={(v) => onApply({ keltnerFill: v })}
+              />
+            </>
+          )}
+
+          {target === "atr" && (
+            <PlainSelect
+              label="Suavizado"
+              value={config.atrSmoothing}
+              options={[
+                ["RMA", "RMA (Wilder, el de siempre)"],
+                ["SMA", "SMA"],
+                ["EMA", "EMA"],
+                ["WMA", "WMA"],
+              ]}
+              onChange={(v) => onApply({ atrSmoothing: v })}
+            />
+          )}
+
+          {target === "obv" && (
+            <PlainSelect
+              label="Media de suavizado"
+              value={config.obvSmoothType}
+              options={[
+                ["None", "Ninguna"],
+                ["SMA", "SMA"],
+                ["EMA", "EMA"],
+                ["WMA", "WMA"],
+                ["RMA", "RMA"],
+              ]}
+              onChange={(v) => onApply({ obvSmoothType: v })}
+            />
+          )}
+
+          {AYUDA_NUEVOS[target] && (
+            <p className="text-[11px] leading-relaxed text-tv-text-muted">
+              {AYUDA_NUEVOS[target]}
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Las medias se aplican al instante: no tiene sentido un "Aplicar"
           que no aplica nada. */}
-      {target === "medias" ? (
+      {target === "medias" || CAMPOS_NUEVOS[target] ? (
         <div className="mt-2 flex justify-end">
           <Button
             size="sm"
@@ -1067,6 +1225,72 @@ function Field({
           const n = parseInt(e.target.value, 10);
           if (!isNaN(n)) onChange(n);
         }}
+        className="bg-tv-bg tabular-nums"
+      />
+    </label>
+  );
+}
+
+/**
+ * Campo numérico que **no pierde lo que se escribe**: el valor vive como
+ * texto local y se aplica recién cuando ya es un número usable. Es la misma
+ * solución que arregló el editor de medias móviles — con `value={numero}` el
+ * campo no deja borrar el último dígito, porque un campo vacío no es un
+ * número y volvía solo al valor anterior.
+ */
+function CampoVivo({
+  etiqueta,
+  valor,
+  min,
+  max,
+  decimales,
+  onChange,
+}: {
+  etiqueta: string;
+  valor: number;
+  min: number;
+  max: number;
+  decimales?: boolean;
+  onChange: (n: number) => void;
+}) {
+  // Arranca con el valor guardado y desde ahí manda el texto. No hace falta
+  // re-sincronizarlo con un efecto: el único cambio que viene de afuera es
+  // «Reset defaults», que cierra el diálogo y vuelve a montar el campo.
+  const [texto, setTexto] = useState(String(valor));
+
+  const confirmar = () => {
+    const n = decimales ? parseFloat(texto) : parseInt(texto, 10);
+    const limpio = Number.isFinite(n)
+      ? Math.min(max, Math.max(min, n))
+      : valor;
+    setTexto(String(limpio));
+    if (limpio !== valor) onChange(limpio);
+  };
+
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="text-[10px] font-semibold uppercase tracking-wider text-tv-text-muted">
+        {etiqueta}
+      </span>
+      <Input
+        type="text"
+        inputMode="decimal"
+        value={texto}
+        onChange={(e) => {
+          const limpio = decimales
+            ? e.target.value.replace(/[^\d.]/g, "").slice(0, 6)
+            : e.target.value.replace(/\D/g, "").slice(0, 4);
+          setTexto(limpio);
+          const n = decimales ? parseFloat(limpio) : parseInt(limpio, 10);
+          // Se aplica en vivo solo si ya entra en el rango; mientras el campo
+          // está a medio escribir, el gráfico se queda como está.
+          if (Number.isFinite(n) && n >= min && n <= max) onChange(n);
+        }}
+        onBlur={confirmar}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        }}
+        aria-label={etiqueta}
         className="bg-tv-bg tabular-nums"
       />
     </label>

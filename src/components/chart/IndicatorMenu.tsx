@@ -43,11 +43,57 @@ const ENTRIES: Entry[] = [
       })`,
   },
   {
+    key: "dema",
+    group: "Medias móviles",
+    label: (c) => `DEMA (${c.demaLength})`,
+  },
+  {
+    key: "alligator",
+    group: "Medias móviles",
+    label: (c) =>
+      `Alligator (${c.alligatorMandibula}, ${c.alligatorDientes}, ${c.alligatorLabios})`,
+  },
+  {
     key: "bb",
     group: "Volatilidad",
     label: (c) => `Bollinger (${c.bbPeriod}, ${c.bbStdDev})`,
   },
+  {
+    key: "keltner",
+    group: "Volatilidad",
+    label: (c) => `Canales de Keltner (${c.keltnerLength}, ${c.keltnerMult})`,
+  },
+  {
+    key: "atr",
+    group: "Volatilidad",
+    label: (c) => `ATR (${c.atrLength})`,
+  },
+  {
+    key: "adr",
+    group: "Volatilidad",
+    label: (c) => `Rango promedio ADR (${c.adrLength})`,
+  },
+  {
+    key: "supertrend",
+    group: "Tendencia",
+    label: (c) => `Supertrend (${c.supertrendAtr}, ${c.supertrendFactor})`,
+  },
+  {
+    key: "sar",
+    group: "Tendencia",
+    label: (c) => `Parabolic SAR (${c.sarStart}, ${c.sarInc}, ${c.sarMax})`,
+  },
+  {
+    key: "aroon",
+    group: "Tendencia",
+    label: (c) => `Aroon (${c.aroonLength})`,
+  },
   { key: "volume", group: "Volumen", label: () => "Volumen" },
+  {
+    key: "obv",
+    group: "Volumen",
+    label: () => "OBV (volumen en balance)",
+  },
   { key: "rsi", group: "Osciladores", label: (c) => `RSI (${c.rsi})` },
   {
     key: "macd",
@@ -64,6 +110,11 @@ const ENTRIES: Entry[] = [
     group: "Osciladores",
     label: (c) =>
       `Stoch RSI (${c.srsiK}, ${c.srsiD}, ${c.srsiRsiLen}, ${c.srsiStochLen})`,
+  },
+  {
+    key: "ao",
+    group: "Osciladores",
+    label: (c) => `Awesome Oscillator (${c.aoFast}, ${c.aoSlow})`,
   },
   { key: "cipher", group: "VuManChu", label: () => "Cipher B (WaveTrend)" },
   { key: "gli", group: "Macro", label: () => "Global Liquidity (M2)" },
@@ -82,7 +133,7 @@ export function IndicatorMenu() {
   const activeCount = Object.values(indicators).filter(Boolean).length;
   const paneles = panelesActivos(indicators);
   const enElTope = paneles >= MAX_PANELES_INDICADOR;
-  /** Un indicador con panel propio no se puede prender si ya hay 3 abiertos. */
+  /** Un indicador con panel propio no se puede prender si ya está en el tope. */
   const bloqueado = (key: IndicatorKey) =>
     enElTope && INDICADORES_CON_PANEL.includes(key) && !indicators[key];
 
