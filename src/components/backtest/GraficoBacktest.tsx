@@ -16,8 +16,11 @@ import {
   type ChartOptions,
   type CandlestickSeriesPartialOptions,
 } from "lightweight-charts";
+import { HistogramSeries } from "lightweight-charts";
 import { opcionesDeChart, opcionesDeVelas } from "@/lib/chart/apariencia";
+import { BandFill } from "@/lib/chart/band-fill";
 import { useChartStore } from "@/lib/store/chart-store";
+import { CONFIG_BT, indicadorPorClave } from "@/lib/backtest/indicadores";
 import type { Operacion } from "@/lib/backtest/tipos";
 import type { Candle } from "@/lib/binance/types";
 
@@ -27,6 +30,15 @@ interface Props {
   operaciones: Operacion[];
   /** Curva de capital, para el panel de abajo. */
   curva: Array<{ time: number; value: number }>;
+  /** Claves de los indicadores encendidos. */
+  indicadores: string[];
+}
+
+/** Lo que hay montado de un indicador, para poder quitarlo después. */
+interface Montado {
+  series: Map<string, ISeriesApi<"Line" | "Histogram">>;
+  relleno?: BandFill;
+  pane: number | null;
 }
 
 /** Una marca por entrada y otra por salida, como en un bróker. */
@@ -69,7 +81,12 @@ function marcas(ops: Operacion[]): SeriesMarker<Time>[] {
  * que solo muestre lo que ya pasó, y mezclarlos habría obligado a poner un
  * "modo backtest" dentro de 3.800 líneas que ya tienen bastante.
  */
-export function GraficoBacktest({ visibles, operaciones, curva }: Props) {
+export function GraficoBacktest({
+  visibles,
+  operaciones,
+  curva,
+  indicadores,
+}: Props) {
   const cajaRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const velasRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -88,6 +105,8 @@ export function GraficoBacktest({ visibles, operaciones, curva }: Props) {
    * haya ido de 10.000 a 10.350.
    */
   const rangoCurva = useRef<{ min: number; max: number } | null>(null);
+  /** Indicadores montados ahora mismo, por clave. */
+  const montados = useRef<Map<string, Montado>>(new Map());
 
   useEffect(() => {
     if (!cajaRef.current) return;
@@ -110,6 +129,7 @@ export function GraficoBacktest({ visibles, operaciones, curva }: Props) {
       velasRef.current = null;
       capitalRef.current = null;
       marcasRef.current = null;
+      montados.current.clear();
       encuadrado.current = false;
     };
   }, []);
@@ -213,6 +233,113 @@ export function GraficoBacktest({ visibles, operaciones, curva }: Props) {
       curva.map((p) => ({ time: p.time as UTCTimestamp, value: p.value })),
     );
   }, [curva]);
+
+  /**
+   * Indicadores: un solo bloque genérico para todos.
+   *
+   * Monta y desmonta según la lista encendida, y recalcula con las velas
+   * VISIBLES —nunca con la serie completa—, que es lo que impide que un
+   * indicador mire el futuro y arruine el backtest.
+   */
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+
+    // Lo que se apagó: fuera.
+    for (const [clave, m] of montados.current) {
+      if (indicadores.includes(clave)) continue;
+      for (const s of m.series.values()) {
+        try {
+          chart.removeSeries(s);
+        } catch {}
+      }
+      montados.current.delete(clave);
+    }
+
+    for (const clave of indicadores) {
+      const def = indicadorPorClave(clave);
+      if (!def) continue;
+      let m = montados.current.get(clave);
+
+      if (!m) {
+        // Los que llevan panel propio van después del de capital.
+        let pane: number | null = null;
+        if (def.conPanel) {
+          pane = chart.panes().length;
+          chart.addPane();
+        }
+        const series = new Map<string, ISeriesApi<"Line" | "Histogram">>();
+        for (const spec of def.series) {
+          const comun = {
+            color: spec.color,
+            lineWidth: (spec.grosor ?? 1) as 1 | 2,
+            lineStyle: spec.estilo ?? 0,
+            priceLineVisible: false,
+            lastValueVisible: false,
+          };
+          const s =
+            spec.forma === "histograma"
+              ? chart.addSeries(
+                  HistogramSeries,
+                  { color: spec.color, priceLineVisible: false, lastValueVisible: false },
+                  pane ?? 0,
+                )
+              : chart.addSeries(
+                  LineSeries,
+                  // Los "puntos" son una línea sin unir: se dibujan con
+                  // grosor y sin continuidad visible entre huecos.
+                  spec.forma === "puntos"
+                    ? { ...comun, lineWidth: 1 as const, pointMarkersVisible: true, lineVisible: false }
+                    : comun,
+                  pane ?? 0,
+                );
+          series.set(spec.clave, s);
+        }
+        m = { series, pane };
+        if (def.relleno) {
+          const arriba = series.get(def.relleno.arriba);
+          const abajo = series.get(def.relleno.abajo);
+          if (arriba && abajo) {
+            const f = new BandFill(chart, arriba as ISeriesApi<"Line">, def.relleno.color);
+            arriba.attachPrimitive(f);
+            m.relleno = f;
+          }
+        }
+        montados.current.set(clave, m);
+        // El precio manda; cada panel de indicador pesa lo mismo.
+        chart.panes().forEach((p, i) => p.setStretchFactor(i === 0 ? 4 : 1));
+      }
+
+      const datos = def.calcular(visibles, CONFIG_BT);
+      for (const [key, s] of m.series) {
+        const pts = datos[key] ?? [];
+        s.setData(
+          pts.map((p) => ({
+            time: p.time as UTCTimestamp,
+            value: p.value as number,
+            ...(p.color ? { color: p.color } : {}),
+          })),
+        );
+      }
+      if (m.relleno && def.relleno) {
+        // El relleno se arma emparejando las dos series por fecha: si una
+        // arranca más tarde que la otra, se pinta solo donde hay ambas.
+        const arriba = datos[def.relleno.arriba] ?? [];
+        const abajo = new Map(
+          (datos[def.relleno.abajo] ?? []).map((p) => [p.time, p.value]),
+        );
+        m.relleno.setData(
+          arriba
+            .filter((p) => p.value !== undefined && abajo.get(p.time) !== undefined)
+            .map((p) => ({
+              time: p.time,
+              upper: p.value as number,
+              lower: abajo.get(p.time) as number,
+            })),
+        );
+      }
+    }
+  }, [indicadores, visibles]);
 
   return <div ref={cajaRef} className="h-full w-full" />;
 }

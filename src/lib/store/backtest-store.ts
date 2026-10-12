@@ -47,6 +47,8 @@ interface Estado {
 
   setTiempo: (t: number) => void;
   setTemporalidad: (tf: Timeframe) => void;
+  /** Enciende o apaga un indicador en el backtest abierto. */
+  alternarIndicador: (clave: string) => void;
   reproducir: (v: boolean) => void;
   setVelocidad: (v: number) => void;
 
@@ -108,6 +110,7 @@ export const useBacktestStore = create<Estado>()(
           desde,
           capitalInicial: borrador.capital,
           operaciones: [],
+          indicadores: [],
           tiempoActual: desde,
           creado: Math.floor(Date.now() / 1000),
         };
@@ -148,6 +151,7 @@ export const useBacktestStore = create<Estado>()(
             id: id(),
             nombre: nombreLibre(s.backtests.map((b) => b.nombre), orig.nombre),
             operaciones: [],
+            indicadores: [...(orig.indicadores ?? [])],
             tiempoActual: orig.desde,
             creado: Math.floor(Date.now() / 1000),
           };
@@ -160,6 +164,19 @@ export const useBacktestStore = create<Estado>()(
         // El reloj NO se mueve: cambiar de temporalidad es mirar el mismo
         // momento con otro detalle, no saltar en el tiempo.
         set((s) => enActivo(s, (b) => ({ ...b, temporalidad: tf }))),
+
+      alternarIndicador: (clave) =>
+        set((s) =>
+          enActivo(s, (b) => {
+            const puestos = b.indicadores ?? [];
+            return {
+              ...b,
+              indicadores: puestos.includes(clave)
+                ? puestos.filter((c) => c !== clave)
+                : [...puestos, clave].slice(0, 8),
+            };
+          }),
+        ),
 
       reproducir: (reproduciendo) => set({ reproduciendo }),
       setVelocidad: (velocidad) => set({ velocidad }),

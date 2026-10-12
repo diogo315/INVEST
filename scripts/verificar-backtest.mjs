@@ -26,6 +26,12 @@ import {
   sanearBacktests,
   unidades,
 } from "../src/lib/backtest/tipos.ts";
+import {
+  CONFIG_BT,
+  INDICADORES_BT,
+  indicadorPorClave,
+  sanearIndicadores,
+} from "../src/lib/backtest/indicadores.ts";
 
 let ok = 0;
 let mal = 0;
@@ -261,6 +267,85 @@ comprobar("tira lo que no tiene forma", sanearBacktests([{ foo: 1 }]).length ===
   comprobar("conserva el que sí la tiene", s.length === 1);
   comprobar("rellena lo que falta", s[0].capitalInicial === 10000 && s[0].nombre === "Backtest");
   comprobar("filtra operaciones rotas", s[0].operaciones.length === 1, String(s[0].operaciones.length));
+}
+
+// ───────────────────────── indicadores ────────────────────────────────
+console.log("Indicadores del backtest");
+{
+  const velas = Array.from({ length: 300 }, (_, i) => {
+    const c = 100 + Math.sin(i / 7) * 8 + i * 0.05;
+    return { time: i * DIA, open: c * 0.998, high: c * 1.01, low: c * 0.99, close: c, volume: 1000 + i };
+  });
+
+  comprobar("hay al menos 15 indicadores", INDICADORES_BT.length >= 15, String(INDICADORES_BT.length));
+  comprobar("las claves no se repiten",
+    new Set(INDICADORES_BT.map((i) => i.clave)).size === INDICADORES_BT.length);
+  comprobar("todos tienen etiqueta legible",
+    INDICADORES_BT.every((i) => i.etiqueta && i.etiqueta !== i.clave || ["medias","bb","volumen","rsi","macd"].includes(i.clave)));
+  comprobar("todos declaran al menos una serie",
+    INDICADORES_BT.every((i) => i.series.length > 0));
+  comprobar("hay de los dos tipos",
+    INDICADORES_BT.some((i) => i.conPanel) && INDICADORES_BT.some((i) => !i.conPanel));
+  comprobar("están los clásicos",
+    ["medias", "bb", "volumen", "rsi", "macd"].every((c) => indicadorPorClave(c)));
+  comprobar("y los del registro compartido",
+    ["supertrend", "sar", "keltner", "obv"].every((c) => indicadorPorClave(c)));
+
+  // Cada indicador calcula sin romperse y devuelve las series que promete.
+  for (const ind of INDICADORES_BT) {
+    let datos;
+    try {
+      datos = ind.calcular(velas, CONFIG_BT);
+    } catch (e) {
+      comprobar(`${ind.clave} calcula sin reventar`, false, String(e));
+      continue;
+    }
+    comprobar(`${ind.clave} devuelve todas sus series`,
+      ind.series.every((sp) => Array.isArray(datos[sp.clave])),
+      Object.keys(datos).join(","));
+    const valores = Object.values(datos).flat().map((p) => p.value).filter((v) => v !== undefined);
+    comprobar(`${ind.clave} no devuelve NaN`, valores.every((v) => Number.isFinite(v)));
+  }
+
+  // EL PUNTO CRÍTICO: con menos velas, el resultado de las que sí hay no
+  // puede cambiar. Si cambiara, el indicador estaría mirando el futuro.
+  const corte = 200;
+  for (const ind of INDICADORES_BT) {
+    const todo = ind.calcular(velas, CONFIG_BT);
+    const parcial = ind.calcular(velas.slice(0, corte), CONFIG_BT);
+    const hastaCorte = velas[corte - 1].time;
+    let iguales = true;
+    let detalle = "";
+    for (const sp of ind.series) {
+      // Las líneas de nivel (el 30 y el 70 del RSI, el 50 del Aroon, el
+      // cero del AO) se dibujan con dos puntos, de la primera vela a la
+      // última: su segundo punto SE MUEVE a propósito al avanzar. No son
+      // un cálculo, así que no aplica la prueba.
+      const serieCompleta = todo[sp.clave] ?? [];
+      if (serieCompleta.length === 2) continue;
+      const a = new Map(serieCompleta.map((p) => [p.time, p.value]));
+      for (const p of parcial[sp.clave] ?? []) {
+        if (p.time > hastaCorte) continue;
+        const ref = a.get(p.time);
+        if (ref === undefined && p.value === undefined) continue;
+        if (ref === undefined || p.value === undefined || Math.abs(ref - p.value) > 1e-9) {
+          iguales = false;
+          detalle = `${sp.clave} en ${p.time}: ${p.value} vs ${ref}`;
+          break;
+        }
+      }
+      if (!iguales) break;
+    }
+    comprobar(`${ind.clave} NO mira el futuro`, iguales, detalle);
+  }
+
+  console.log("Saneo de indicadores");
+  comprobar("null da lista vacía", sanearIndicadores(null).length === 0);
+  comprobar("tira claves inventadas", sanearIndicadores(["rsi", "nada"]).join() === "rsi");
+  comprobar("quita repetidos", sanearIndicadores(["rsi", "rsi"]).length === 1);
+  comprobar("corta en ocho", sanearIndicadores(INDICADORES_BT.map((i) => i.clave)).length === 8);
+  comprobar("el backtest saneado trae la lista",
+    Array.isArray(sanearBacktests([{ id: "x", simbolo: "A", operaciones: [], indicadores: ["rsi"] }])[0].indicadores));
 }
 
 console.log(`\n${ok} bien, ${mal} mal`);

@@ -36,7 +36,13 @@ export function PanelOperar({
   onOperar,
 }: Props) {
   const [modo, setModo] = useState<Modo>("activo");
-  const [cantidad, setCantidad] = useState(10);
+  /**
+   * `null` quiere decir «la que entre». Con 1.000 de capital y un papel a
+   * 300, una cantidad fija de 10 no se puede comprar nunca y el botón
+   * aparece siempre apagado; así arranca en lo máximo que alcanza y solo
+   * se queda fija cuando el usuario escribe un número.
+   */
+  const [cantidadManual, setCantidadManual] = useState<number | null>(null);
   const [contratos, setContratos] = useState(1);
   const [idxVenc, setIdxVenc] = useState(0);
 
@@ -50,6 +56,8 @@ export function PanelOperar({
     [precio, tiempo, vencimiento, vol],
   );
 
+  const maximo = precio > 0 ? Math.max(1, Math.floor(efectivo / precio)) : 1;
+  const cantidad = cantidadManual ?? maximo;
   const costoActivo = cantidad * precio;
   const alcanza = costoActivo <= efectivo + 0.01;
 
@@ -129,7 +137,9 @@ export function PanelOperar({
                 min={1}
                 value={cantidad}
                 onChange={(e) =>
-                  setCantidad(Math.max(1, Math.round(Number(e.target.value) || 1)))
+                  setCantidadManual(
+                    Math.max(1, Math.round(Number(e.target.value) || 1)),
+                  )
                 }
                 className="w-full rounded border border-tv-border bg-tv-bg px-2 py-1.5 text-xs tabular-nums text-tv-text"
               />
@@ -140,6 +150,14 @@ export function PanelOperar({
                 {cantidad} × {formatPrice(precio)}
               </div>
             </div>
+            <button
+              type="button"
+              onClick={() => setCantidadManual(null)}
+              title={`Lo máximo que entra con el efectivo libre: ${maximo}`}
+              className="mb-1.5 shrink-0 rounded border border-tv-border px-2 py-1 text-[10px] text-tv-text-muted hover:bg-tv-panel-hover hover:text-tv-text"
+            >
+              Máx {maximo}
+            </button>
           </div>
           <div className="flex gap-2">
             <button
@@ -159,7 +177,8 @@ export function PanelOperar({
           </div>
           {!alcanza && (
             <p className="text-[10px] text-tv-red">
-              No te alcanza el efectivo libre para esa cantidad.
+              No te alcanza el efectivo libre para esa cantidad. Con $
+              {efectivo.toFixed(0)} entran {maximo}.
             </p>
           )}
         </>

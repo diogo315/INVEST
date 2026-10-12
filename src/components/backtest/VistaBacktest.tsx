@@ -12,6 +12,7 @@ import {
 import { GraficoBacktest } from "./GraficoBacktest";
 import { PanelOperar } from "./PanelOperar";
 import { Operaciones } from "./Operaciones";
+import { IndicadoresMenu } from "./IndicadoresMenu";
 import {
   indiceHasta,
   precioContrato,
@@ -49,6 +50,7 @@ export function VistaBacktest() {
   const operar = useBacktestStore((s) => s.operar);
   const cerrarOp = useBacktestStore((s) => s.cerrar);
   const liquidarVencidas = useBacktestStore((s) => s.liquidarVencidas);
+  const alternarIndicador = useBacktestStore((s) => s.alternarIndicador);
 
   const simbolo = bt?.simbolo ?? "";
   const tf = (bt?.temporalidad ?? "1d") as Timeframe;
@@ -222,6 +224,10 @@ export function VistaBacktest() {
             </button>
           ))}
         </div>
+        <IndicadoresMenu
+          puestos={bt.indicadores ?? []}
+          onAlternar={alternarIndicador}
+        />
         <span className="ml-auto font-mono text-xs tabular-nums text-tv-text">
           {new Date(tiempo * 1000).toISOString().slice(0, 16).replace("T", " ")}
           {precio > 0 && (
@@ -242,6 +248,7 @@ export function VistaBacktest() {
             visibles={visibles}
             operaciones={bt.operaciones}
             curva={resumen?.curva ?? []}
+            indicadores={bt.indicadores ?? []}
           />
         </div>
 

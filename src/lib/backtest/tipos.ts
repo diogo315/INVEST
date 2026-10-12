@@ -14,6 +14,7 @@ import {
   precioContrato,
   type VelaMin,
 } from "@/lib/backtest/cadena";
+import { sanearIndicadores } from "@/lib/backtest/indicadores";
 
 export type TipoInstrumento = "activo" | "call" | "put";
 export type LadoOperacion = "compra" | "venta";
@@ -52,6 +53,9 @@ export interface Backtest {
   operaciones: Operacion[];
   /** Hasta dónde avanzó el reloj la última vez. */
   tiempoActual: number;
+  /** Indicadores encendidos, por clave. Se guardan con la corrida: parte
+   * de lo que se quiere recordar es QUÉ estabas mirando al decidir. */
+  indicadores: string[];
   creado: number;
 }
 
@@ -283,6 +287,7 @@ export function sanearBacktests(crudo: unknown): Backtest[] {
           ? b.capitalInicial
           : 10000,
       tiempoActual: Number.isFinite(b.tiempoActual) ? b.tiempoActual : b.desde,
+      indicadores: sanearIndicadores(b.indicadores),
       creado: Number.isFinite(b.creado) ? b.creado : 0,
       operaciones: b.operaciones
         .filter(
