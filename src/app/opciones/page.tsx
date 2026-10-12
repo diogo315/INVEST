@@ -2,7 +2,7 @@
 
 import { useSyncExternalStore } from "react";
 import Link from "next/link";
-import { CandlestickChart, Zap } from "lucide-react";
+import { CandlestickChart, History, Zap } from "lucide-react";
 import { Cadena } from "@/components/options/Cadena";
 import { Calculadora } from "@/components/options/Calculadora";
 import { Operacion } from "@/components/options/Operacion";
@@ -41,6 +41,13 @@ export default function OpcionesPage() {
             <span className="rounded bg-tv-panel-hover px-2.5 py-1 text-xs font-medium text-tv-text">
               Opciones
             </span>
+            <Link
+              href="/backtesting"
+              className="flex items-center gap-1.5 rounded px-2.5 py-1 text-xs text-tv-text-muted transition-colors hover:text-tv-text"
+            >
+              <History className="h-3.5 w-3.5" />
+              Backtesting
+            </Link>
           </nav>
         </div>
       </header>

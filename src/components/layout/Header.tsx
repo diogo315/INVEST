@@ -1,6 +1,6 @@
 "use client";
 
-import { Code2, RefreshCw, Sigma, Zap } from "lucide-react";
+import { Code2, History, RefreshCw, Sigma, Zap } from "lucide-react";
 import Link from "next/link";
 import { SymbolSelector } from "@/components/chart/SymbolSelector";
 import { TimeframeSelector } from "@/components/chart/TimeframeSelector";
@@ -39,6 +39,13 @@ export function Header() {
             >
               <Sigma className="h-3.5 w-3.5" />
               Opciones
+            </Link>
+            <Link
+              href="/backtesting"
+              className="flex items-center gap-1.5 rounded px-2.5 py-1 text-xs text-tv-text-muted transition-colors hover:text-tv-text"
+            >
+              <History className="h-3.5 w-3.5" />
+              Backtesting
             </Link>
           </nav>
         </div>
