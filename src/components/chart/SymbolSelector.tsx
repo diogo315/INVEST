@@ -68,7 +68,7 @@ function Chip({
       onClick={onClick}
       aria-pressed={activo}
       className={cn(
-        "rounded-full px-3 py-1 text-[11px] font-medium transition-colors",
+        "shrink-0 rounded-full px-3 py-1 text-[11px] font-medium transition-colors",
         activo
           ? "bg-tv-blue text-white"
           : "bg-tv-bg text-tv-text-muted hover:bg-tv-panel-hover hover:text-tv-text",
@@ -203,7 +203,11 @@ export function SymbolSelector() {
         <span className="tabular-nums">{displayBase}</span>
         <ChevronDown className="h-3.5 w-3.5 text-tv-text-muted" />
       </DialogTrigger>
-      <DialogContent className="max-w-[calc(100%-2rem)] gap-0 bg-tv-panel p-0 sm:max-w-3xl">
+      {/* `overflow-hidden` + `min-w-0` en los hijos: el popup es un grid, y
+          un hijo de grid no encoge por debajo de su contenido salvo que se
+          lo pidas. Sin eso, una fila ancha se pinta fuera del recuadro
+          redondeado, encima de la página. */}
+      <DialogContent className="max-w-[calc(100%-2rem)] gap-0 overflow-hidden bg-tv-panel p-0 sm:max-w-3xl [&>*]:min-w-0">
         <DialogHeader className="border-b border-tv-border px-4 py-3">
           <DialogTitle className="text-sm font-medium">
             Buscar activo
@@ -229,7 +233,7 @@ export function SymbolSelector() {
         {/* Dos filas a propósito: en una sola los chips se cortan y queda
             un salto de línea a mitad del grupo. */}
         <div className="flex flex-col gap-1.5 border-b border-tv-border px-3 py-2">
-          <div className="flex items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
             <span className="w-16 shrink-0 text-[10px] uppercase tracking-wider text-tv-text-dim">
               Mercado
             </span>
@@ -246,7 +250,7 @@ export function SymbolSelector() {
               </Chip>
             ))}
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
             <span className="w-16 shrink-0 text-[10px] uppercase tracking-wider text-tv-text-dim">
               Exchange
             </span>
@@ -265,8 +269,8 @@ export function SymbolSelector() {
           </div>
         </div>
 
-        <ScrollArea className="h-[420px]">
-          <div ref={listaRef} className="flex flex-col">
+        <ScrollArea className="h-[420px] w-full min-w-0 overflow-x-hidden">
+          <div ref={listaRef} className="flex w-full min-w-0 flex-col">
             {!catalogoListo && (
               <div className="p-6 text-center text-xs text-tv-text-muted">
                 Cargando activos…
@@ -285,7 +289,7 @@ export function SymbolSelector() {
                   data-indice={i}
                   onMouseEnter={() => setCursor(i)}
                   className={cn(
-                    "group flex items-center gap-3 border-b border-tv-border/60 px-4 py-2 text-xs",
+                    "group flex w-full min-w-0 items-center gap-3 border-b border-tv-border/60 px-4 py-2 text-xs",
                     i === marcada && "bg-tv-panel-hover",
                   )}
                 >
