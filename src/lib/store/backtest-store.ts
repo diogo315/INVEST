@@ -20,13 +20,25 @@ export interface Borrador {
   desde: string;
   temporalidad: Timeframe;
   capital: number;
+  /** Días de historia previa a la fecha de inicio. */
+  historia: number;
 }
+
+/** Cuánta historia se puede pedir antes del arranque. */
+export const HISTORIAS = [
+  { dias: 90, etiqueta: "3 meses" },
+  { dias: 180, etiqueta: "6 meses" },
+  { dias: 365, etiqueta: "1 año" },
+  { dias: 730, etiqueta: "2 años" },
+  { dias: 1825, etiqueta: "5 años" },
+] as const;
 
 export const BORRADOR_INICIAL: Borrador = {
   simbolo: "ALP:AAPL",
   desde: "",
   temporalidad: "1d",
   capital: 10000,
+  historia: 365,
 };
 
 interface Estado {
@@ -47,6 +59,8 @@ interface Estado {
 
   setTiempo: (t: number) => void;
   setTemporalidad: (tf: Timeframe) => void;
+  /** Cambia la historia previa del backtest abierto (vuelve a bajar velas). */
+  setHistoria: (dias: number) => void;
   /** Enciende o apaga un indicador en el backtest abierto. */
   alternarIndicador: (clave: string) => void;
   reproducir: (v: boolean) => void;
@@ -109,6 +123,7 @@ export const useBacktestStore = create<Estado>()(
           temporalidad: borrador.temporalidad,
           desde,
           capitalInicial: borrador.capital,
+          historiaPrevia: borrador.historia,
           operaciones: [],
           indicadores: [],
           tiempoActual: desde,
@@ -164,6 +179,14 @@ export const useBacktestStore = create<Estado>()(
         // El reloj NO se mueve: cambiar de temporalidad es mirar el mismo
         // momento con otro detalle, no saltar en el tiempo.
         set((s) => enActivo(s, (b) => ({ ...b, temporalidad: tf }))),
+
+      setHistoria: (dias) =>
+        set((s) =>
+          enActivo(s, (b) => ({
+            ...b,
+            historiaPrevia: Math.min(3650, Math.max(1, Math.round(dias))),
+          })),
+        ),
 
       alternarIndicador: (clave) =>
         set((s) =>

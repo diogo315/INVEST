@@ -25,6 +25,8 @@ import type { Operacion } from "@/lib/backtest/tipos";
 import type { Candle } from "@/lib/binance/types";
 
 interface Props {
+  /** Fecha de arranque: lo anterior es historia para los indicadores. */
+  desde: number;
   /** Solo las velas que el backtest ya "vivió". */
   visibles: Candle[];
   operaciones: Operacion[];
@@ -41,9 +43,27 @@ interface Montado {
   pane: number | null;
 }
 
-/** Una marca por entrada y otra por salida, como en un bróker. */
-function marcas(ops: Operacion[]): SeriesMarker<Time>[] {
+/**
+ * Una marca por entrada y otra por salida, como en un bróker, más una que
+ * señala dónde empieza el backtest: todo lo que queda a la izquierda es
+ * historia para alimentar los indicadores, no terreno donde se operó.
+ */
+function marcas(
+  ops: Operacion[],
+  desde: number,
+  velas: Candle[],
+): SeriesMarker<Time>[] {
   const out: SeriesMarker<Time>[] = [];
+  const primeraDelBacktest = velas.find((k) => k.time >= desde);
+  if (primeraDelBacktest) {
+    out.push({
+      time: primeraDelBacktest.time as UTCTimestamp,
+      position: "aboveBar",
+      shape: "arrowDown",
+      color: "#2962ff",
+      text: "inicio",
+    });
+  }
   for (const o of ops) {
     const compra = o.lado === "compra";
     const etiqueta =
@@ -82,6 +102,7 @@ function marcas(ops: Operacion[]): SeriesMarker<Time>[] {
  * "modo backtest" dentro de 3.800 líneas que ya tienen bastante.
  */
 export function GraficoBacktest({
+  desde,
   visibles,
   operaciones,
   curva,
@@ -185,8 +206,8 @@ export function GraficoBacktest({
     const s = velasRef.current;
     if (!s) return;
     if (!marcasRef.current) marcasRef.current = createSeriesMarkers(s, []);
-    marcasRef.current.setMarkers(marcas(operaciones));
-  }, [operaciones]);
+    marcasRef.current.setMarkers(marcas(operaciones, desde, visibles));
+  }, [operaciones, desde, visibles]);
 
   // Curva de capital, en su propio panel debajo.
   useEffect(() => {

@@ -3,12 +3,12 @@
 import { Copy, Play, Trash2 } from "lucide-react";
 import { useChartStore } from "@/lib/store/chart-store";
 import {
-  backtestActivo,
+  HISTORIAS,
   useBacktestStore,
   BORRADOR_INICIAL,
 } from "@/lib/store/backtest-store";
 import { resumir, type Backtest } from "@/lib/backtest/tipos";
-import type { Timeframe } from "@/lib/binance/types";
+import { TIMEFRAME_SECONDS, type Timeframe } from "@/lib/binance/types";
 import { parseSymbol } from "@/lib/exchanges";
 import { cn } from "@/lib/utils";
 
@@ -23,14 +23,15 @@ const TEMPORALIDADES: Timeframe[] = ["5m", "15m", "1h", "4h", "1d", "1w"];
 const AHORA = Date.now();
 const CAPITALES = [1000, 5000, 10000, 25000, 100000];
 
-/** Cuántas velas hay entre dos fechas: avisa si el plan no es viable. */
-function velasEstimadas(desde: string, tf: Timeframe): number {
+/**
+ * Cuántas velas hay que bajar: la historia previa más el backtest. Sirve
+ * para avisar antes de empezar si el plan no entra en el tope.
+ */
+function velasEstimadas(desde: string, tf: Timeframe, historiaDias: number): number {
   const ms = Date.parse(`${desde}T00:00:00Z`);
   if (Number.isNaN(ms)) return 0;
-  const segundos: Record<string, number> = {
-    "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400, "1w": 604800,
-  };
-  return Math.round((AHORA - ms) / 1000 / (segundos[tf] ?? 86400));
+  const arranque = ms / 1000 - historiaDias * 86400;
+  return Math.round((AHORA / 1000 - arranque) / TIMEFRAME_SECONDS[tf]);
 }
 
 function Fila({ bt }: { bt: Backtest }) {
@@ -109,7 +110,7 @@ export function NuevoBacktest() {
   const listas = useChartStore((s) => s.listas);
   const simbolos = [...new Set(listas.flatMap((l) => l.simbolos))];
 
-  const n = velasEstimadas(b.desde, b.temporalidad);
+  const n = velasEstimadas(b.desde, b.temporalidad, b.historia);
   const hayFecha = b.desde !== "" && !Number.isNaN(Date.parse(`${b.desde}T00:00:00Z`));
   const futuro = hayFecha && Date.parse(`${b.desde}T00:00:00Z`) > AHORA;
   const demasiadas = n > 10000;
@@ -168,7 +169,7 @@ export function NuevoBacktest() {
             />
             <span className="text-[10px] text-tv-text-dim">
               {hayFecha
-                ? `${n.toLocaleString("es")} velas desde esa fecha hasta hoy`
+                ? `${n.toLocaleString("es")} velas en total, contando la historia previa`
                 : "El gráfico arranca ahí y avanza hacia adelante"}
             </span>
           </label>
@@ -195,6 +196,32 @@ export function NuevoBacktest() {
             </div>
             <span className="text-[10px] text-tv-text-dim">
               Se puede cambiar en marcha sin perder el momento.
+            </span>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[10px] uppercase tracking-wider text-tv-text-muted">
+              Historia previa
+            </span>
+            <div className="flex flex-wrap gap-1">
+              {HISTORIAS.map((h) => (
+                <button
+                  key={h.dias}
+                  onClick={() => setB({ historia: h.dias })}
+                  className={cn(
+                    "rounded px-2.5 py-1 text-[11px] transition-colors",
+                    b.historia === h.dias
+                      ? "bg-tv-blue text-white"
+                      : "bg-tv-bg text-tv-text-muted hover:bg-tv-panel-hover hover:text-tv-text",
+                  )}
+                >
+                  {h.etiqueta}
+                </button>
+              ))}
+            </div>
+            <span className="text-[10px] text-tv-text-dim">
+              Velas anteriores al arranque, para que los indicadores lleguen
+              calculados. No se puede operar ahí.
             </span>
           </div>
 

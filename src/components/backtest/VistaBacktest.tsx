@@ -25,6 +25,7 @@ import {
   type Operacion,
 } from "@/lib/backtest/tipos";
 import {
+  HISTORIAS,
   VELOCIDADES,
   backtestActivo,
   useBacktestStore,
@@ -51,10 +52,14 @@ export function VistaBacktest() {
   const cerrarOp = useBacktestStore((s) => s.cerrar);
   const liquidarVencidas = useBacktestStore((s) => s.liquidarVencidas);
   const alternarIndicador = useBacktestStore((s) => s.alternarIndicador);
+  const setHistoria = useBacktestStore((s) => s.setHistoria);
 
   const simbolo = bt?.simbolo ?? "";
   const tf = (bt?.temporalidad ?? "1d") as Timeframe;
   const desde = bt?.desde ?? 0;
+  const historia = bt?.historiaPrevia ?? 365;
+  /** Primera vela que se pide: la fecha de inicio menos la historia previa. */
+  const arranqueDatos = desde - historia * 86400;
 
   /**
    * Las velas se guardan junto a la clave de la petición que las trajo.
@@ -63,7 +68,7 @@ export function VistaBacktest() {
    * ponerlos con setState al entrar al efecto: eso dispara un render en
    * cascada y React lo marca como error.
    */
-  const clave = `${simbolo}|${tf}|${desde}`;
+  const clave = `${simbolo}|${tf}|${desde}|${historia}`;
   const [datos, setDatos] = useState<{
     clave: string;
     velas: Candle[];
@@ -79,24 +84,30 @@ export function VistaBacktest() {
     if (!simbolo || !desde) return;
     let vivo = true;
     const segundos = TIMEFRAME_SECONDS[tf];
-    // Se pide desde la fecha de arranque hasta hoy, con un poco de
-    // colchón hacia atrás: la volatilidad de la primera vela necesita las
-    // 20 anteriores, y sin ellas el backtest arrancaría a ciegas.
-    const necesarias = Math.ceil((Date.now() / 1000 - desde) / segundos) + 40;
+    // Se piden las velas de la historia previa MÁS las del backtest. La
+    // historia previa es lo que da de comer a los indicadores: sin 200
+    // velas antes del arranque, una EMA 200 no existe el primer día.
+    const necesarias =
+      Math.ceil((Date.now() / 1000 - arranqueDatos) / segundos) + 10;
     const limite = Math.min(TOPE_VELAS, Math.max(100, necesarias));
     const { adapter, symbol } = getAdapter(simbolo);
     adapter
       .fetchKlines(symbol, tf, limite)
       .then((k) => {
         if (!vivo) return;
+        const primera = k[0]?.time ?? 0;
         const aviso =
           k.length === 0
             ? "El proveedor no devolvió velas."
-            : k[0].time > desde
-              ? `Solo hay historia desde el ${new Date(k[0].time * 1000)
+            : primera > desde
+              ? `Solo hay historia desde el ${new Date(primera * 1000)
                   .toISOString()
-                  .slice(0, 10)} en esta temporalidad.`
-              : null;
+                  .slice(0, 10)}: el backtest no puede arrancar antes.`
+              : primera > arranqueDatos + segundos * 2
+                ? `La historia previa llega hasta el ${new Date(primera * 1000)
+                    .toISOString()
+                    .slice(0, 10)}, no al año completo. En ${tf} no entran más velas en el tope de ${TOPE_VELAS.toLocaleString("es")}.`
+                : null;
         setDatos({ clave, velas: k, error: aviso });
       })
       .catch(() => {
@@ -105,7 +116,7 @@ export function VistaBacktest() {
     return () => {
       vivo = false;
     };
-  }, [simbolo, tf, desde, clave]);
+  }, [simbolo, tf, desde, arranqueDatos, clave]);
 
   // ── el momento actual ───────────────────────────────────────────────
   const tiempo = bt?.tiempoActual ?? 0;
@@ -117,6 +128,12 @@ export function VistaBacktest() {
     [velas, tiempo, tf],
   );
   const ultimo = velas.length - 1;
+  /**
+   * Primera vela del backtest. Todo lo anterior es historia previa: se ve
+   * y alimenta a los indicadores, pero el reproductor no entra ahí porque
+   * no hay nada que decidir antes de empezar.
+   */
+  const idxInicio = useMemo(() => indiceHasta(velas, desde), [velas, desde]);
   const alFinal = idx >= ultimo;
 
   /** Precio del instrumento de una operación, ahora mismo. */
@@ -165,7 +182,7 @@ export function VistaBacktest() {
   const avanzar = useCallback(
     (n: number) => {
       if (velas.length === 0) return;
-      const destino = Math.min(ultimo, Math.max(0, idx + n));
+      const destino = Math.min(ultimo, Math.max(idxInicio, idx + n));
       if (destino === idx) {
         if (n > 0) reproducir(false);
         return;
@@ -173,7 +190,7 @@ export function VistaBacktest() {
       setTiempo(velas[destino].time);
       if (destino >= ultimo) reproducir(false);
     },
-    [velas, idx, ultimo, setTiempo, reproducir],
+    [velas, idx, ultimo, idxInicio, setTiempo, reproducir],
   );
 
   // El temporizador lee la última versión de `avanzar` por una ref: si
@@ -228,6 +245,21 @@ export function VistaBacktest() {
           puestos={bt.indicadores ?? []}
           onAlternar={alternarIndicador}
         />
+        <label className="flex items-center gap-1.5 text-[11px] text-tv-text-muted">
+          <span className="hidden sm:inline">Historia previa</span>
+          <select
+            value={historia}
+            onChange={(e) => setHistoria(Number(e.target.value))}
+            title="Velas anteriores al arranque, para que los indicadores lleguen calculados"
+            className="rounded border border-tv-border bg-tv-bg px-1.5 py-0.5 text-[11px] text-tv-text"
+          >
+            {HISTORIAS.map((h) => (
+              <option key={h.dias} value={h.dias}>
+                {h.etiqueta}
+              </option>
+            ))}
+          </select>
+        </label>
         <span className="ml-auto font-mono text-xs tabular-nums text-tv-text">
           {new Date(tiempo * 1000).toISOString().slice(0, 16).replace("T", " ")}
           {precio > 0 && (
@@ -245,6 +277,7 @@ export function VistaBacktest() {
             </div>
           )}
           <GraficoBacktest
+            desde={desde}
             visibles={visibles}
             operaciones={bt.operaciones}
             curva={resumen?.curva ?? []}
@@ -290,7 +323,7 @@ export function VistaBacktest() {
         </button>
         <button
           onClick={() => avanzar(-1)}
-          disabled={idx <= 0}
+          disabled={idx <= idxInicio}
           title="Una vela atrás"
           aria-label="Una vela atrás"
           className="rounded p-1.5 text-tv-text-muted hover:bg-tv-panel-hover hover:text-tv-text disabled:opacity-30"
@@ -329,9 +362,9 @@ export function VistaBacktest() {
 
         <input
           type="range"
-          min={0}
-          max={Math.max(0, ultimo)}
-          value={idx}
+          min={idxInicio}
+          max={Math.max(idxInicio, ultimo)}
+          value={Math.max(idx, idxInicio)}
           onChange={(e) => {
             reproducir(false);
             const i = Number(e.target.value);
@@ -342,7 +375,7 @@ export function VistaBacktest() {
         />
 
         <span className="font-mono text-[11px] tabular-nums text-tv-text-dim">
-          {idx + 1}/{velas.length || 0}
+          {velas.length === 0 ? "0/0" : `${idx - idxInicio + 1}/${ultimo - idxInicio + 1}`}
         </span>
         <div className="flex gap-0.5 rounded bg-tv-bg p-0.5">
           {VELOCIDADES.map((v) => (

@@ -53,6 +53,13 @@ export interface Backtest {
   operaciones: Operacion[];
   /** Hasta dónde avanzó el reloj la última vez. */
   tiempoActual: number;
+  /**
+   * Días de historia ANTES de la fecha de inicio que se bajan y se
+   * muestran. No son parte del backtest —ahí no se puede operar— pero sí
+   * de lo que ven los indicadores: una EMA 200 necesita 200 velas previas
+   * para existir, y sin ellas el gráfico arranca con las líneas cortadas.
+   */
+  historiaPrevia: number;
   /** Indicadores encendidos, por clave. Se guardan con la corrida: parte
    * de lo que se quiere recordar es QUÉ estabas mirando al decidir. */
   indicadores: string[];
@@ -288,6 +295,10 @@ export function sanearBacktests(crudo: unknown): Backtest[] {
           : 10000,
       tiempoActual: Number.isFinite(b.tiempoActual) ? b.tiempoActual : b.desde,
       indicadores: sanearIndicadores(b.indicadores),
+      historiaPrevia:
+        Number.isFinite(b.historiaPrevia) && b.historiaPrevia > 0
+          ? Math.min(3650, Math.round(b.historiaPrevia))
+          : 365,
       creado: Number.isFinite(b.creado) ? b.creado : 0,
       operaciones: b.operaciones
         .filter(
