@@ -21,6 +21,8 @@ import { opcionesDeChart, opcionesDeVelas } from "@/lib/chart/apariencia";
 import { BandFill } from "@/lib/chart/band-fill";
 import { useChartStore } from "@/lib/store/chart-store";
 import { CONFIG_BT, indicadorPorClave } from "@/lib/backtest/indicadores";
+import type { MediaMovil } from "@/lib/chart/medias";
+import type { SerieSpec } from "@/lib/chart/indicadores-nuevos";
 import type { Operacion } from "@/lib/backtest/tipos";
 import type { Candle } from "@/lib/binance/types";
 
@@ -34,6 +36,8 @@ interface Props {
   curva: Array<{ time: number; value: number }>;
   /** Claves de los indicadores encendidos. */
   indicadores: string[];
+  /** Medias móviles configuradas: cuántas, de qué tipo y de qué color. */
+  medias: MediaMovil[];
 }
 
 /** Lo que hay montado de un indicador, para poder quitarlo después. */
@@ -41,6 +45,21 @@ interface Montado {
   series: Map<string, ISeriesApi<"Line" | "Histogram">>;
   relleno?: BandFill;
   pane: number | null;
+  /**
+   * Qué series tenía montadas, resumido en un texto.
+   *
+   * Las medias cambian de cantidad y de color cuando el usuario las
+   * edita: si la firma no coincide con la actual hay que rehacer las
+   * series, porque `setData` no puede inventar una línea que no existe.
+   */
+  firma: string;
+}
+
+/** Resumen de un juego de series, para detectar si cambió. */
+function firmaDe(specs: SerieSpec[]): string {
+  return specs
+    .map((s) => `${s.clave}:${s.forma}:${s.color}:${s.grosor ?? 1}:${s.estilo ?? 0}`)
+    .join("|");
 }
 
 /**
@@ -107,6 +126,7 @@ export function GraficoBacktest({
   operaciones,
   curva,
   indicadores,
+  medias,
 }: Props) {
   const cajaRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -280,7 +300,20 @@ export function GraficoBacktest({
     for (const clave of indicadores) {
       const def = indicadorPorClave(clave);
       if (!def) continue;
+      const specs = def.seriesDe ? def.seriesDe(medias) : def.series;
+      const firma = firmaDe(specs);
       let m = montados.current.get(clave);
+
+      // Cambió la configuración: se desmonta y se vuelve a armar.
+      if (m && m.firma !== firma) {
+        for (const s of m.series.values()) {
+          try {
+            chart.removeSeries(s);
+          } catch {}
+        }
+        montados.current.delete(clave);
+        m = undefined;
+      }
 
       if (!m) {
         // Los que llevan panel propio van después del de capital.
@@ -290,7 +323,7 @@ export function GraficoBacktest({
           chart.addPane();
         }
         const series = new Map<string, ISeriesApi<"Line" | "Histogram">>();
-        for (const spec of def.series) {
+        for (const spec of specs) {
           const comun = {
             color: spec.color,
             lineWidth: (spec.grosor ?? 1) as 1 | 2,
@@ -316,7 +349,7 @@ export function GraficoBacktest({
                 );
           series.set(spec.clave, s);
         }
-        m = { series, pane };
+        m = { series, pane, firma };
         if (def.relleno) {
           const arriba = series.get(def.relleno.arriba);
           const abajo = series.get(def.relleno.abajo);
@@ -331,7 +364,7 @@ export function GraficoBacktest({
         chart.panes().forEach((p, i) => p.setStretchFactor(i === 0 ? 4 : 1));
       }
 
-      const datos = def.calcular(visibles, CONFIG_BT);
+      const datos = def.calcular(visibles, CONFIG_BT, medias);
       for (const [key, s] of m.series) {
         const pts = datos[key] ?? [];
         s.setData(
@@ -360,7 +393,7 @@ export function GraficoBacktest({
         );
       }
     }
-  }, [indicadores, visibles]);
+  }, [indicadores, visibles, medias]);
 
   return <div ref={cajaRef} className="h-full w-full" />;
 }

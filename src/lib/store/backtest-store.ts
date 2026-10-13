@@ -9,6 +9,11 @@ import {
   type Operacion,
 } from "@/lib/backtest/tipos";
 import type { Timeframe } from "@/lib/binance/types";
+import {
+  MAX_MEDIAS,
+  mediasPorDefecto,
+  type MediaMovil,
+} from "@/lib/chart/medias";
 
 /** Velocidades de reproducción, en velas por segundo. */
 export const VELOCIDADES = [0.5, 1, 2, 5, 10, 25] as const;
@@ -61,6 +66,8 @@ interface Estado {
   setTemporalidad: (tf: Timeframe) => void;
   /** Cambia la historia previa del backtest abierto (vuelve a bajar velas). */
   setHistoria: (dias: number) => void;
+  /** Reemplaza la lista de medias móviles del backtest abierto. */
+  setMedias: (medias: MediaMovil[]) => void;
   /** Enciende o apaga un indicador en el backtest abierto. */
   alternarIndicador: (clave: string) => void;
   reproducir: (v: boolean) => void;
@@ -126,6 +133,7 @@ export const useBacktestStore = create<Estado>()(
           historiaPrevia: borrador.historia,
           operaciones: [],
           indicadores: [],
+          medias: mediasPorDefecto(),
           tiempoActual: desde,
           creado: Math.floor(Date.now() / 1000),
         };
@@ -167,6 +175,7 @@ export const useBacktestStore = create<Estado>()(
             nombre: nombreLibre(s.backtests.map((b) => b.nombre), orig.nombre),
             operaciones: [],
             indicadores: [...(orig.indicadores ?? [])],
+            medias: (orig.medias ?? mediasPorDefecto()).map((m) => ({ ...m })),
             tiempoActual: orig.desde,
             creado: Math.floor(Date.now() / 1000),
           };
@@ -187,6 +196,9 @@ export const useBacktestStore = create<Estado>()(
             historiaPrevia: Math.min(3650, Math.max(1, Math.round(dias))),
           })),
         ),
+
+      setMedias: (medias) =>
+        set((s) => enActivo(s, (b) => ({ ...b, medias: medias.slice(0, MAX_MEDIAS) }))),
 
       alternarIndicador: (clave) =>
         set((s) =>

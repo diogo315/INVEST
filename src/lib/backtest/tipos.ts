@@ -15,6 +15,11 @@ import {
   type VelaMin,
 } from "@/lib/backtest/cadena";
 import { sanearIndicadores } from "@/lib/backtest/indicadores";
+import {
+  mediasPorDefecto,
+  sanearMedias,
+  type MediaMovil,
+} from "@/lib/chart/medias";
 
 export type TipoInstrumento = "activo" | "call" | "put";
 export type LadoOperacion = "compra" | "venta";
@@ -60,6 +65,8 @@ export interface Backtest {
    * para existir, y sin ellas el gráfico arranca con las líneas cortadas.
    */
   historiaPrevia: number;
+  /** Las medias móviles de este backtest: tipo, período, color y grosor. */
+  medias: MediaMovil[];
   /** Indicadores encendidos, por clave. Se guardan con la corrida: parte
    * de lo que se quiere recordar es QUÉ estabas mirando al decidir. */
   indicadores: string[];
@@ -295,6 +302,7 @@ export function sanearBacktests(crudo: unknown): Backtest[] {
           : 10000,
       tiempoActual: Number.isFinite(b.tiempoActual) ? b.tiempoActual : b.desde,
       indicadores: sanearIndicadores(b.indicadores),
+      medias: sanearMedias(b.medias) ?? mediasPorDefecto(),
       historiaPrevia:
         Number.isFinite(b.historiaPrevia) && b.historiaPrevia > 0
           ? Math.min(3650, Math.round(b.historiaPrevia))

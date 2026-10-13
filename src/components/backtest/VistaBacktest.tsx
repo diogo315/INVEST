@@ -13,6 +13,7 @@ import { GraficoBacktest } from "./GraficoBacktest";
 import { PanelOperar } from "./PanelOperar";
 import { Operaciones } from "./Operaciones";
 import { IndicadoresMenu } from "./IndicadoresMenu";
+import { EditorMedias } from "./EditorMedias";
 import {
   indiceHasta,
   precioContrato,
@@ -53,6 +54,7 @@ export function VistaBacktest() {
   const liquidarVencidas = useBacktestStore((s) => s.liquidarVencidas);
   const alternarIndicador = useBacktestStore((s) => s.alternarIndicador);
   const setHistoria = useBacktestStore((s) => s.setHistoria);
+  const setMedias = useBacktestStore((s) => s.setMedias);
 
   const simbolo = bt?.simbolo ?? "";
   const tf = (bt?.temporalidad ?? "1d") as Timeframe;
@@ -245,6 +247,7 @@ export function VistaBacktest() {
           puestos={bt.indicadores ?? []}
           onAlternar={alternarIndicador}
         />
+        <EditorMedias medias={bt.medias ?? []} onCambiar={setMedias} />
         <label className="flex items-center gap-1.5 text-[11px] text-tv-text-muted">
           <span className="hidden sm:inline">Historia previa</span>
           <select
@@ -282,6 +285,7 @@ export function VistaBacktest() {
             operaciones={bt.operaciones}
             curva={resumen?.curva ?? []}
             indicadores={bt.indicadores ?? []}
+            medias={bt.medias ?? []}
           />
         </div>
 

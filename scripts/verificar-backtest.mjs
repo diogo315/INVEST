@@ -30,6 +30,7 @@ import {
   CONFIG_BT,
   INDICADORES_BT,
   indicadorPorClave,
+  mediasPorDefecto,
   sanearIndicadores,
 } from "../src/lib/backtest/indicadores.ts";
 
@@ -277,7 +278,10 @@ console.log("Indicadores del backtest");
     return { time: i * DIA, open: c * 0.998, high: c * 1.01, low: c * 0.99, close: c, volume: 1000 + i };
   });
 
-  comprobar("hay al menos 15 indicadores", INDICADORES_BT.length >= 15, String(INDICADORES_BT.length));
+  const MEDIAS = mediasPorDefecto();
+  comprobar("hay al menos 17 indicadores", INDICADORES_BT.length >= 17, String(INDICADORES_BT.length));
+  comprobar("está el Stoch RSI", !!indicadorPorClave("srsi"));
+  comprobar("está el Cipher B", !!indicadorPorClave("cipher"));
   comprobar("las claves no se repiten",
     new Set(INDICADORES_BT.map((i) => i.clave)).size === INDICADORES_BT.length);
   comprobar("todos tienen etiqueta legible",
@@ -295,13 +299,14 @@ console.log("Indicadores del backtest");
   for (const ind of INDICADORES_BT) {
     let datos;
     try {
-      datos = ind.calcular(velas, CONFIG_BT);
+      datos = ind.calcular(velas, CONFIG_BT, MEDIAS);
     } catch (e) {
       comprobar(`${ind.clave} calcula sin reventar`, false, String(e));
       continue;
     }
+    const specs = ind.seriesDe ? ind.seriesDe(MEDIAS) : ind.series;
     comprobar(`${ind.clave} devuelve todas sus series`,
-      ind.series.every((sp) => Array.isArray(datos[sp.clave])),
+      specs.every((sp) => Array.isArray(datos[sp.clave])),
       Object.keys(datos).join(","));
     const valores = Object.values(datos).flat().map((p) => p.value).filter((v) => v !== undefined);
     comprobar(`${ind.clave} no devuelve NaN`, valores.every((v) => Number.isFinite(v)));
@@ -311,12 +316,12 @@ console.log("Indicadores del backtest");
   // puede cambiar. Si cambiara, el indicador estaría mirando el futuro.
   const corte = 200;
   for (const ind of INDICADORES_BT) {
-    const todo = ind.calcular(velas, CONFIG_BT);
-    const parcial = ind.calcular(velas.slice(0, corte), CONFIG_BT);
+    const todo = ind.calcular(velas, CONFIG_BT, MEDIAS);
+    const parcial = ind.calcular(velas.slice(0, corte), CONFIG_BT, MEDIAS);
     const hastaCorte = velas[corte - 1].time;
     let iguales = true;
     let detalle = "";
-    for (const sp of ind.series) {
+    for (const sp of (ind.seriesDe ? ind.seriesDe(MEDIAS) : ind.series)) {
       // Las líneas de nivel (el 30 y el 70 del RSI, el 50 del Aroon, el
       // cero del AO) se dibujan con dos puntos, de la primera vela a la
       // última: su segundo punto SE MUEVE a propósito al avanzar. No son
@@ -339,6 +344,37 @@ console.log("Indicadores del backtest");
     comprobar(`${ind.clave} NO mira el futuro`, iguales, detalle);
   }
 
+    // ── medias configurables ────────────────────────────────────────
+  console.log("Medias móviles configurables");
+  {
+    const def = indicadorPorClave("medias");
+    comprobar("las medias son editables", def.editable === true);
+    comprobar("arma sus series desde la lista", typeof def.seriesDe === "function");
+    comprobar("una línea por media visible", def.seriesDe(MEDIAS).length === 3, String(def.seriesDe(MEDIAS).length));
+    comprobar("una media oculta no dibuja línea",
+      def.seriesDe(MEDIAS.map((m, i) => (i === 0 ? { ...m, visible: false } : m))).length === 2);
+    comprobar("cada línea usa el color de su media",
+      def.seriesDe(MEDIAS)[0].color === MEDIAS[0].color);
+    comprobar("y su grosor", def.seriesDe(MEDIAS)[2].grosor === 2);
+
+    // El período manda de verdad: cambiarlo cambia el número.
+    const corta = [{ ...MEDIAS[0], periodo: 5 }];
+    const larga = [{ ...MEDIAS[0], periodo: 100 }];
+    const a = def.calcular(velas, CONFIG_BT, corta)[MEDIAS[0].id];
+    const b = def.calcular(velas, CONFIG_BT, larga)[MEDIAS[0].id];
+    comprobar("un período corto da más puntos que uno largo", a.length > b.length,
+      `${a.length} vs ${b.length}`);
+    comprobar("y valores distintos", a.at(-1).value !== b.at(-1).value);
+
+    // El tipo también.
+    const sma = def.calcular(velas, CONFIG_BT, [{ ...MEDIAS[0], tipo: "MA", periodo: 20 }]);
+    const ema = def.calcular(velas, CONFIG_BT, [{ ...MEDIAS[0], tipo: "EMA", periodo: 20 }]);
+    comprobar("SMA y EMA del mismo período no coinciden",
+      sma[MEDIAS[0].id].at(-1).value !== ema[MEDIAS[0].id].at(-1).value);
+    comprobar("una lista vacía no rompe",
+      Object.keys(def.calcular(velas, CONFIG_BT, [])).length === 0);
+  }
+
   console.log("Saneo de indicadores");
   comprobar("null da lista vacía", sanearIndicadores(null).length === 0);
   comprobar("tira claves inventadas", sanearIndicadores(["rsi", "nada"]).join() === "rsi");
@@ -346,6 +382,11 @@ console.log("Indicadores del backtest");
   comprobar("corta en ocho", sanearIndicadores(INDICADORES_BT.map((i) => i.clave)).length === 8);
   comprobar("el backtest saneado trae la lista",
     Array.isArray(sanearBacktests([{ id: "x", simbolo: "A", operaciones: [], indicadores: ["rsi"] }])[0].indicadores));
+  comprobar("y medias, aunque no estuvieran guardadas",
+    sanearBacktests([{ id: "x", simbolo: "A", operaciones: [] }])[0].medias.length === 3);
+  comprobar("respeta las medias guardadas",
+    sanearBacktests([{ id: "x", simbolo: "A", operaciones: [],
+      medias: [{ id: "a", tipo: "EMA", periodo: 9, color: "#fff", grosor: 1, visible: true }] }])[0].medias[0].periodo === 9);
 }
 
 console.log(`\n${ok} bien, ${mal} mal`);

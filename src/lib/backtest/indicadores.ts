@@ -20,22 +20,60 @@ import {
   INDICADORES_NUEVOS,
   type IndicadorNuevo,
   type PuntoSerie,
+  type SerieSpec,
 } from "@/lib/chart/indicadores-nuevos";
-import { bollinger, ema, macd, rsi } from "@/lib/indicators";
+import {
+  bollinger,
+  macd,
+  maOverPoints,
+  mfiArea,
+  rsi,
+  stochRsi,
+  wavetrend,
+  type MaType,
+} from "@/lib/indicators";
+import {
+  mediasPorDefecto,
+  type MediaMovil,
+  type TipoMedia,
+} from "@/lib/chart/medias";
 import { DEFAULT_CONFIG, type IndicatorConfig } from "@/lib/store/chart-store";
 import type { Candle } from "@/lib/binance/types";
 
-export interface IndicadorBT extends Omit<IndicadorNuevo, "clave"> {
+export interface IndicadorBT extends Omit<IndicadorNuevo, "clave" | "calcular"> {
   clave: string;
   /** Nombre corto para el menú. */
   etiqueta: string;
+  /**
+   * Las medias son la excepción: cuántas líneas hay y de qué color lo
+   * decide el usuario, así que sus series se arman en el momento en vez
+   * de estar declaradas fijas.
+   */
+  seriesDe?: (medias: MediaMovil[]) => SerieSpec[];
+  /** Tiene parámetros que el usuario puede tocar. */
+  editable?: boolean;
+  calcular: (
+    velas: Candle[],
+    c: IndicatorConfig,
+    medias: MediaMovil[],
+  ) => Record<string, PuntoSerie[]>;
 }
+
+/** De nuestro nombre de media al que entiende `maOverPoints`. */
+const MAPA_MA: Record<TipoMedia, MaType> = {
+  MA: "SMA",
+  EMA: "EMA",
+  WMA: "WMA",
+  VWMA: "VWMA",
+  SMMA: "SMMA (RMA)",
+};
 
 const AMARILLO = "#ffb74d";
 const ROJO = "#ef5350";
 const AZUL = "#2962ff";
 const VERDE = "#26a69a";
 const MORADO = "#ab47bc";
+const NARANJA = "#ff6d00";
 const GRIS = "#787b86";
 
 /** Línea horizontal de punta a punta: el 30 y el 70 del RSI, el 0 del MACD. */
@@ -50,21 +88,37 @@ function nivel(velas: Candle[], v: number): PuntoSerie[] {
 const CLASICOS: IndicadorBT[] = [
   {
     clave: "medias",
-    etiqueta: "Medias (20/50/200)",
-    nombre: () => "Medias 20 · 50 · 200",
+    etiqueta: "Medias móviles",
+    nombre: () => "Medias",
     conPanel: false,
-    series: [
-      { clave: "m20", forma: "linea", color: AMARILLO },
-      { clave: "m50", forma: "linea", color: ROJO },
-      { clave: "m200", forma: "linea", color: AZUL, grosor: 2 },
-    ],
-    calcular: (velas) => ({
-      m20: ema(velas, 20),
-      m50: ema(velas, 50),
-      m200: ema(velas, 200),
-    }),
-    valor: (u, fmt) =>
-      u.m20 === undefined ? undefined : `20 ${fmt(u.m20)}`,
+    editable: true,
+    // Fijas solo como respaldo: lo que manda es `seriesDe`.
+    series: [{ clave: "ema20", forma: "linea", color: AMARILLO }],
+    seriesDe: (medias) =>
+      medias
+        .filter((m) => m.visible)
+        .map((m) => ({
+          clave: m.id,
+          forma: "linea" as const,
+          color: m.color,
+          grosor: (m.grosor === 2 ? 2 : 1) as 1 | 2,
+        })),
+    calcular: (velas, _c, medias) => {
+      // `maOverPoints` trabaja sobre puntos y necesita los volúmenes
+      // aparte, que es lo único que distingue a la VWMA.
+      const cierres = velas.map((k) => ({ time: k.time, value: k.close }));
+      const volumenes = new Map(velas.map((k) => [k.time, k.volume]));
+      const out: Record<string, PuntoSerie[]> = {};
+      for (const m of medias) {
+        if (!m.visible) continue;
+        out[m.id] = maOverPoints(cierres, m.periodo, MAPA_MA[m.tipo], volumenes);
+      }
+      return out;
+    },
+    valor: (u, fmt) => {
+      const primera = Object.values(u).find((v) => v !== undefined);
+      return primera === undefined ? undefined : fmt(primera);
+    },
   },
   {
     clave: "bb",
@@ -150,7 +204,83 @@ const CLASICOS: IndicadorBT[] = [
     valor: (u) =>
       u.macd === undefined ? undefined : `${u.macd.toFixed(2)} / ${(u.senal ?? 0).toFixed(2)}`,
   },
+  {
+    clave: "srsi",
+    etiqueta: "Stoch RSI",
+    nombre: () => "Stoch RSI 3 · 3 · 14 · 14",
+    conPanel: true,
+    series: [
+      { clave: "k", forma: "linea", color: AZUL, grosor: 2 },
+      { clave: "d", forma: "linea", color: NARANJA },
+      { clave: "n80", forma: "linea", color: GRIS, estilo: 2 },
+      { clave: "n20", forma: "linea", color: GRIS, estilo: 2 },
+    ],
+    calcular: (velas, c) => {
+      const s = stochRsi(velas, c.srsiStochLen, c.srsiRsiLen, c.srsiK, c.srsiD);
+      return {
+        k: s.map((p) => ({ time: p.time, value: p.k })),
+        d: s.map((p) => ({ time: p.time, value: p.d })),
+        n80: nivel(velas, 80),
+        n20: nivel(velas, 20),
+      };
+    },
+    valor: (u) =>
+      u.k === undefined ? undefined : `${u.k.toFixed(1)} / ${(u.d ?? 0).toFixed(1)}`,
+  },
+  {
+    clave: "cipher",
+    etiqueta: "VuManChu Cipher B",
+    nombre: () => "Cipher B",
+    conPanel: true,
+    series: [
+      // El área de dinero y la ola, como barras; encima las dos líneas.
+      { clave: "mfi", forma: "histograma", color: VERDE },
+      // La ola es wt1 pintada como área; wt2 es su media, la línea que
+      // cruza. Dibujar wt1 también como línea era la misma serie dos veces.
+      { clave: "ola", forma: "histograma", color: `${AZUL}55` },
+      { clave: "wt2", forma: "linea", color: MORADO, grosor: 2 },
+      { clave: "cero", forma: "linea", color: GRIS, estilo: 2 },
+      { clave: "compra", forma: "puntos", color: VERDE, grosor: 2 },
+      { clave: "venta", forma: "puntos", color: ROJO, grosor: 2 },
+    ],
+    calcular: (velas, c) => {
+      const w = wavetrend(velas, c.wtChannelLen, c.wtAverageLen, c.wtMALen);
+      const m = mfiArea(velas, c.mfiPeriod, c.mfiMultiplier, c.cipherMfiYPos);
+      // Los puntos de la señal: el cruce de la ola con su media. Verde
+      // cuando cruza hacia arriba estando abajo, rojo al revés; es la
+      // señal que de verdad se mira del Cipher B.
+      const compra: PuntoSerie[] = [];
+      const venta: PuntoSerie[] = [];
+      for (let i = 1; i < w.length; i++) {
+        const a = w[i - 1];
+        const b = w[i];
+        const cruzaArriba = a.wt1 <= a.wt2 && b.wt1 > b.wt2;
+        const cruzaAbajo = a.wt1 >= a.wt2 && b.wt1 < b.wt2;
+        if (cruzaArriba && b.wt2 < 0) compra.push({ time: b.time, value: b.wt2 });
+        if (cruzaAbajo && b.wt2 > 0) venta.push({ time: b.time, value: b.wt2 });
+      }
+      return {
+        mfi: m.map((p) => ({
+          time: p.time,
+          value: p.value,
+          color: p.value >= 0 ? `${VERDE}80` : `${ROJO}80`,
+        })),
+        ola: w.map((p) => ({ time: p.time, value: p.wt1 })),
+        wt2: w.map((p) => ({ time: p.time, value: p.wt2 })),
+        cero: nivel(velas, 0),
+        compra,
+        venta,
+      };
+    },
+    valor: (u) =>
+      u.ola === undefined
+        ? undefined
+        : `WT ${u.ola.toFixed(1)} · MFI ${(u.mfi ?? 0).toFixed(1)}`,
+  },
 ];
+
+/** Las medias con las que arranca un backtest nuevo. */
+export { mediasPorDefecto };
 
 /** Nombres cortos de los del registro compartido, para el menú. */
 const ETIQUETAS: Record<string, string> = {
