@@ -48,17 +48,26 @@ const DIA = 86400;
 
 // ───────────────────────── strikes y vencimientos ──────────────────────
 console.log("Strikes");
-comprobar("papel barato va de 1 en 1", pasoDeStrike(18) === 1);
-comprobar("papel medio va de 2,5", pasoDeStrike(60) === 2.5);
-comprobar("papel caro va de 5", pasoDeStrike(180) === 5);
-comprobar("papel muy caro va de 10", pasoDeStrike(600) === 10);
+// Los nombres que de verdad se operan cotizan de 1 en 1 aunque valgan
+// 760: SPY no tiene solo 760 y 770, tiene 761, 762, 763…
+comprobar("papel barato va de medio en medio", pasoDeStrike(18) === 0.5);
+comprobar("un papel de 60 va de 1 en 1", pasoDeStrike(60) === 1);
+comprobar("uno de 180 también", pasoDeStrike(180) === 1);
+comprobar("y SPY a 763 también", pasoDeStrike(763) === 1);
+comprobar("solo por encima de 1000 se abre a 5", pasoDeStrike(1500) === 5);
 {
   const s = strikesCerca(100, 3);
   comprobar("devuelve 2n+1 strikes", s.length === 7, String(s.length));
   comprobar("centrado en el precio", s[3] === 100, JSON.stringify(s));
-  // A 100 exactos el paso ya es de 5: el tramo de 2,5 es por debajo de 100.
   comprobar("separados por el paso", s[4] - s[3] === pasoDeStrike(100), JSON.stringify(s));
-  comprobar("por debajo de 100 el paso es 2,5", strikesCerca(60, 1)[1] - strikesCerca(60, 1)[0] === 2.5);
+  // Se puede forzar el salto, porque los reales cambian por papel.
+  const forzados = strikesCerca(763, 3, 2.5);
+  comprobar("se puede forzar el salto", forzados[1] - forzados[0] === 2.5, JSON.stringify(forzados));
+  comprobar("y el forzado manda sobre la tabla",
+    strikesCerca(763, 3, 10)[1] - strikesCerca(763, 3, 10)[0] === 10);
+  const spy = strikesCerca(763.89, 3);
+  comprobar("SPY a 763,89 da 761,762,763,764…",
+    spy.join() === "761,762,763,764,765,766,767", spy.join());
   comprobar("ordenados de menor a mayor", s.every((v, i) => i === 0 || v > s[i - 1]));
   comprobar("nunca hay strike negativo", strikesCerca(2, 8).every((v) => v > 0));
 }
@@ -146,6 +155,10 @@ console.log("Cadena completa");
 {
   const c = cadenaEn(100, 0, 30 * DIA, 0.3, 5);
   comprobar("una fila por strike", c.length === 11, String(c.length));
+  const anchas = cadenaEn(763, 0, 30 * DIA, 0.3, 4, 0.04, 5);
+  comprobar("la cadena acepta el salto forzado",
+    anchas[1].strike - anchas[0].strike === 5, String(anchas[1].strike - anchas[0].strike));
+  comprobar("y pide las filas que se le digan", anchas.length === 9, String(anchas.length));
   comprobar("cada fila trae call y put", c.every((f) => f.call && f.put));
   comprobar("los calls bajan de precio al subir el strike",
     c.every((f, i) => i === 0 || f.call.prima <= c[i - 1].call.prima));

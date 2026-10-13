@@ -1,10 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { TrendingDown, TrendingUp } from "lucide-react";
 import {
   MULTIPLICADOR,
+  PASOS_STRIKE,
   cadenaEn,
+  pasoDeStrike,
   vencimientosDesde,
 } from "@/lib/backtest/cadena";
 import type { Operacion } from "@/lib/backtest/tipos";
@@ -45,21 +47,45 @@ export function PanelOperar({
   const [cantidadManual, setCantidadManual] = useState<number | null>(null);
   const [contratos, setContratos] = useState(1);
   const [idxVenc, setIdxVenc] = useState(0);
+  /** null = el salto que propone la tabla para este precio. */
+  const [pasoManual, setPasoManual] = useState<number | null>(null);
+  const [cuantos, setCuantos] = useState(20);
+  const listaRef = useRef<HTMLDivElement>(null);
 
   const vencimientos = useMemo(
     () => vencimientosDesde(tiempo, 6),
     [tiempo],
   );
   const vencimiento = vencimientos[Math.min(idxVenc, vencimientos.length - 1)];
+  const pasoAuto = precio > 0 ? pasoDeStrike(precio) : 1;
+  const paso = pasoManual ?? pasoAuto;
   const cadena = useMemo(
-    () => (precio > 0 ? cadenaEn(precio, tiempo, vencimiento, vol, 6) : []),
-    [precio, tiempo, vencimiento, vol],
+    () =>
+      precio > 0
+        ? cadenaEn(precio, tiempo, vencimiento, vol, cuantos, 0.04, paso)
+        : [],
+    [precio, tiempo, vencimiento, vol, cuantos, paso],
   );
 
   const maximo = precio > 0 ? Math.max(1, Math.floor(efectivo / precio)) : 1;
   const cantidad = cantidadManual ?? maximo;
   const costoActivo = cantidad * precio;
   const alcanza = costoActivo <= efectivo + 0.01;
+
+  /**
+   * La cadena se abre centrada en el dinero.
+   *
+   * Con 41 filas, dejarla arriba del todo obliga a buscar a mano dónde
+   * está el precio cada vez que avanza el backtest.
+   */
+  useEffect(() => {
+    const caja = listaRef.current;
+    if (!caja || cadena.length === 0) return;
+    const i = cadena.findIndex((f) => f.strike >= precio);
+    if (i < 0) return;
+    const altoFila = caja.scrollHeight / cadena.length;
+    caja.scrollTop = Math.max(0, i * altoFila - caja.clientHeight / 2);
+  }, [cadena, precio]);
 
   const operarActivo = (lado: "compra" | "venta") =>
     onOperar({
@@ -218,13 +244,64 @@ export function PanelOperar({
             </label>
           </div>
 
+          <div className="flex items-center gap-2 text-[10px]">
+            <span className="uppercase tracking-wider text-tv-text-muted">
+              Salto
+            </span>
+            <div className="flex gap-0.5 rounded bg-tv-bg p-0.5">
+              <button
+                type="button"
+                onClick={() => setPasoManual(null)}
+                title={`El que propone la app para este precio: ${pasoAuto}`}
+                className={cn(
+                  "rounded px-1.5 py-0.5 transition-colors",
+                  pasoManual === null
+                    ? "bg-tv-blue text-white"
+                    : "text-tv-text-muted hover:text-tv-text",
+                )}
+              >
+                auto
+              </button>
+              {PASOS_STRIKE.map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => setPasoManual(p)}
+                  className={cn(
+                    "rounded px-1.5 py-0.5 tabular-nums transition-colors",
+                    pasoManual === p
+                      ? "bg-tv-blue text-white"
+                      : "text-tv-text-muted hover:text-tv-text",
+                  )}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
+            <span className="ml-auto uppercase tracking-wider text-tv-text-muted">
+              Filas
+            </span>
+            <select
+              value={cuantos}
+              onChange={(e) => setCuantos(Number(e.target.value))}
+              aria-label="Cuántos strikes a cada lado"
+              className="rounded border border-tv-border bg-tv-bg px-1 py-0.5 text-[10px] text-tv-text"
+            >
+              {[10, 20, 40].map((n) => (
+                <option key={n} value={n}>
+                  ±{n}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <div className="overflow-hidden rounded border border-tv-border">
             <div className="grid grid-cols-[1fr_auto_1fr] bg-tv-bg px-2 py-1 text-[9px] uppercase tracking-wider text-tv-text-dim">
               <span>Call</span>
               <span className="px-2 text-center">Strike</span>
               <span className="text-right">Put</span>
             </div>
-            <div className="max-h-56 overflow-y-auto">
+            <div ref={listaRef} className="max-h-72 overflow-y-auto">
               {cadena.map((f) => {
                 const dentroCall = f.strike < precio;
                 const dentroPut = f.strike > precio;
@@ -251,7 +328,7 @@ export function PanelOperar({
                     <span
                       className={cn(
                         "px-2 py-1.5 text-center font-mono tabular-nums",
-                        Math.abs(f.strike - precio) < (cadena[1]?.strike ?? 1) - (cadena[0]?.strike ?? 0)
+                        Math.abs(f.strike - precio) < paso
                           ? "bg-tv-panel-hover font-semibold text-tv-text"
                           : "text-tv-text-muted",
                       )}
@@ -279,7 +356,10 @@ export function PanelOperar({
             </div>
           </div>
           <p className="text-[10px] leading-relaxed text-tv-text-dim">
-            Precios <strong className="text-tv-yellow">modelados</strong> con
+            Los strikes reales cambian según el papel y el vencimiento, y no
+            se pueden consultar para una fecha pasada: el salto es una
+            propuesta y se cambia arriba. Precios{" "}
+            <strong className="text-tv-yellow">modelados</strong> con
             Black-Scholes sobre el precio real del día y una volatilidad del{" "}
             {(vol * 100).toFixed(0)} % sacada de la propia serie. No son
             cotizaciones: no incluyen el diferencial de compra-venta ni el

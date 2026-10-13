@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import {
   CandlestickSeries,
   LineSeries,
@@ -10,6 +10,7 @@ import {
   type ISeriesApi,
   type ISeriesMarkersPluginApi,
   type SeriesMarker,
+  type Logical,
   type Time,
   type UTCTimestamp,
   type DeepPartial,
@@ -23,6 +24,7 @@ import { useChartStore } from "@/lib/store/chart-store";
 import { CONFIG_BT, indicadorPorClave } from "@/lib/backtest/indicadores";
 import type { MediaMovil } from "@/lib/chart/medias";
 import type { SerieSpec } from "@/lib/chart/indicadores-nuevos";
+import { indiceDeTiempo } from "@/lib/dibujos/coordenadas";
 import type { Operacion } from "@/lib/backtest/tipos";
 import type { Candle } from "@/lib/binance/types";
 
@@ -38,6 +40,8 @@ interface Props {
   indicadores: string[];
   /** Medias móviles configuradas: cuántas, de qué tipo y de qué color. */
   medias: MediaMovil[];
+  /** Vencimientos de las opciones abiertas, para marcarlos en el futuro. */
+  vencimientos: Array<{ time: number; etiqueta: string }>;
 }
 
 /** Lo que hay montado de un indicador, para poder quitarlo después. */
@@ -127,6 +131,7 @@ export function GraficoBacktest({
   curva,
   indicadores,
   medias,
+  vencimientos,
 }: Props) {
   const cajaRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -148,6 +153,61 @@ export function GraficoBacktest({
   const rangoCurva = useRef<{ min: number; max: number } | null>(null);
   /** Indicadores montados ahora mismo, por clave. */
   const montados = useRef<Map<string, Montado>>(new Map());
+  /** La capa con las líneas de vencimiento. */
+  const capaRef = useRef<HTMLDivElement>(null);
+  /** Las velas visibles, para poder ubicar fechas desde una suscripción. */
+  const visiblesRef = useRef<Candle[]>([]);
+
+  /**
+   * Pone cada línea de vencimiento en su sitio.
+   *
+   * `logicalToCoordinate` sí sabe ubicar una fecha que todavía no tiene
+   * vela: trabaja con la posición continua en la escala. `timeToCoordinate`
+   * devolvería null para el futuro y no se dibujaría nada.
+   */
+  const colocarVenc = useCallback(() => {
+    const chart = chartRef.current;
+    const capa = capaRef.current;
+    if (!chart || !capa) return;
+    const ts = chart.timeScale();
+    const velas = visiblesRef.current;
+    const n = velas.length;
+
+    // `logicalToCoordinate` NO extrapola: para un índice más allá de la
+    // última vela devuelve 0, no la posición que correspondería. Medido.
+    // Como el eje es lineal en píxeles, se saca el ancho de una vela con
+    // dos puntos que sí sabe convertir y se extiende desde el último.
+    const xIni = n > 1 ? ts.logicalToCoordinate(0 as Logical) : null;
+    const xFin = n > 1 ? ts.logicalToCoordinate((n - 1) as Logical) : null;
+    const ancho = capa.clientWidth;
+    const paso =
+      xIni === null || xFin === null ? 0 : (Number(xFin) - Number(xIni)) / (n - 1);
+
+    for (const nodo of Array.from(capa.children) as HTMLElement[]) {
+      const t = Number(nodo.dataset.venc);
+      if (!Number.isFinite(t) || paso <= 0 || xFin === null) {
+        nodo.style.display = "none";
+        continue;
+      }
+      const x = Number(xFin) + (indiceDeTiempo(velas, t) - (n - 1)) * paso;
+      // Fuera de la vista no se dibuja: si no, el nodo se sale del ancho
+      // y empuja la página.
+      if (x < 0 || x > ancho) {
+        nodo.style.display = "none";
+        continue;
+      }
+      nodo.style.display = "";
+      nodo.style.left = `${x}px`;
+      // La línea suele quedar pegada al borde derecho —es el futuro—, y
+      // ahí la etiqueta se cortaría: se pasa al otro lado de la línea.
+      const etiqueta = nodo.firstElementChild as HTMLElement | null;
+      if (etiqueta) {
+        const pegada = x > ancho - 110;
+        etiqueta.style.left = pegada ? "auto" : "4px";
+        etiqueta.style.right = pegada ? "4px" : "auto";
+      }
+    }
+  }, []);
 
   useEffect(() => {
     if (!cajaRef.current) return;
@@ -164,7 +224,13 @@ export function GraficoBacktest({
       opcionesDeVelas(aparienciaRef.current) as CandlestickSeriesPartialOptions,
     );
     chartRef.current = chart;
+    // Las líneas de vencimiento se dibujan en HTML encima del lienzo, así
+    // que hay que recolocarlas cada vez que el gráfico se mueve o se
+    // acerca. No es setState dentro del efecto: es una suscripción.
+    const alMover = () => colocarVenc();
+    chart.timeScale().subscribeVisibleLogicalRangeChange(alMover);
     return () => {
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(alMover);
       chart.remove();
       chartRef.current = null;
       velasRef.current = null;
@@ -173,7 +239,7 @@ export function GraficoBacktest({
       montados.current.clear();
       encuadrado.current = false;
     };
-  }, []);
+  }, [colocarVenc]);
 
   // Apariencia: el backtest usa el mismo tema que el gráfico principal.
   useEffect(() => {
@@ -217,9 +283,21 @@ export function GraficoBacktest({
       }
     }
     encuadrado.current = true;
-    const borde = visibles.length + 4;
+    // Si hay una opción abierta, la vista llega hasta su vencimiento aunque
+    // todavía no existan esas velas: el hueco a la derecha es justamente
+    // el tiempo que le queda al contrato.
+    const masLejos = vencimientos.reduce(
+      (max, v) => Math.max(max, indiceDeTiempo(visibles, v.time)),
+      -Infinity,
+    );
+    const borde = Math.max(
+      visibles.length + 4,
+      Number.isFinite(masLejos) ? masLejos + 3 : 0,
+    );
     ts.setVisibleLogicalRange({ from: borde - ventanaRef.current, to: borde });
-  }, [visibles]);
+    visiblesRef.current = visibles;
+    colocarVenc();
+  }, [visibles, vencimientos, colocarVenc]);
 
   // Marcas de las operaciones.
   useEffect(() => {
@@ -395,5 +473,28 @@ export function GraficoBacktest({
     }
   }, [indicadores, visibles, medias]);
 
-  return <div ref={cajaRef} className="h-full w-full" />;
+  return (
+    <div className="relative h-full w-full">
+      <div ref={cajaRef} className="h-full w-full" />
+      {/* Las líneas de vencimiento se colocan a mano desde `colocarVenc`,
+          no con un `style` calculado al renderizar: leer el gráfico en
+          pleno render no está permitido, y moverlas por DOM evita además
+          volver a renderizar en cada arrastre. */}
+      <div ref={capaRef} className="pointer-events-none absolute inset-0 z-10 overflow-hidden">
+        {vencimientos.map((v) => (
+          <div
+            key={v.time}
+            aria-hidden
+            data-venc={v.time}
+            className="absolute top-0 h-full border-l border-dashed border-tv-yellow/70"
+            style={{ left: -9999 }}
+          >
+            <span className="absolute left-1 top-1 whitespace-nowrap rounded bg-tv-panel/90 px-1 py-0.5 font-mono text-[10px] text-tv-yellow ring-1 ring-tv-border">
+              {v.etiqueta}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }

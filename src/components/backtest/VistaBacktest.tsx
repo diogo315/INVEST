@@ -144,6 +144,27 @@ export function VistaBacktest() {
     [precio, tiempo, vol],
   );
 
+  /**
+   * Vencimientos de las opciones que siguen abiertas, sin repetir.
+   *
+   * Solo las abiertas: una vencida ya no es información, es historia, y
+   * dejar su línea en el gráfico sería ruido.
+   */
+  const vencimientos = useMemo(() => {
+    if (!bt) return [];
+    const vistos = new Map<number, string>();
+    for (const o of bt.operaciones) {
+      if (o.precioSalida !== undefined || o.instrumento === "activo") continue;
+      if (o.vencimiento === undefined) continue;
+      const dias = Math.max(0, Math.round((o.vencimiento - tiempo) / 86400));
+      vistos.set(
+        o.vencimiento,
+        `vence ${new Date(o.vencimiento * 1000).toISOString().slice(5, 10)} · ${dias} d`,
+      );
+    }
+    return [...vistos].map(([time, etiqueta]) => ({ time, etiqueta }));
+  }, [bt, tiempo]);
+
   const resumen = useMemo(() => {
     if (!bt) return null;
     const curva = curvaDeCapital(bt, visibles, () => vol);
@@ -286,6 +307,7 @@ export function VistaBacktest() {
             curva={resumen?.curva ?? []}
             indicadores={bt.indicadores ?? []}
             medias={bt.medias ?? []}
+            vencimientos={vencimientos}
           />
         </div>
 

@@ -81,23 +81,36 @@ export function indiceHasta(velas: VelaMin[], hasta: number): number {
   return lo;
 }
 
+/** Los saltos entre strikes que existen de verdad en el mercado. */
+export const PASOS_STRIKE = [0.5, 1, 2.5, 5, 10, 25] as const;
+
 /**
- * Separación entre strikes, como la usa el mercado de EE. UU.
+ * Separación entre strikes.
  *
- * No es una regla única —cada papel tiene la suya y los más líquidos
- * cotizan más fino— pero esta escala es la habitual y evita inventar
- * strikes de 187,43.
+ * NO hay una regla única: cada papel tiene la suya y además cambia por
+ * vencimiento. Lo que sí es cierto hoy es que los nombres que de verdad
+ * se operan —SPY, QQQ, las megacap— cotizan de 1 en 1 sin importar que
+ * valgan 70 o 760, y los baratos de 0,50. La tabla vieja (10 en 10 por
+ * encima de 250) era la convención antigua y daba cadenas falsas: a SPY
+ * en 763 le ponía 760 y 770 cuando existen 761, 762, 763…
+ *
+ * Como no se puede consultar la lista real de strikes de una fecha
+ * pasada, esto es un valor por defecto razonable y el panel deja
+ * cambiarlo a mano.
  */
 export function pasoDeStrike(precio: number): number {
-  if (precio < 25) return 1;
-  if (precio < 100) return 2.5;
-  if (precio < 250) return 5;
-  return 10;
+  if (precio < 25) return 0.5;
+  if (precio < 1000) return 1;
+  return 5;
 }
 
-/** Strikes alrededor del precio, `cuantos` a cada lado. */
-export function strikesCerca(precio: number, cuantos = 8): number[] {
-  const paso = pasoDeStrike(precio);
+/**
+ * Strikes alrededor del precio, `cuantos` a cada lado.
+ *
+ * Con `paso` se fuerza una separación concreta; sin él se usa la de la
+ * tabla.
+ */
+export function strikesCerca(precio: number, cuantos = 8, paso = pasoDeStrike(precio)): number[] {
   const centro = Math.round(precio / paso) * paso;
   const out: number[] = [];
   for (let i = -cuantos; i <= cuantos; i++) {
@@ -207,8 +220,9 @@ export function cadenaEn(
   vol: number,
   cuantosStrikes = 8,
   tasa = 0.04,
+  paso = pasoDeStrike(subyacente),
 ): FilaCadena[] {
-  return strikesCerca(subyacente, cuantosStrikes).map((k) => ({
+  return strikesCerca(subyacente, cuantosStrikes, paso).map((k) => ({
     strike: k,
     call: precioContrato(subyacente, k, "call", tiempo, vencimiento, vol, tasa),
     put: precioContrato(subyacente, k, "put", tiempo, vencimiento, vol, tasa),
