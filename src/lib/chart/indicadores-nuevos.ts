@@ -36,16 +36,34 @@ export interface PuntoSerie {
   color?: string;
 }
 
-/** Cómo se dibuja una serie: línea, puntos sueltos o barras. */
-export type FormaSerie = "linea" | "puntos" | "histograma";
+/** Cómo se dibuja una serie: línea, puntos sueltos, barras o área. */
+export type FormaSerie = "linea" | "puntos" | "histograma" | "area";
+
+/**
+ * El área de una onda que cruza el cero (la del Cipher B).
+ *
+ * Son los colores tal cual, con alfa incluida, en vez de un color base del
+ * que haya que deducir el degradado: así el backtest pinta exactamente lo
+ * mismo que el gráfico principal sin que haya dos fórmulas que mantener.
+ * Cada par va del relleno pegado a la línea al que se desvanece hacia el
+ * cero.
+ */
+export interface AreaSpec {
+  arriba: [string, string];
+  abajo: [string, string];
+  lineaArriba: string;
+  lineaAbajo: string;
+}
 
 export interface SerieSpec {
   clave: string;
   forma: FormaSerie;
   color: string;
   grosor?: 1 | 2;
-  /** 0 sólido, 2 punteado (igual que lightweight-charts). */
-  estilo?: 0 | 2;
+  /** 0 sólido, 2 punteado, 3 rayado (igual que lightweight-charts). */
+  estilo?: 0 | 2 | 3;
+  /** Obligatorio con `forma: "area"`; se ignora en las demás. */
+  area?: AreaSpec;
 }
 
 export interface RellenoSpec {
@@ -62,6 +80,22 @@ export interface IndicadorNuevo {
   conPanel: boolean;
   series: SerieSpec[];
   relleno?: RellenoSpec;
+  /**
+   * Rango mínimo que el panel tiene que mostrar siempre.
+   *
+   * Sin esto el panel se encoge a lo que haya: las filas de señal del
+   * Cipher B viven a ±106 y quedaban recortadas contra el borde cuando no
+   * había ninguna señal a la vista.
+   */
+  rango?: { min: number; max: number };
+  /**
+   * Cuánto alto pide su panel, relativo a los demás (1 por defecto).
+   *
+   * El Cipher B pide 2, igual que en el gráfico principal: abarca de −114 a
+   * +114 y lleva dos filas de puntos, así que con el alto de un RSI queda
+   * ilegible.
+   */
+  alto?: number;
   calcular: (velas: Candle[], c: IndicatorConfig) => Record<string, PuntoSerie[]>;
   /** Texto del valor actual en la chapa. */
   valor: (

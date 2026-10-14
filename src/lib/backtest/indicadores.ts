@@ -18,6 +18,7 @@
 
 import {
   INDICADORES_NUEVOS,
+  type AreaSpec,
   type IndicadorNuevo,
   type PuntoSerie,
   type SerieSpec,
@@ -75,6 +76,48 @@ const VERDE = "#26a69a";
 const MORADO = "#ab47bc";
 const NARANJA = "#ff6d00";
 const GRIS = "#787b86";
+
+/**
+ * Colores y filas del Cipher B, copiados del gráfico principal.
+ *
+ * Son los del Pine original de VuManChu, no una paleta nuestra: si acá se
+ * eligieran otros, el mismo indicador se vería de dos formas distintas
+ * según la pestaña. Las filas de señal (±106) están medidas sobre la
+ * captura de TradingView.
+ */
+const CIPHER_FILA_VENTA = 106;
+const CIPHER_FILA_COMPRA = -106;
+const C_WT1 = "#4994ec";
+const C_WT2 = "#1f1559";
+const C_RAPIDA = "#ffffff";
+const C_MFI_ARRIBA = "#3ee145";
+const C_MFI_ABAJO = "#ff3d2e";
+const C_RSI = "#c33ee1";
+const C_TEXTO = "#d1d4dc";
+const AREA_WT1: AreaSpec = {
+  arriba: [`${C_WT1}B3`, `${C_WT1}30`],
+  abajo: [`${C_WT1}30`, `${C_WT1}B3`],
+  lineaArriba: C_WT1,
+  lineaAbajo: C_WT1,
+};
+const AREA_WT2: AreaSpec = {
+  arriba: [`${C_WT2}BF`, `${C_WT2}50`],
+  abajo: [`${C_WT2}50`, `${C_WT2}BF`],
+  lineaArriba: C_WT2,
+  lineaAbajo: C_WT2,
+};
+const AREA_RAPIDA: AreaSpec = {
+  arriba: [`${C_RAPIDA}80`, `${C_RAPIDA}20`],
+  abajo: [`${C_RAPIDA}20`, `${C_RAPIDA}80`],
+  lineaArriba: C_RAPIDA,
+  lineaAbajo: C_RAPIDA,
+};
+const AREA_MFI: AreaSpec = {
+  arriba: [`${C_MFI_ARRIBA}FF`, `${C_MFI_ARRIBA}80`],
+  abajo: [`${C_MFI_ABAJO}80`, `${C_MFI_ABAJO}FF`],
+  lineaArriba: `${C_MFI_ARRIBA}FF`,
+  lineaAbajo: `${C_MFI_ABAJO}FF`,
+};
 
 /** Línea horizontal de punta a punta: el 30 y el 70 del RSI, el 0 del MACD. */
 function nivel(velas: Candle[], v: number): PuntoSerie[] {
@@ -232,44 +275,111 @@ const CLASICOS: IndicadorBT[] = [
     etiqueta: "VuManChu Cipher B",
     nombre: () => "Cipher B",
     conPanel: true,
+    // Las filas de señal viven a ±106, fuera del rango de la onda, y el
+    // panel se encogía hasta recortarlas cuando no había ninguna a la
+    // vista. Mismo margen que usa el gráfico principal.
+    rango: { min: CIPHER_FILA_COMPRA - 8, max: CIPHER_FILA_VENTA + 8 },
+    // Doble alto, como en el gráfico principal: con el de un RSI la onda
+    // y las dos filas de puntos no entran.
+    alto: 2,
+    // El orden es el orden de dibujo: lo último queda encima. Es el mismo
+    // que el del gráfico principal, para que se vea igual.
     series: [
-      // El área de dinero y la ola, como barras; encima las dos líneas.
-      { clave: "mfi", forma: "histograma", color: VERDE },
-      // La ola es wt1 pintada como área; wt2 es su media, la línea que
-      // cruza. Dibujar wt1 también como línea era la misma serie dos veces.
-      { clave: "ola", forma: "histograma", color: `${AZUL}55` },
-      { clave: "wt2", forma: "linea", color: MORADO, grosor: 2 },
-      { clave: "cero", forma: "linea", color: GRIS, estilo: 2 },
-      { clave: "compra", forma: "puntos", color: VERDE, grosor: 2 },
-      { clave: "venta", forma: "puntos", color: ROJO, grosor: 2 },
+      { clave: "ola", forma: "area", color: C_WT1, area: AREA_WT1 },
+      { clave: "wt2", forma: "area", color: C_WT2, area: AREA_WT2 },
+      { clave: "rapida", forma: "area", color: C_RAPIDA, area: AREA_RAPIDA },
+      { clave: "mfi", forma: "area", color: C_MFI_ARRIBA, area: AREA_MFI, grosor: 2 },
+      { clave: "rsi", forma: "linea", color: C_RSI, grosor: 2 },
+      // Niveles: el primero punteado, el segundo sólido, el tercero rayado.
+      { clave: "ob", forma: "linea", color: GRIS, estilo: 2 },
+      { clave: "ob2", forma: "linea", color: C_TEXTO, estilo: 0 },
+      { clave: "ob3", forma: "linea", color: `${C_TEXTO}60`, estilo: 3 },
+      { clave: "os", forma: "linea", color: GRIS, estilo: 2 },
+      { clave: "os2", forma: "linea", color: C_TEXTO, estilo: 0 },
+      { clave: "os3", forma: "linea", color: `${C_TEXTO}60`, estilo: 3 },
+      { clave: "cero", forma: "linea", color: `${C_TEXTO}60` },
+      // Los puntos, de más débil a más fuerte para que el fuerte tape.
+      { clave: "cruceArriba", forma: "puntos", color: "#00e676" },
+      { clave: "cruceAbajo", forma: "puntos", color: "#ff5252" },
+      { clave: "compra", forma: "puntos", color: "#3fff00", grosor: 2 },
+      { clave: "venta", forma: "puntos", color: "#ff0000", grosor: 2 },
+      { clave: "oro", forma: "puntos", color: "#e2a400", grosor: 2 },
+      { clave: "filaCompra", forma: "puntos", color: "#3fff00", grosor: 2 },
+      { clave: "filaVenta", forma: "puntos", color: "#ff0000", grosor: 2 },
     ],
     calcular: (velas, c) => {
       const w = wavetrend(velas, c.wtChannelLen, c.wtAverageLen, c.wtMALen);
       const m = mfiArea(velas, c.mfiPeriod, c.mfiMultiplier, c.cipherMfiYPos);
-      // Los puntos de la señal: el cruce de la ola con su media. Verde
-      // cuando cruza hacia arriba estando abajo, rojo al revés; es la
-      // señal que de verdad se mira del Cipher B.
+      const r = rsi(velas, c.cipherRsiLen);
+      const rsiEn = new Map(r.map((p) => [p.time, p.value]));
+
+      // Los puntos de señal son el cruce de la ola con su media. En el
+      // gráfico se ven dos cosas por cada señal: el círculo sobre la onda
+      // y el puntito en la fila fija de arriba o de abajo.
       const compra: PuntoSerie[] = [];
       const venta: PuntoSerie[] = [];
+      const oro: PuntoSerie[] = [];
+      const cruceArriba: PuntoSerie[] = [];
+      const cruceAbajo: PuntoSerie[] = [];
+      const filaCompra: PuntoSerie[] = [];
+      const filaVenta: PuntoSerie[] = [];
       for (let i = 1; i < w.length; i++) {
         const a = w[i - 1];
         const b = w[i];
-        const cruzaArriba = a.wt1 <= a.wt2 && b.wt1 > b.wt2;
-        const cruzaAbajo = a.wt1 >= a.wt2 && b.wt1 < b.wt2;
-        if (cruzaArriba && b.wt2 < 0) compra.push({ time: b.time, value: b.wt2 });
-        if (cruzaAbajo && b.wt2 > 0) venta.push({ time: b.time, value: b.wt2 });
+        const haciaArriba = a.wt1 <= a.wt2 && b.wt1 > b.wt2;
+        const haciaAbajo = a.wt1 >= a.wt2 && b.wt1 < b.wt2;
+        if (!haciaArriba && !haciaAbajo) continue;
+        const sobrevendido = b.wt2 <= c.wtOsLevel;
+        const sobrecomprado = b.wt2 >= c.wtObLevel;
+        const rsiAca = rsiEn.get(b.time);
+        // Punto de oro: cruce al alza desde el extremo de sobreventa con el
+        // RSI por debajo de 30. Es la señal fuerte del Cipher B.
+        if (
+          haciaArriba &&
+          rsiAca !== undefined &&
+          rsiAca < 30 &&
+          a.wt2 <= c.wtOsLevel3 &&
+          b.wt2 - a.wt2 >= 0 &&
+          b.wt2 > c.wtOsLevel3 - 5
+        ) {
+          oro.push({ time: b.time, value: b.wt2 });
+          filaCompra.push({ time: b.time, value: CIPHER_FILA_COMPRA });
+          continue;
+        }
+        if (haciaArriba && sobrevendido) {
+          compra.push({ time: b.time, value: b.wt2 });
+          filaCompra.push({ time: b.time, value: CIPHER_FILA_COMPRA });
+        } else if (haciaAbajo && sobrecomprado) {
+          venta.push({ time: b.time, value: b.wt2 });
+          filaVenta.push({ time: b.time, value: CIPHER_FILA_VENTA });
+        } else if (haciaArriba) {
+          cruceArriba.push({ time: b.time, value: b.wt2 });
+        } else {
+          cruceAbajo.push({ time: b.time, value: b.wt2 });
+        }
       }
+
       return {
-        mfi: m.map((p) => ({
-          time: p.time,
-          value: p.value,
-          color: p.value >= 0 ? `${VERDE}80` : `${ROJO}80`,
-        })),
         ola: w.map((p) => ({ time: p.time, value: p.wt1 })),
         wt2: w.map((p) => ({ time: p.time, value: p.wt2 })),
+        // La onda rápida es wt1 − wt2, que `wavetrend` ya devuelve.
+        rapida: w.map((p) => ({ time: p.time, value: p.vwap })),
+        mfi: m.map((p) => ({ time: p.time, value: p.value })),
+        rsi: r.map((p) => ({ time: p.time, value: p.value })),
+        ob: nivel(velas, c.wtObLevel),
+        ob2: nivel(velas, c.wtObLevel2),
+        ob3: nivel(velas, c.wtObLevel3),
+        os: nivel(velas, c.wtOsLevel),
+        os2: nivel(velas, c.wtOsLevel2),
+        os3: nivel(velas, c.wtOsLevel3),
         cero: nivel(velas, 0),
+        cruceArriba,
+        cruceAbajo,
         compra,
         venta,
+        oro,
+        filaCompra,
+        filaVenta,
       };
     },
     valor: (u) =>

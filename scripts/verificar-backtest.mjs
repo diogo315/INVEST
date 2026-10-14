@@ -357,6 +357,113 @@ console.log("Indicadores del backtest");
     comprobar(`${ind.clave} NO mira el futuro`, iguales, detalle);
   }
 
+  // ── el Cipher B dibuja lo mismo que en el gráfico principal ──────
+  //
+  // Diego lo pidió explícito: "que se vea el cipher b como en la gráfica".
+  // Acá no se puede mirar el dibujo, pero sí comprobar que están todas las
+  // piezas visuales que el gráfico principal pinta, y que las señales caen
+  // donde tienen que caer.
+  console.log("Cipher B igual al del gráfico");
+  {
+    const def = indicadorPorClave("cipher");
+    const specs = def.series;
+    const porClave = new Map(specs.map((s) => [s.clave, s]));
+    const datos = def.calcular(velas, CONFIG_BT, MEDIAS);
+
+    // Las cuatro ondas van como área que cruza el cero, no como barras.
+    for (const k of ["ola", "wt2", "rapida", "mfi"]) {
+      comprobar(`${k} se dibuja como área`, porClave.get(k)?.forma === "area",
+        String(porClave.get(k)?.forma));
+      comprobar(`${k} trae sus cuatro colores de relleno`,
+        !!porClave.get(k)?.area?.arriba?.length && !!porClave.get(k)?.area?.abajo?.length);
+    }
+    comprobar("la onda rápida es wt1 − wt2",
+      datos.rapida.every((p, i) => Math.abs(p.value - (datos.ola[i].value - datos.wt2[i].value)) < 1e-9));
+    comprobar("el MFI verde arriba y rojo abajo",
+      porClave.get("mfi").area.lineaArriba.startsWith("#3ee145") &&
+      porClave.get("mfi").area.lineaAbajo.startsWith("#ff3d2e"));
+    comprobar("el RSI va como línea", porClave.get("rsi")?.forma === "linea");
+    comprobar("el RSI vive entre 0 y 100",
+      datos.rsi.every((p) => p.value >= 0 && p.value <= 100));
+
+    // Los seis niveles de sobrecompra/sobreventa más el cero.
+    const niveles = { ob: 53, ob2: 60, ob3: 100, os: -53, os2: -60, os3: -75, cero: 0 };
+    for (const [k, v] of Object.entries(niveles)) {
+      comprobar(`el nivel ${k} está en ${v}`,
+        datos[k].length === 2 && datos[k].every((p) => p.value === v),
+        JSON.stringify(datos[k].map((p) => p.value)));
+    }
+
+    // Las filas de señal: siempre a ±106, nunca sobre la onda.
+    comprobar("la fila de compra siempre a −106",
+      datos.filaCompra.every((p) => p.value === -106), String(datos.filaCompra.length));
+    comprobar("la fila de venta siempre a +106",
+      datos.filaVenta.every((p) => p.value === 106), String(datos.filaVenta.length));
+    comprobar("el panel reserva el alto de las filas",
+      def.rango.min <= -106 && def.rango.max >= 106,
+      JSON.stringify(def.rango));
+
+    // Una señal de compra es un cruce al alza en sobreventa: su punto
+    // sobre la onda tiene que estar por debajo del nivel de sobreventa.
+    comprobar("las compras caen en sobreventa",
+      datos.compra.every((p) => p.value <= CONFIG_BT.wtOsLevel),
+      String(datos.compra.length));
+    comprobar("las ventas caen en sobrecompra",
+      datos.venta.every((p) => p.value >= CONFIG_BT.wtObLevel),
+      String(datos.venta.length));
+    comprobar("hay señales de los dos lados",
+      datos.compra.length > 0 && datos.venta.length > 0,
+      `${datos.compra.length} compras / ${datos.venta.length} ventas`);
+    // Cada señal fuerte pone su punto en la fila; los cruces sueltos no.
+    comprobar("una fila por cada señal",
+      datos.filaCompra.length === datos.compra.length + datos.oro.length &&
+      datos.filaVenta.length === datos.venta.length,
+      `${datos.filaCompra.length} vs ${datos.compra.length}+${datos.oro.length}`);
+    comprobar("los cruces sueltos no ensucian las filas",
+      datos.cruceArriba.every((p) => Math.abs(p.value) < 106) &&
+      datos.cruceAbajo.every((p) => Math.abs(p.value) < 106));
+    // Ninguna señal puede estar en dos listas a la vez.
+    const tiempos = [...datos.compra, ...datos.venta, ...datos.oro,
+                     ...datos.cruceArriba, ...datos.cruceAbajo].map((p) => p.time);
+    comprobar("ninguna señal se repite en dos listas",
+      new Set(tiempos).size === tiempos.length,
+      `${new Set(tiempos).size} de ${tiempos.length}`);
+
+    // La serie limpia de arriba es tan prolija que TODO cruce es extremo:
+    // la rama de los cruces sueltos nunca se ejecutaba. Con ruido sí, que
+    // es lo que se ve en el gráfico de verdad (los puntitos chicos).
+    let semilla = 7;
+    const ruido = () => ((semilla = (semilla * 9301 + 49297) % 233280) / 233280 - 0.5);
+    const conRuido = Array.from({ length: 300 }, (_, i) => {
+      const c = 100 + Math.sin(i / 7) * 8 + i * 0.05 + ruido() * 6;
+      return { time: i * DIA, open: c, high: c * 1.01, low: c * 0.99, close: c, volume: 1000 + i };
+    });
+    const dr = def.calcular(conRuido, CONFIG_BT, MEDIAS);
+    comprobar("con ruido también aparecen los cruces sueltos",
+      dr.cruceArriba.length > 0 && dr.cruceAbajo.length > 0,
+      `${dr.cruceArriba.length} / ${dr.cruceAbajo.length}`);
+    comprobar("un cruce suelto nunca es una señal extrema",
+      dr.cruceArriba.every((p) => p.value > CONFIG_BT.wtOsLevel) &&
+      dr.cruceAbajo.every((p) => p.value < CONFIG_BT.wtObLevel));
+
+    // El punto de oro: cruce al alza desde el fondo con el RSI hundido.
+    // Hace falta un derrumbe de verdad para que salga.
+    const derrumbe = Array.from({ length: 220 }, (_, i) => {
+      const c = i < 120 ? 100 + Math.sin(i / 9) * 2
+        : i < 160 ? 100 - (i - 120) * 1.6
+        : 36 + (i - 160) * 1.4;
+      return { time: i * DIA, open: c, high: c * 1.005, low: c * 0.995, close: c, volume: 1000 };
+    });
+    const dd = def.calcular(derrumbe, CONFIG_BT, MEDIAS);
+    comprobar("tras un derrumbe sale el punto de oro", dd.oro.length > 0, String(dd.oro.length));
+    comprobar("el punto de oro sale del fondo",
+      dd.oro.every((p) => p.value <= CONFIG_BT.wtOsLevel),
+      JSON.stringify(dd.oro.map((p) => p.value)));
+    comprobar("el oro también pone su fila",
+      dd.filaCompra.length === dd.compra.length + dd.oro.length,
+      `${dd.filaCompra.length} vs ${dd.compra.length}+${dd.oro.length}`);
+  }
+
     // ── medias configurables ────────────────────────────────────────
   console.log("Medias móviles configurables");
   {

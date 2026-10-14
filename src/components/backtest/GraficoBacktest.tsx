@@ -17,7 +17,7 @@ import {
   type ChartOptions,
   type CandlestickSeriesPartialOptions,
 } from "lightweight-charts";
-import { HistogramSeries } from "lightweight-charts";
+import { BaselineSeries, HistogramSeries } from "lightweight-charts";
 import { opcionesDeChart, opcionesDeVelas } from "@/lib/chart/apariencia";
 import { BandFill } from "@/lib/chart/band-fill";
 import { useChartStore } from "@/lib/store/chart-store";
@@ -46,7 +46,7 @@ interface Props {
 
 /** Lo que hay montado de un indicador, para poder quitarlo después. */
 interface Montado {
-  series: Map<string, ISeriesApi<"Line" | "Histogram">>;
+  series: Map<string, ISeriesApi<"Line" | "Histogram" | "Baseline">>;
   relleno?: BandFill;
   pane: number | null;
   /**
@@ -62,7 +62,12 @@ interface Montado {
 /** Resumen de un juego de series, para detectar si cambió. */
 function firmaDe(specs: SerieSpec[]): string {
   return specs
-    .map((s) => `${s.clave}:${s.forma}:${s.color}:${s.grosor ?? 1}:${s.estilo ?? 0}`)
+    .map(
+      (s) =>
+        `${s.clave}:${s.forma}:${s.color}:${s.grosor ?? 1}:${s.estilo ?? 0}:${
+          s.area ? `${s.area.lineaArriba}/${s.area.lineaAbajo}` : "-"
+        }`,
+    )
     .join("|");
 }
 
@@ -400,7 +405,11 @@ export function GraficoBacktest({
           pane = chart.panes().length;
           chart.addPane();
         }
-        const series = new Map<string, ISeriesApi<"Line" | "Histogram">>();
+        const series = new Map<string, ISeriesApi<"Line" | "Histogram" | "Baseline">>();
+        // El panel no puede encogerse más que el rango que pida el
+        // indicador. Se cuelga de la primera serie: alcanza con una, el
+        // autoescalado del panel es la unión de todas.
+        let faltaRango = def.rango !== undefined;
         for (const spec of specs) {
           const comun = {
             color: spec.color,
@@ -409,22 +418,75 @@ export function GraficoBacktest({
             priceLineVisible: false,
             lastValueVisible: false,
           };
-          const s =
-            spec.forma === "histograma"
-              ? chart.addSeries(
-                  HistogramSeries,
-                  { color: spec.color, priceLineVisible: false, lastValueVisible: false },
-                  pane ?? 0,
-                )
-              : chart.addSeries(
-                  LineSeries,
-                  // Los "puntos" son una línea sin unir: se dibujan con
-                  // grosor y sin continuidad visible entre huecos.
-                  spec.forma === "puntos"
-                    ? { ...comun, lineWidth: 1 as const, pointMarkersVisible: true, lineVisible: false }
-                    : comun,
-                  pane ?? 0,
-                );
+          const rango =
+            faltaRango && def.rango
+              ? {
+                  autoscaleInfoProvider: (
+                    original: () => {
+                      priceRange: { minValue: number; maxValue: number } | null;
+                    } | null,
+                  ) => {
+                    const base = original()?.priceRange;
+                    return {
+                      priceRange: {
+                        minValue: Math.min(base?.minValue ?? 0, def.rango!.min),
+                        maxValue: Math.max(base?.maxValue ?? 0, def.rango!.max),
+                      },
+                    };
+                  },
+                }
+              : {};
+          let s: ISeriesApi<"Line" | "Histogram" | "Baseline">;
+          if (spec.forma === "histograma") {
+            s = chart.addSeries(
+              HistogramSeries,
+              {
+                color: spec.color,
+                priceLineVisible: false,
+                lastValueVisible: false,
+                ...rango,
+              },
+              pane ?? 0,
+            );
+          } else if (spec.forma === "area" && spec.area) {
+            // Onda que cruza el cero: relleno distinto arriba y abajo, que
+            // es como se dibuja el Cipher B en el gráfico principal.
+            s = chart.addSeries(
+              BaselineSeries,
+              {
+                baseValue: { type: "price" as const, price: 0 },
+                topFillColor1: spec.area.arriba[0],
+                topFillColor2: spec.area.arriba[1],
+                topLineColor: spec.area.lineaArriba,
+                bottomFillColor1: spec.area.abajo[0],
+                bottomFillColor2: spec.area.abajo[1],
+                bottomLineColor: spec.area.lineaAbajo,
+                lineWidth: (spec.grosor ?? 1) as 1 | 2,
+                priceLineVisible: false,
+                lastValueVisible: false,
+                ...rango,
+              },
+              pane ?? 0,
+            );
+          } else {
+            s = chart.addSeries(
+              LineSeries,
+              // Los "puntos" son una línea sin unir: se dibujan con
+              // grosor y sin continuidad visible entre huecos.
+              spec.forma === "puntos"
+                ? {
+                    ...comun,
+                    lineWidth: 1 as const,
+                    pointMarkersVisible: true,
+                    pointMarkersRadius: spec.grosor === 2 ? 4 : 2,
+                    lineVisible: false,
+                    ...rango,
+                  }
+                : { ...comun, ...rango },
+              pane ?? 0,
+            );
+          }
+          faltaRango = false;
           series.set(spec.clave, s);
         }
         m = { series, pane, firma };
@@ -438,8 +500,16 @@ export function GraficoBacktest({
           }
         }
         montados.current.set(clave, m);
-        // El precio manda; cada panel de indicador pesa lo mismo.
-        chart.panes().forEach((p, i) => p.setStretchFactor(i === 0 ? 4 : 1));
+        // El precio manda; cada indicador pide su alto (1 salvo que diga
+        // otra cosa) y el panel de capital se queda con el suyo.
+        const altoDe = new Map<number, number>();
+        for (const [c2, m2] of montados.current) {
+          if (m2.pane === null) continue;
+          altoDe.set(m2.pane, indicadorPorClave(c2)?.alto ?? 1);
+        }
+        chart
+          .panes()
+          .forEach((p, i) => p.setStretchFactor(i === 0 ? 4 : (altoDe.get(i) ?? 1)));
       }
 
       const datos = def.calcular(visibles, CONFIG_BT, medias);

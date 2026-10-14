@@ -2770,8 +2770,6 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
       agregarTramos(stochDivs, ["bearRegular"], "#e60000", 1);
       agregarTramos(stochDivs, ["bullRegular"], "#38ff42", 1);
     }
-    // DEBUG SOLO EN EL CONTENEDOR — no commitear
-    (window as unknown as Record<string, unknown>).__divs = tramos;
     cipherDivsRef.current?.setData(tramos);
 
     // Markers — crosses + buy/sell/gold circles, placed at wt2 in the cipher pane
