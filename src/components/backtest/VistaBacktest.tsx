@@ -32,6 +32,8 @@ import {
   useBacktestStore,
 } from "@/lib/store/backtest-store";
 import { velasDelPanel } from "@/lib/backtest/multi";
+import { senalesCipher, tiemposDe } from "@/lib/backtest/senales";
+import { CONFIG_BT } from "@/lib/backtest/indicadores";
 import { TimezoneSelector } from "@/components/chart/TimezoneSelector";
 import { ZONA_BACKTEST, fechaHoraEn, zonaDelEje } from "@/lib/chart/timezone";
 import { parseSymbol } from "@/lib/exchanges";
@@ -58,11 +60,13 @@ export function VistaBacktest() {
   const setSegunda = useBacktestStore((s) => s.setSegunda);
   const setBase = useBacktestStore((s) => s.setBase);
   const setZona = useBacktestStore((s) => s.setZona);
+  const setPararEnOro = useBacktestStore((s) => s.setPararEnOro);
 
   const simbolo = bt?.simbolo ?? "";
   const desde = bt?.desde ?? 0;
   const historia = bt?.historiaPrevia ?? 365;
   const zona = bt?.zonaHoraria ?? ZONA_BACKTEST;
+  const pararEnOro = bt?.pararEnOro === true;
 
   // ── las dos gráficas ────────────────────────────────────────────────
   //
@@ -185,19 +189,45 @@ export function VistaBacktest() {
     });
   }, [bt, tiempo, velas, vol, precio, liquidarVencidas]);
 
+  // ── el freno en el punto de oro ─────────────────────────────────────
+  //
+  // Se calcula sobre la serie COMPLETA de la base, no sobre lo vivido, y
+  // eso no es mirar el futuro: la onda y el RSI son causales, así que la
+  // señal de una vela sale igual se calcule con los datos que vinieron
+  // después o sin ellos. Está comprobado en `verificar-senales.mjs`, y
+  // hacerlo una sola vez evita recalcular una wavetrend de miles de velas
+  // en cada clic del reproductor.
+  const orosBase = useMemo(() => {
+    if (!pararEnOro || velas.length === 0) return new Set<number>();
+    return tiemposDe(senalesCipher(velas, CONFIG_BT), "oro");
+  }, [pararEnOro, velas]);
+  /** ¿La vela donde está parado el reloj es un punto de oro? */
+  const enOro = orosBase.has(tiempo);
+
   // ── reproducción ────────────────────────────────────────────────────
   const avanzar = useCallback(
     (n: number) => {
       if (velas.length === 0) return;
-      const destino = Math.min(ultimo, Math.max(idxInicio, idx + n));
+      let destino = Math.min(ultimo, Math.max(idxInicio, idx + n));
+      // Yendo hacia adelante se frena en el PRIMER oro del tramo, no en el
+      // final: con «diez velas adelante» la señal quedaría atrás y el
+      // freno no serviría de nada.
+      if (n > 0 && orosBase.size > 0) {
+        for (let i = idx + 1; i <= destino; i++) {
+          if (orosBase.has(velas[i].time)) {
+            destino = i;
+            break;
+          }
+        }
+      }
       if (destino === idx) {
         if (n > 0) reproducir(false);
         return;
       }
       setTiempo(velas[destino].time);
-      if (destino >= ultimo) reproducir(false);
+      if (destino >= ultimo || orosBase.has(velas[destino].time)) reproducir(false);
     },
-    [velas, idx, ultimo, idxInicio, setTiempo, reproducir],
+    [velas, idx, ultimo, idxInicio, setTiempo, reproducir, orosBase],
   );
 
   // El temporizador lee la última versión de `avanzar` por una ref: si
@@ -430,6 +460,30 @@ export function VistaBacktest() {
         <span className="font-mono text-[11px] tabular-nums text-tv-text-dim">
           {velas.length === 0 ? "0/0" : `${idx - idxInicio + 1}/${ultimo - idxInicio + 1}`}
         </span>
+        <button
+          onClick={() => setPararEnOro(!pararEnOro)}
+          title={
+            pararEnOro
+              ? "El reproductor se frena en cada punto de oro del Cipher B"
+              : "Frenar el reproductor cuando salga un punto de oro del Cipher B"
+          }
+          aria-pressed={pararEnOro}
+          className={cn(
+            "flex items-center gap-1.5 rounded px-2 py-1 text-[11px] transition-colors",
+            pararEnOro
+              ? "bg-tv-yellow/15 text-tv-yellow"
+              : "text-tv-text-muted hover:bg-tv-panel-hover hover:text-tv-text",
+          )}
+        >
+          <span
+            aria-hidden
+            className={cn(
+              "h-2 w-2 rounded-full",
+              pararEnOro ? "bg-tv-yellow" : "border border-current",
+            )}
+          />
+          Parar en oro
+        </button>
         <div className="flex gap-0.5 rounded bg-tv-bg p-0.5">
           {VELOCIDADES.map((v) => (
             <button
@@ -447,6 +501,20 @@ export function VistaBacktest() {
           ))}
         </div>
       </div>
+
+      {/* El aviso se DEDUCE de dónde está el reloj, no se guarda en un
+          estado aparte: así no puede quedar colgado de una vela anterior
+          ni hace falta limpiarlo al retroceder. */}
+      {enOro && (
+        <div className="flex items-center gap-2 border-t border-tv-yellow/40 bg-tv-yellow/10 px-3 py-1.5 text-[11px] text-tv-yellow">
+          <span aria-hidden className="h-2.5 w-2.5 shrink-0 rounded-full bg-tv-yellow" />
+          <strong className="font-semibold">Punto de oro</strong>
+          <span className="text-tv-yellow/80">
+            {fechaHoraEn(tiempo, zonaReloj)} · cruce al alza desde sobreventa con el
+            RSI por debajo de 30
+          </span>
+        </div>
+      )}
 
       {error && (
         <div className="border-t border-tv-border bg-tv-bg px-3 py-1.5 text-[11px] text-tv-yellow">

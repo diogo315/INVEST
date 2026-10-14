@@ -552,7 +552,7 @@ export function GraficoBacktest({
                     ...comun,
                     lineWidth: 1 as const,
                     pointMarkersVisible: true,
-                    pointMarkersRadius: spec.grosor === 2 ? 4 : 2,
+                    pointMarkersRadius: spec.radio ?? (spec.grosor === 2 ? 4 : 2),
                     lineVisible: false,
                     ...rango,
                   }

@@ -87,6 +87,14 @@ export interface Backtest {
    */
   zonaHoraria?: string;
   /**
+   * Frenar el reproductor cuando sale un punto de oro del Cipher B.
+   *
+   * Es lo que convierte el backtesting en práctica: en vez de mirar la
+   * película pasar, el play se detiene justo en la vela de la señal y hay
+   * que decidir ahí.
+   */
+  pararEnOro?: boolean;
+  /**
    * Cuál de las dos manda el reproductor: "a" la de la izquierda, "b" la
    * de la derecha. El paso del play es una vela de ESA temporalidad, y su
    * cierre marca hasta dónde se sabe (ver `multi.ts`).
@@ -351,6 +359,7 @@ export function sanearBacktests(crudo: unknown): Backtest[] {
       ...(sanearPanel(b.panelB) && b.base === "b" ? { base: "b" as const } : {}),
       zonaHoraria:
         typeof b.zonaHoraria === "string" && b.zonaHoraria ? b.zonaHoraria : ZONA_BACKTEST,
+      pararEnOro: b.pararEnOro === true,
       historiaPrevia:
         Number.isFinite(b.historiaPrevia) && b.historiaPrevia > 0
           ? Math.min(3650, Math.round(b.historiaPrevia))

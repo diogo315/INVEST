@@ -416,9 +416,21 @@ console.log("Indicadores del backtest");
       `${datos.compra.length} compras / ${datos.venta.length} ventas`);
     // Cada señal fuerte pone su punto en la fila; los cruces sueltos no.
     comprobar("una fila por cada señal",
-      datos.filaCompra.length === datos.compra.length + datos.oro.length &&
-      datos.filaVenta.length === datos.venta.length,
-      `${datos.filaCompra.length} vs ${datos.compra.length}+${datos.oro.length}`);
+      datos.filaCompra.length === datos.compra.length &&
+      datos.filaVenta.length === datos.venta.length &&
+      datos.filaOro.length === datos.oro.length,
+      `${datos.filaCompra.length}/${datos.compra.length} · ${datos.filaOro.length}/${datos.oro.length}`);
+    // El oro tiene fila PROPIA, dorada y más grande: es la señal que Diego
+    // mira y no puede quedar mezclada entre los puntitos verdes.
+    const specOro = porClave.get("oro");
+    const specFilaOro = porClave.get("filaOro");
+    comprobar("el oro se dibuja más grande que los demás puntos",
+      (specOro?.radio ?? 0) > 4 && (specFilaOro?.radio ?? 0) > 4,
+      `${specOro?.radio} / ${specFilaOro?.radio}`);
+    comprobar("y en dorado", specOro?.color === "#e2a400" && specFilaOro?.color === "#e2a400");
+    comprobar("el oro se dibuja al final, encima de todo",
+      specs.at(-1).clave === "filaOro" && specs.at(-2).clave === "oro",
+      `${specs.at(-2)?.clave}, ${specs.at(-1)?.clave}`);
     comprobar("los cruces sueltos no ensucian las filas",
       datos.cruceArriba.every((p) => Math.abs(p.value) < 106) &&
       datos.cruceAbajo.every((p) => Math.abs(p.value) < 106));
@@ -459,9 +471,11 @@ console.log("Indicadores del backtest");
     comprobar("el punto de oro sale del fondo",
       dd.oro.every((p) => p.value <= CONFIG_BT.wtOsLevel),
       JSON.stringify(dd.oro.map((p) => p.value)));
-    comprobar("el oro también pone su fila",
-      dd.filaCompra.length === dd.compra.length + dd.oro.length,
-      `${dd.filaCompra.length} vs ${dd.compra.length}+${dd.oro.length}`);
+    comprobar("el oro pone su propia fila, aparte de la verde",
+      dd.filaOro.length === dd.oro.length && dd.filaCompra.length === dd.compra.length,
+      `oro ${dd.filaOro.length}/${dd.oro.length}, compra ${dd.filaCompra.length}/${dd.compra.length}`);
+    comprobar("la fila de oro va a la altura de abajo",
+      dd.filaOro.every((p) => p.value === -106), JSON.stringify(dd.filaOro.map((p) => p.value)));
   }
 
     // ── medias configurables ────────────────────────────────────────

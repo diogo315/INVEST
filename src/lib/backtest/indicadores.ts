@@ -38,6 +38,7 @@ import {
   type MediaMovil,
   type TipoMedia,
 } from "@/lib/chart/medias";
+import { senalesCipher, type TipoSenal } from "@/lib/backtest/senales";
 import { DEFAULT_CONFIG, type IndicatorConfig } from "@/lib/store/chart-store";
 import type { Candle } from "@/lib/binance/types";
 
@@ -93,6 +94,8 @@ const C_RAPIDA = "#ffffff";
 const C_MFI_ARRIBA = "#3ee145";
 const C_MFI_ABAJO = "#ff3d2e";
 const C_RSI = "#c33ee1";
+/** El dorado del punto de oro, el mismo del Pine. */
+const C_ORO = "#e2a400";
 const C_TEXTO = "#d1d4dc";
 const AREA_WT1: AreaSpec = {
   arriba: [`${C_WT1}B3`, `${C_WT1}30`],
@@ -303,61 +306,37 @@ const CLASICOS: IndicadorBT[] = [
       { clave: "cruceAbajo", forma: "puntos", color: "#ff5252" },
       { clave: "compra", forma: "puntos", color: "#3fff00", grosor: 2 },
       { clave: "venta", forma: "puntos", color: "#ff0000", grosor: 2 },
-      { clave: "oro", forma: "puntos", color: "#e2a400", grosor: 2 },
       { clave: "filaCompra", forma: "puntos", color: "#3fff00", grosor: 2 },
       { clave: "filaVenta", forma: "puntos", color: "#ff0000", grosor: 2 },
+      // El oro va ÚLTIMO y con radio propio: se dibuja encima de todo y
+      // se ve al doble de tamaño que el resto de los puntos.
+      { clave: "oro", forma: "puntos", color: C_ORO, grosor: 2, radio: 8 },
+      { clave: "filaOro", forma: "puntos", color: C_ORO, grosor: 2, radio: 8 },
     ],
     calcular: (velas, c) => {
       const w = wavetrend(velas, c.wtChannelLen, c.wtAverageLen, c.wtMALen);
       const m = mfiArea(velas, c.mfiPeriod, c.mfiMultiplier, c.cipherMfiYPos);
       const r = rsi(velas, c.cipherRsiLen);
-      const rsiEn = new Map(r.map((p) => [p.time, p.value]));
 
-      // Los puntos de señal son el cruce de la ola con su media. En el
-      // gráfico se ven dos cosas por cada señal: el círculo sobre la onda
-      // y el puntito en la fila fija de arriba o de abajo.
-      const compra: PuntoSerie[] = [];
-      const venta: PuntoSerie[] = [];
-      const oro: PuntoSerie[] = [];
-      const cruceArriba: PuntoSerie[] = [];
-      const cruceAbajo: PuntoSerie[] = [];
-      const filaCompra: PuntoSerie[] = [];
-      const filaVenta: PuntoSerie[] = [];
-      for (let i = 1; i < w.length; i++) {
-        const a = w[i - 1];
-        const b = w[i];
-        const haciaArriba = a.wt1 <= a.wt2 && b.wt1 > b.wt2;
-        const haciaAbajo = a.wt1 >= a.wt2 && b.wt1 < b.wt2;
-        if (!haciaArriba && !haciaAbajo) continue;
-        const sobrevendido = b.wt2 <= c.wtOsLevel;
-        const sobrecomprado = b.wt2 >= c.wtObLevel;
-        const rsiAca = rsiEn.get(b.time);
-        // Punto de oro: cruce al alza desde el extremo de sobreventa con el
-        // RSI por debajo de 30. Es la señal fuerte del Cipher B.
-        if (
-          haciaArriba &&
-          rsiAca !== undefined &&
-          rsiAca < 30 &&
-          a.wt2 <= c.wtOsLevel3 &&
-          b.wt2 - a.wt2 >= 0 &&
-          b.wt2 > c.wtOsLevel3 - 5
-        ) {
-          oro.push({ time: b.time, value: b.wt2 });
-          filaCompra.push({ time: b.time, value: CIPHER_FILA_COMPRA });
-          continue;
-        }
-        if (haciaArriba && sobrevendido) {
-          compra.push({ time: b.time, value: b.wt2 });
-          filaCompra.push({ time: b.time, value: CIPHER_FILA_COMPRA });
-        } else if (haciaAbajo && sobrecomprado) {
-          venta.push({ time: b.time, value: b.wt2 });
-          filaVenta.push({ time: b.time, value: CIPHER_FILA_VENTA });
-        } else if (haciaArriba) {
-          cruceArriba.push({ time: b.time, value: b.wt2 });
-        } else {
-          cruceAbajo.push({ time: b.time, value: b.wt2 });
-        }
-      }
+      // Las señales salen de `senales.ts`, el MISMO cálculo que usa el
+      // reproductor para frenarse en el punto de oro. Si cada uno tuviera
+      // el suyo, el backtest acabaría parándose donde no hay punto.
+      const senales = senalesCipher(velas, c);
+      const porTipo = (t: TipoSenal): PuntoSerie[] =>
+        senales.filter((x) => x.tipo === t).map((x) => ({ time: x.time, value: x.valor }));
+      const fila = (t: TipoSenal, alto: number): PuntoSerie[] =>
+        senales.filter((x) => x.tipo === t).map((x) => ({ time: x.time, value: alto }));
+
+      const compra = porTipo("compra");
+      const venta = porTipo("venta");
+      const oro = porTipo("oro");
+      const cruceArriba = porTipo("cruceArriba");
+      const cruceAbajo = porTipo("cruceAbajo");
+      const filaCompra = fila("compra", CIPHER_FILA_COMPRA);
+      const filaVenta = fila("venta", CIPHER_FILA_VENTA);
+      // El oro tiene su propia fila, dorada y más grande: es la señal que
+      // hay que ver de un vistazo, no una más del montón verde.
+      const filaOro = fila("oro", CIPHER_FILA_COMPRA);
 
       return {
         ola: w.map((p) => ({ time: p.time, value: p.wt1 })),
@@ -380,6 +359,7 @@ const CLASICOS: IndicadorBT[] = [
         oro,
         filaCompra,
         filaVenta,
+        filaOro,
       };
     },
     valor: (u) =>

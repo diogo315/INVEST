@@ -64,6 +64,14 @@ export interface SerieSpec {
   estilo?: 0 | 2 | 3;
   /** Obligatorio con `forma: "area"`; se ignora en las demás. */
   area?: AreaSpec;
+  /**
+   * Radio del punto, en píxeles. Solo con `forma: "puntos"`.
+   *
+   * Sirve para que una señal destaque de verdad sobre las demás: el punto
+   * de oro del Cipher B sale pocas veces y es la que hay que ver de un
+   * vistazo, así que se dibuja al doble que el resto.
+   */
+  radio?: number;
 }
 
 export interface RellenoSpec {

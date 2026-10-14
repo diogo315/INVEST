@@ -82,6 +82,8 @@ interface Estado {
   setBase: (panel: Panel) => void;
   /** Cambia la zona horaria con la que se leen las fechas del backtest. */
   setZona: (tz: string) => void;
+  /** Prende o apaga el freno automático en el punto de oro del Cipher B. */
+  setPararEnOro: (v: boolean) => void;
   reproducir: (v: boolean) => void;
   setVelocidad: (v: number) => void;
 
@@ -285,6 +287,9 @@ export const useBacktestStore = create<Estado>()(
         ),
 
       setZona: (tz) => set((s) => enActivo(s, (b) => ({ ...b, zonaHoraria: tz }))),
+
+      setPararEnOro: (v) =>
+        set((s) => enActivo(s, (b) => ({ ...b, pararEnOro: v }))),
 
       setBase: (panel) =>
         set((s) =>
