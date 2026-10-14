@@ -70,7 +70,27 @@ export interface Backtest {
   /** Indicadores encendidos, por clave. Se guardan con la corrida: parte
    * de lo que se quiere recordar es QUÉ estabas mirando al decidir. */
   indicadores: string[];
+  /**
+   * La segunda gráfica, cuando está prendida. Ausente = una sola.
+   *
+   * Tiene su propia temporalidad y sus propios indicadores: la gracia de
+   * mirar dos es ver la misma acción con dos detalles distintos.
+   */
+  panelB?: PanelGrafico;
+  /**
+   * Cuál de las dos manda el reproductor: "a" la de la izquierda, "b" la
+   * de la derecha. El paso del play es una vela de ESA temporalidad, y su
+   * cierre marca hasta dónde se sabe (ver `multi.ts`).
+   */
+  base?: "a" | "b";
   creado: number;
+}
+
+/** Lo que define una de las dos gráficas. */
+export interface PanelGrafico {
+  temporalidad: string;
+  indicadores: string[];
+  medias: MediaMovil[];
 }
 
 /** Cuántas unidades del subyacente controla la operación. */
@@ -277,6 +297,18 @@ export function nombreLibre(usados: string[], deseado: string): string {
   return `${base} ${usados.length + 1}`;
 }
 
+/** Saca la basura de un panel guardado. Devuelve null si no hay panel. */
+export function sanearPanel(crudo: unknown): PanelGrafico | null {
+  if (!crudo || typeof crudo !== "object") return null;
+  const p = crudo as Partial<PanelGrafico>;
+  if (typeof p.temporalidad !== "string" || !p.temporalidad) return null;
+  return {
+    temporalidad: p.temporalidad,
+    indicadores: sanearIndicadores(p.indicadores),
+    medias: sanearMedias(p.medias) ?? mediasPorDefecto(),
+  };
+}
+
 /** Saca la basura de lo guardado. */
 export function sanearBacktests(crudo: unknown): Backtest[] {
   if (!Array.isArray(crudo)) return [];
@@ -303,6 +335,11 @@ export function sanearBacktests(crudo: unknown): Backtest[] {
       tiempoActual: Number.isFinite(b.tiempoActual) ? b.tiempoActual : b.desde,
       indicadores: sanearIndicadores(b.indicadores),
       medias: sanearMedias(b.medias) ?? mediasPorDefecto(),
+      // La segunda gráfica es opcional y nueva: lo guardado antes no la
+      // tiene, y sin ella `base` no puede valer "b" o el reproductor se
+      // quedaría esperando una temporalidad que no existe.
+      ...(sanearPanel(b.panelB) ? { panelB: sanearPanel(b.panelB)! } : {}),
+      ...(sanearPanel(b.panelB) && b.base === "b" ? { base: "b" as const } : {}),
       historiaPrevia:
         Number.isFinite(b.historiaPrevia) && b.historiaPrevia > 0
           ? Math.min(3650, Math.round(b.historiaPrevia))

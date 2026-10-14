@@ -7,13 +7,18 @@ import {
   sanearBacktests,
   type Backtest,
   type Operacion,
+  type PanelGrafico,
 } from "@/lib/backtest/tipos";
 import type { Timeframe } from "@/lib/binance/types";
+import { otraTemporalidad } from "@/lib/backtest/multi";
 import {
   MAX_MEDIAS,
   mediasPorDefecto,
   type MediaMovil,
 } from "@/lib/chart/medias";
+
+/** Cuál de las dos gráficas. */
+export type Panel = "a" | "b";
 
 /** Velocidades de reproducción, en velas por segundo. */
 export const VELOCIDADES = [0.5, 1, 2, 5, 10, 25] as const;
@@ -63,13 +68,17 @@ interface Estado {
   duplicar: (id: string) => void;
 
   setTiempo: (t: number) => void;
-  setTemporalidad: (tf: Timeframe) => void;
+  setTemporalidad: (tf: Timeframe, panel?: Panel) => void;
   /** Cambia la historia previa del backtest abierto (vuelve a bajar velas). */
   setHistoria: (dias: number) => void;
-  /** Reemplaza la lista de medias móviles del backtest abierto. */
-  setMedias: (medias: MediaMovil[]) => void;
-  /** Enciende o apaga un indicador en el backtest abierto. */
-  alternarIndicador: (clave: string) => void;
+  /** Reemplaza la lista de medias móviles de una de las dos gráficas. */
+  setMedias: (medias: MediaMovil[], panel?: Panel) => void;
+  /** Enciende o apaga un indicador en una de las dos gráficas. */
+  alternarIndicador: (clave: string, panel?: Panel) => void;
+  /** Prende o apaga la segunda gráfica. */
+  setSegunda: (on: boolean) => void;
+  /** Elige cuál de las dos manda el reproductor. */
+  setBase: (panel: Panel) => void;
   reproducir: (v: boolean) => void;
   setVelocidad: (v: number) => void;
 
@@ -99,6 +108,35 @@ function enActivo(
     backtests: estado.backtests.map((b) =>
       b.id === estado.activoId ? cambio(b) : b,
     ),
+  };
+}
+
+/**
+ * Aplica un cambio al panel que toque.
+ *
+ * El panel A vive en los campos de siempre del backtest (`temporalidad`,
+ * `indicadores`, `medias`) y no en un objeto aparte: así todo lo que ya
+ * estaba guardado sigue abriendo sin convertir nada.
+ */
+function enPanel(
+  bt: Backtest,
+  panel: Panel,
+  cambio: (p: PanelGrafico) => PanelGrafico,
+): Backtest {
+  if (panel === "b") {
+    if (!bt.panelB) return bt;
+    return { ...bt, panelB: cambio(bt.panelB) };
+  }
+  const nuevo = cambio({
+    temporalidad: bt.temporalidad,
+    indicadores: bt.indicadores ?? [],
+    medias: bt.medias ?? mediasPorDefecto(),
+  });
+  return {
+    ...bt,
+    temporalidad: nuevo.temporalidad,
+    indicadores: nuevo.indicadores,
+    medias: nuevo.medias,
   };
 }
 
@@ -184,10 +222,10 @@ export const useBacktestStore = create<Estado>()(
 
       setTiempo: (t) => set((s) => enActivo(s, (b) => ({ ...b, tiempoActual: t }))),
 
-      setTemporalidad: (tf) =>
+      setTemporalidad: (tf, panel = "a") =>
         // El reloj NO se mueve: cambiar de temporalidad es mirar el mismo
         // momento con otro detalle, no saltar en el tiempo.
-        set((s) => enActivo(s, (b) => ({ ...b, temporalidad: tf }))),
+        set((s) => enActivo(s, (b) => enPanel(b, panel, (p) => ({ ...p, temporalidad: tf })))),
 
       setHistoria: (dias) =>
         set((s) =>
@@ -197,20 +235,58 @@ export const useBacktestStore = create<Estado>()(
           })),
         ),
 
-      setMedias: (medias) =>
-        set((s) => enActivo(s, (b) => ({ ...b, medias: medias.slice(0, MAX_MEDIAS) }))),
+      setMedias: (medias, panel = "a") =>
+        set((s) =>
+          enActivo(s, (b) =>
+            enPanel(b, panel, (p) => ({ ...p, medias: medias.slice(0, MAX_MEDIAS) })),
+          ),
+        ),
 
-      alternarIndicador: (clave) =>
+      alternarIndicador: (clave, panel = "a") =>
+        set((s) =>
+          enActivo(s, (b) =>
+            enPanel(b, panel, (p) => {
+              const puestos = p.indicadores ?? [];
+              return {
+                ...p,
+                indicadores: puestos.includes(clave)
+                  ? puestos.filter((c) => c !== clave)
+                  : [...puestos, clave].slice(0, 8),
+              };
+            }),
+          ),
+        ),
+
+      setSegunda: (on) =>
         set((s) =>
           enActivo(s, (b) => {
-            const puestos = b.indicadores ?? [];
+            if (!on) {
+              // Al apagarla, el reproductor vuelve a la de la izquierda:
+              // si quedara mandando una gráfica que no está, el paso del
+              // play saldría de una temporalidad invisible.
+              // eslint-disable-next-line @typescript-eslint/no-unused-vars
+              const { panelB, base, ...resto } = b;
+              return resto;
+            }
+            if (b.panelB) return b;
             return {
               ...b,
-              indicadores: puestos.includes(clave)
-                ? puestos.filter((c) => c !== clave)
-                : [...puestos, clave].slice(0, 8),
+              panelB: {
+                temporalidad: otraTemporalidad(b.temporalidad),
+                indicadores: [...(b.indicadores ?? [])],
+                medias: (b.medias ?? mediasPorDefecto()).map((m) => ({ ...m })),
+              },
             };
           }),
+        ),
+
+      setBase: (panel) =>
+        set((s) =>
+          enActivo(s, (b) =>
+            // Mandar desde una gráfica que no existe no es un estado
+            // posible: sin segunda, la base es siempre la de la izquierda.
+            panel === "b" && !b.panelB ? b : { ...b, base: panel },
+          ),
         ),
 
       reproducir: (reproduciendo) => set({ reproduciendo }),

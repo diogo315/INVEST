@@ -164,6 +164,35 @@ export function GraficoBacktest({
   const visiblesRef = useRef<Candle[]>([]);
 
   /**
+   * Reparte el alto entre los paneles.
+   *
+   * En un solo lugar a propósito: antes lo tocaban dos efectos distintos
+   * —el de la curva de capital y el de los indicadores— y cada uno daba
+   * por sentado un orden de paneles. Con dos gráficas ese orden cambia
+   * según cuál se monte primero, y el resultado era un Cipher de treinta
+   * píxeles. Acá el índice de cada panel se PREGUNTA (`getPane()`), no se
+   * supone.
+   *
+   * El precio pesa 4; cada indicador, lo que pida (1 salvo el Cipher, que
+   * pide 2); el capital, 1.
+   */
+  const repartirAlto = useCallback(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const factor = new Map<number, number>();
+    for (const [clave, m] of montados.current) {
+      const serie = m.series.values().next().value;
+      if (!serie) continue;
+      try {
+        factor.set(serie.getPane().paneIndex(), indicadorPorClave(clave)?.alto ?? 1);
+      } catch {}
+    }
+    for (const [i, p] of chart.panes().entries()) {
+      p.setStretchFactor(i === 0 ? 4 : (factor.get(i) ?? 1));
+    }
+  }, []);
+
+  /**
    * Pone cada línea de vencimiento en su sitio.
    *
    * `logicalToCoordinate` sí sabe ubicar una fecha que todavía no tiene
@@ -318,14 +347,28 @@ export function GraficoBacktest({
     if (!chart) return;
     if (curva.length === 0) {
       if (capitalRef.current) {
+        // `removeSeries` ya se lleva el panel cuando queda vacío (es el
+        // comportamiento por defecto; `addPane(true)` sirve justamente
+        // para evitarlo). Llamar además a `removePane` con el índice que
+        // tenía borraba el panel del indicador de al lado: los índices se
+        // corrieron en cuanto desapareció este. Medido: la gráfica que no
+        // mandaba el reproductor se quedaba sin su RSI.
         chart.removeSeries(capitalRef.current);
         capitalRef.current = null;
+        repartirAlto();
       }
       return;
     }
     if (!capitalRef.current) {
-      const panes = chart.panes();
-      if (panes.length < 2) chart.addPane();
+      // Su propio panel, SIEMPRE, y movido justo debajo del precio.
+      //
+      // Antes se metía a mano en el panel 1 dando por hecho que ese era el
+      // suyo. Con dos gráficas el orden en que se montan los indicadores
+      // cambia, y el panel 1 podía ser el de un indicador: la curva de
+      // capital terminaba dentro del Cipher y los altos salían cualquier
+      // cosa. Ahora el índice se pregunta, no se adivina.
+      const panel = chart.addPane();
+      panel.moveTo(1);
       capitalRef.current = chart.addSeries(
         LineSeries,
         {
@@ -343,10 +386,9 @@ export function GraficoBacktest({
             };
           },
         },
-        1,
+        panel.paneIndex(),
       );
-      chart.panes()[0]?.setStretchFactor(3);
-      chart.panes()[1]?.setStretchFactor(1);
+      repartirAlto();
     }
     const valores = curva.map((p) => p.value);
     rangoCurva.current = {
@@ -356,7 +398,7 @@ export function GraficoBacktest({
     capitalRef.current.setData(
       curva.map((p) => ({ time: p.time as UTCTimestamp, value: p.value })),
     );
-  }, [curva]);
+  }, [curva, repartirAlto]);
 
   /**
    * Indicadores: un solo bloque genérico para todos.
@@ -378,6 +420,7 @@ export function GraficoBacktest({
         } catch {}
       }
       montados.current.delete(clave);
+      repartirAlto();
     }
 
     for (const clave of indicadores) {
@@ -500,16 +543,7 @@ export function GraficoBacktest({
           }
         }
         montados.current.set(clave, m);
-        // El precio manda; cada indicador pide su alto (1 salvo que diga
-        // otra cosa) y el panel de capital se queda con el suyo.
-        const altoDe = new Map<number, number>();
-        for (const [c2, m2] of montados.current) {
-          if (m2.pane === null) continue;
-          altoDe.set(m2.pane, indicadorPorClave(c2)?.alto ?? 1);
-        }
-        chart
-          .panes()
-          .forEach((p, i) => p.setStretchFactor(i === 0 ? 4 : (altoDe.get(i) ?? 1)));
+        repartirAlto();
       }
 
       const datos = def.calcular(visibles, CONFIG_BT, medias);
@@ -541,7 +575,7 @@ export function GraficoBacktest({
         );
       }
     }
-  }, [indicadores, visibles, medias]);
+  }, [indicadores, visibles, medias, repartirAlto]);
 
   return (
     <div className="relative h-full w-full">

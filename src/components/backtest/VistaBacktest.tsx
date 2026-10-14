@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -9,11 +9,11 @@ import {
   RotateCcw,
   SkipForward,
 } from "lucide-react";
-import { GraficoBacktest } from "./GraficoBacktest";
+import { Columns2, Square } from "lucide-react";
+import { BarraPanel } from "./BarraPanel";
 import { PanelOperar } from "./PanelOperar";
 import { Operaciones } from "./Operaciones";
-import { IndicadoresMenu } from "./IndicadoresMenu";
-import { EditorMedias } from "./EditorMedias";
+import { useVelas } from "./useVelas";
 import {
   indiceHasta,
   precioContrato,
@@ -31,13 +31,11 @@ import {
   backtestActivo,
   useBacktestStore,
 } from "@/lib/store/backtest-store";
-import { getAdapter, parseSymbol } from "@/lib/exchanges";
-import { TIMEFRAME_SECONDS, type Candle, type Timeframe } from "@/lib/binance/types";
+import { velasDelPanel } from "@/lib/backtest/multi";
+import { parseSymbol } from "@/lib/exchanges";
+import { TIMEFRAME_SECONDS, type Timeframe } from "@/lib/binance/types";
 import { formatPrice } from "@/lib/format";
 import { cn } from "@/lib/utils";
-
-const TEMPORALIDADES: Timeframe[] = ["5m", "15m", "1h", "4h", "1d", "1w"];
-const TOPE_VELAS = 10000;
 
 /** El backtest corriendo: gráfico, reloj, panel de operar y resultados. */
 export function VistaBacktest() {
@@ -55,79 +53,55 @@ export function VistaBacktest() {
   const alternarIndicador = useBacktestStore((s) => s.alternarIndicador);
   const setHistoria = useBacktestStore((s) => s.setHistoria);
   const setMedias = useBacktestStore((s) => s.setMedias);
+  const setSegunda = useBacktestStore((s) => s.setSegunda);
+  const setBase = useBacktestStore((s) => s.setBase);
 
   const simbolo = bt?.simbolo ?? "";
-  const tf = (bt?.temporalidad ?? "1d") as Timeframe;
   const desde = bt?.desde ?? 0;
   const historia = bt?.historiaPrevia ?? 365;
-  /** Primera vela que se pide: la fecha de inicio menos la historia previa. */
-  const arranqueDatos = desde - historia * 86400;
 
-  /**
-   * Las velas se guardan junto a la clave de la petición que las trajo.
-   *
-   * Así «cargando» y «error» se deducen comparando la clave, en vez de
-   * ponerlos con setState al entrar al efecto: eso dispara un render en
-   * cascada y React lo marca como error.
-   */
-  const clave = `${simbolo}|${tf}|${desde}|${historia}`;
-  const [datos, setDatos] = useState<{
-    clave: string;
-    velas: Candle[];
-    error: string | null;
-  } | null>(null);
-  const alDia = datos?.clave === clave;
-  const velas = alDia ? datos.velas : [];
-  const cargando = !alDia && simbolo !== "";
-  const error = alDia ? datos.error : null;
+  // ── las dos gráficas ────────────────────────────────────────────────
+  //
+  // El panel A son los campos de siempre del backtest; el B, un objeto
+  // aparte que puede no estar. `base` dice cuál manda el reproductor, y
+  // nunca puede ser "b" sin panel B.
+  const panelB = bt?.panelB ?? null;
+  const base: "a" | "b" = panelB && bt?.base === "b" ? "b" : "a";
+  const tfA = (bt?.temporalidad ?? "1d") as Timeframe;
+  const tfB = (panelB?.temporalidad ?? "1d") as Timeframe;
 
-  // ── datos ───────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!simbolo || !desde) return;
-    let vivo = true;
-    const segundos = TIMEFRAME_SECONDS[tf];
-    // Se piden las velas de la historia previa MÁS las del backtest. La
-    // historia previa es lo que da de comer a los indicadores: sin 200
-    // velas antes del arranque, una EMA 200 no existe el primer día.
-    const necesarias =
-      Math.ceil((Date.now() / 1000 - arranqueDatos) / segundos) + 10;
-    const limite = Math.min(TOPE_VELAS, Math.max(100, necesarias));
-    const { adapter, symbol } = getAdapter(simbolo);
-    adapter
-      .fetchKlines(symbol, tf, limite)
-      .then((k) => {
-        if (!vivo) return;
-        const primera = k[0]?.time ?? 0;
-        const aviso =
-          k.length === 0
-            ? "El proveedor no devolvió velas."
-            : primera > desde
-              ? `Solo hay historia desde el ${new Date(primera * 1000)
-                  .toISOString()
-                  .slice(0, 10)}: el backtest no puede arrancar antes.`
-              : primera > arranqueDatos + segundos * 2
-                ? `La historia previa llega hasta el ${new Date(primera * 1000)
-                    .toISOString()
-                    .slice(0, 10)}, no al año completo. En ${tf} no entran más velas en el tope de ${TOPE_VELAS.toLocaleString("es")}.`
-                : null;
-        setDatos({ clave, velas: k, error: aviso });
-      })
-      .catch(() => {
-        if (vivo) setDatos({ clave, velas: [], error: "No se pudieron bajar las velas." });
-      });
-    return () => {
-      vivo = false;
-    };
-  }, [simbolo, tf, desde, arranqueDatos, clave]);
+  const a = useVelas(simbolo, tfA, desde, historia);
+  const b = useVelas(simbolo, panelB ? tfB : null, desde, historia);
+
+  const tfBase = base === "a" ? tfA : tfB;
+  const velas = base === "a" ? a.velas : b.velas;
+  const error = a.error ?? b.error;
 
   // ── el momento actual ───────────────────────────────────────────────
   const tiempo = bt?.tiempoActual ?? 0;
   const idx = useMemo(() => indiceHasta(velas, tiempo), [velas, tiempo]);
-  const visibles = useMemo(() => velas.slice(0, idx + 1), [velas, idx]);
-  const precio = visibles.at(-1)?.close ?? 0;
+  const segBase = TIMEFRAME_SECONDS[tfBase];
+  /**
+   * Lo que puede mostrar cada gráfica sin enseñar el futuro.
+   *
+   * Para la base es exactamente lo de siempre (hasta la vela del reloj,
+   * inclusive). Para la otra depende de su temporalidad: ver `multi.ts`,
+   * que es donde está explicado y probado.
+   */
+  const fuente = useMemo(() => ({ velas, segundos: segBase }), [velas, segBase]);
+  const visibles = useMemo(
+    () => velasDelPanel(a.velas, TIMEFRAME_SECONDS[tfA], tiempo, fuente),
+    [a.velas, tfA, tiempo, fuente],
+  );
+  const visiblesB = useMemo(
+    () => (panelB ? velasDelPanel(b.velas, TIMEFRAME_SECONDS[tfB], tiempo, fuente) : []),
+    [panelB, b.velas, tfB, tiempo, fuente],
+  );
+  const visiblesBase = base === "a" ? visibles : visiblesB;
+  const precio = visiblesBase.at(-1)?.close ?? 0;
   const vol = useMemo(
-    () => volRealizada(velas, tiempo, 20, TIMEFRAME_SECONDS[tf]),
-    [velas, tiempo, tf],
+    () => volRealizada(velas, tiempo, 20, segBase),
+    [velas, tiempo, segBase],
   );
   const ultimo = velas.length - 1;
   /**
@@ -167,12 +141,12 @@ export function VistaBacktest() {
 
   const resumen = useMemo(() => {
     if (!bt) return null;
-    const curva = curvaDeCapital(bt, visibles, () => vol);
+    const curva = curvaDeCapital(bt, visiblesBase, () => vol);
     return {
       r: resumir(bt, precioAhora, curva.map((p) => p.value)),
       curva,
     };
-  }, [bt, visibles, vol, precioAhora]);
+  }, [bt, visiblesBase, vol, precioAhora]);
 
   // ── liquidar lo vencido al avanzar ──────────────────────────────────
   // Una opción vencida deja de existir: si no se liquidara, seguiría
@@ -248,27 +222,32 @@ export function VistaBacktest() {
         </button>
         <span className="text-sm font-semibold text-tv-text">{symbol}</span>
         <span className="text-xs text-tv-text-muted">{bt.nombre}</span>
-        <div className="ml-2 flex gap-0.5 rounded bg-tv-bg p-0.5">
-          {TEMPORALIDADES.map((t) => (
-            <button
-              key={t}
-              onClick={() => setTemporalidad(t)}
-              className={cn(
-                "rounded px-2 py-0.5 text-[11px] transition-colors",
-                t === bt.temporalidad
-                  ? "bg-tv-panel-hover text-tv-text"
-                  : "text-tv-text-muted hover:text-tv-text",
-              )}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
-        <IndicadoresMenu
-          puestos={bt.indicadores ?? []}
-          onAlternar={alternarIndicador}
-        />
-        <EditorMedias medias={bt.medias ?? []} onCambiar={setMedias} />
+        {/* Los controles de cada gráfica (temporalidad, indicadores,
+            medias) viven ARRIBA DE SU GRÁFICA, no acá: con dos paneles,
+            dos juegos de controles en la misma cabecera no dejarían ver
+            cuál es cuál. */}
+        <button
+          onClick={() => setSegunda(!panelB)}
+          title={
+            panelB
+              ? "Volver a una sola gráfica"
+              : "Agregar una segunda gráfica con otra temporalidad"
+          }
+          aria-pressed={!!panelB}
+          className={cn(
+            "ml-2 flex items-center gap-1 rounded px-2 py-1 text-[11px] transition-colors",
+            panelB
+              ? "bg-tv-panel-hover text-tv-text"
+              : "text-tv-text-muted hover:bg-tv-panel-hover hover:text-tv-text",
+          )}
+        >
+          {panelB ? (
+            <Square className="h-3.5 w-3.5" />
+          ) : (
+            <Columns2 className="h-3.5 w-3.5" />
+          )}
+          {panelB ? "Una gráfica" : "Dos gráficas"}
+        </button>
         <label className="flex items-center gap-1.5 text-[11px] text-tv-text-muted">
           <span className="hidden sm:inline">Historia previa</span>
           <select
@@ -294,21 +273,51 @@ export function VistaBacktest() {
 
       {/* ── cuerpo ───────────────────────────────────────────────── */}
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-        <div className="relative min-h-[320px] flex-1 lg:min-h-0">
-          {cargando && (
-            <div className="absolute inset-0 z-10 flex items-center justify-center bg-tv-bg/70 text-xs text-tv-text-muted">
-              Bajando velas…
-            </div>
-          )}
-          <GraficoBacktest
+        {/* Las gráficas, lado a lado. La curva de capital va SOLO en la
+            base: sus puntos están en las fechas de las velas de la base, y
+            en la otra temporalidad no caerían donde corresponde. */}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col lg:flex-row">
+          <BarraPanel
+            panel="a"
+            temporalidad={bt.temporalidad}
+            indicadores={bt.indicadores ?? []}
+            medias={bt.medias ?? []}
+            esBase={base === "a"}
+            hayDos={!!panelB}
+            cargando={a.cargando}
             desde={desde}
             visibles={visibles}
             operaciones={bt.operaciones}
-            curva={resumen?.curva ?? []}
-            indicadores={bt.indicadores ?? []}
-            medias={bt.medias ?? []}
+            curva={base === "a" ? (resumen?.curva ?? []) : []}
             vencimientos={vencimientos}
+            onTemporalidad={setTemporalidad}
+            onAlternar={alternarIndicador}
+            onMedias={setMedias}
+            onBase={setBase}
           />
+          {panelB && (
+            <div className="border-t border-tv-border lg:border-l lg:border-t-0" />
+          )}
+          {panelB && (
+            <BarraPanel
+              panel="b"
+              temporalidad={panelB.temporalidad}
+              indicadores={panelB.indicadores ?? []}
+              medias={panelB.medias ?? []}
+              esBase={base === "b"}
+              hayDos
+              cargando={b.cargando}
+              desde={desde}
+              visibles={visiblesB}
+              operaciones={bt.operaciones}
+              curva={base === "b" ? (resumen?.curva ?? []) : []}
+              vencimientos={vencimientos}
+              onTemporalidad={setTemporalidad}
+              onAlternar={alternarIndicador}
+              onMedias={setMedias}
+              onBase={setBase}
+            />
+          )}
         </div>
 
         <aside className="flex w-full shrink-0 flex-col border-t border-tv-border bg-tv-panel lg:w-96 lg:border-l lg:border-t-0">
