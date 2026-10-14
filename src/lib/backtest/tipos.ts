@@ -20,6 +20,7 @@ import {
   sanearMedias,
   type MediaMovil,
 } from "@/lib/chart/medias";
+import { ZONA_BACKTEST } from "@/lib/chart/timezone";
 
 export type TipoInstrumento = "activo" | "call" | "put";
 export type LadoOperacion = "compra" | "venta";
@@ -77,6 +78,14 @@ export interface Backtest {
    * mirar dos es ver la misma acción con dos detalles distintos.
    */
   panelB?: PanelGrafico;
+  /**
+   * Zona horaria con la que se leen las fechas de ESTE backtest.
+   *
+   * Va con la corrida y no en los ajustes generales: un backtest de una
+   * acción de Nueva York y uno de cripto no se miran con el mismo reloj, y
+   * al reabrir uno viejo tiene que verse igual que cuando se hizo.
+   */
+  zonaHoraria?: string;
   /**
    * Cuál de las dos manda el reproductor: "a" la de la izquierda, "b" la
    * de la derecha. El paso del play es una vela de ESA temporalidad, y su
@@ -340,6 +349,8 @@ export function sanearBacktests(crudo: unknown): Backtest[] {
       // quedaría esperando una temporalidad que no existe.
       ...(sanearPanel(b.panelB) ? { panelB: sanearPanel(b.panelB)! } : {}),
       ...(sanearPanel(b.panelB) && b.base === "b" ? { base: "b" as const } : {}),
+      zonaHoraria:
+        typeof b.zonaHoraria === "string" && b.zonaHoraria ? b.zonaHoraria : ZONA_BACKTEST,
       historiaPrevia:
         Number.isFinite(b.historiaPrevia) && b.historiaPrevia > 0
           ? Math.min(3650, Math.round(b.historiaPrevia))

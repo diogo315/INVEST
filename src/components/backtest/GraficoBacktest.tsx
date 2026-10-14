@@ -19,6 +19,7 @@ import {
 } from "lightweight-charts";
 import { BaselineSeries, HistogramSeries } from "lightweight-charts";
 import { opcionesDeChart, opcionesDeVelas } from "@/lib/chart/apariencia";
+import { tickMarkFormatter, timeFormatter, zonaDelEje } from "@/lib/chart/timezone";
 import { BandFill } from "@/lib/chart/band-fill";
 import { useChartStore } from "@/lib/store/chart-store";
 import { CONFIG_BT, indicadorPorClave } from "@/lib/backtest/indicadores";
@@ -42,6 +43,10 @@ interface Props {
   medias: MediaMovil[];
   /** Vencimientos de las opciones abiertas, para marcarlos en el futuro. */
   vencimientos: Array<{ time: number; etiqueta: string }>;
+  /** Zona horaria con la que se escriben las fechas del eje y la cruz. */
+  zona: string;
+  /** Temporalidad de ESTA gráfica: decide si la zona aplica (ver `zonaDelEje`). */
+  temporalidad: string;
 }
 
 /** Lo que hay montado de un indicador, para poder quitarlo después. */
@@ -137,7 +142,10 @@ export function GraficoBacktest({
   indicadores,
   medias,
   vencimientos,
+  zona,
+  temporalidad,
 }: Props) {
+  const zonaEje = zonaDelEje(zona, temporalidad);
   const cajaRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const velasRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -145,6 +153,11 @@ export function GraficoBacktest({
   const marcasRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const apariencia = useChartStore((s) => s.apariencia);
   const aparienciaRef = useRef(apariencia);
+  /**
+   * La zona se lee por ref al crear el gráfico, igual que la apariencia:
+   * el chart se crea una sola vez y cambiar de zona no puede rehacerlo.
+   */
+  const zonaRef = useRef(zonaEje);
   /** Para encuadrar solo la primera vez que llegan datos. */
   const encuadrado = useRef(false);
   /** Cuántas velas se ven a la vez; el usuario la cambia con el zoom. */
@@ -249,7 +262,14 @@ export function GraficoBacktest({
     const chart = createChart(cajaRef.current, {
       ...vis,
       layout: { ...vis.layout, fontSize: 11 },
-      timeScale: { ...vis.timeScale, timeVisible: true, secondsVisible: false, rightOffset: 6 },
+      timeScale: {
+        ...vis.timeScale,
+        timeVisible: true,
+        secondsVisible: false,
+        rightOffset: 6,
+        tickMarkFormatter: tickMarkFormatter(zonaRef.current),
+      },
+      localization: { timeFormatter: timeFormatter(zonaRef.current) },
       autoSize: true,
     } as DeepPartial<ChartOptions>);
 
@@ -274,6 +294,17 @@ export function GraficoBacktest({
       encuadrado.current = false;
     };
   }, [colocarVenc]);
+
+  // Zona horaria: solo reformatea etiquetas. NO toca ni un dato, que es
+  // lo que hay que cuidar: mover los timestamps correría las velas y los
+  // indicadores calcularían sobre otra cosa.
+  useEffect(() => {
+    zonaRef.current = zonaEje;
+    chartRef.current?.applyOptions({
+      timeScale: { tickMarkFormatter: tickMarkFormatter(zonaEje) },
+      localization: { timeFormatter: timeFormatter(zonaEje) },
+    } as DeepPartial<ChartOptions>);
+  }, [zonaEje]);
 
   // Apariencia: el backtest usa el mismo tema que el gráfico principal.
   useEffect(() => {

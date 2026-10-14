@@ -26,6 +26,7 @@ interface Props {
   operaciones: Operacion[];
   curva: Array<{ time: number; value: number }>;
   vencimientos: Array<{ time: number; etiqueta: string }>;
+  zona: string;
   onTemporalidad: (tf: Timeframe, panel: Panel) => void;
   onAlternar: (clave: string, panel: Panel) => void;
   onMedias: (medias: MediaMovil[], panel: Panel) => void;
@@ -46,6 +47,7 @@ export function BarraPanel({
   operaciones,
   curva,
   vencimientos,
+  zona,
   onTemporalidad,
   onAlternar,
   onMedias,
@@ -112,6 +114,8 @@ export function BarraPanel({
           indicadores={indicadores}
           medias={medias}
           vencimientos={vencimientos}
+          zona={zona}
+          temporalidad={temporalidad}
         />
       </div>
     </div>

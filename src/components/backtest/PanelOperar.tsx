@@ -234,6 +234,10 @@ export function PanelOperar({
                 onChange={(e) => setIdxVenc(Number(e.target.value))}
                 className="rounded border border-tv-border bg-tv-bg px-2 py-1.5 text-xs text-tv-text"
               >
+                {/* En UTC a propósito: un vencimiento es una FECHA de
+                    calendario, no un instante. El tercer viernes es el
+                    tercer viernes se mire desde donde se mire; leerlo en
+                    UTC−4 lo mostraría como el jueves. */}
                 {vencimientos.map((v, i) => (
                   <option key={v} value={i}>
                     {new Date(v * 1000).toISOString().slice(0, 10)} ·{" "}

@@ -32,6 +32,8 @@ import {
   useBacktestStore,
 } from "@/lib/store/backtest-store";
 import { velasDelPanel } from "@/lib/backtest/multi";
+import { TimezoneSelector } from "@/components/chart/TimezoneSelector";
+import { ZONA_BACKTEST, fechaHoraEn, zonaDelEje } from "@/lib/chart/timezone";
 import { parseSymbol } from "@/lib/exchanges";
 import { TIMEFRAME_SECONDS, type Timeframe } from "@/lib/binance/types";
 import { formatPrice } from "@/lib/format";
@@ -55,10 +57,12 @@ export function VistaBacktest() {
   const setMedias = useBacktestStore((s) => s.setMedias);
   const setSegunda = useBacktestStore((s) => s.setSegunda);
   const setBase = useBacktestStore((s) => s.setBase);
+  const setZona = useBacktestStore((s) => s.setZona);
 
   const simbolo = bt?.simbolo ?? "";
   const desde = bt?.desde ?? 0;
   const historia = bt?.historiaPrevia ?? 365;
+  const zona = bt?.zonaHoraria ?? ZONA_BACKTEST;
 
   // ── las dos gráficas ────────────────────────────────────────────────
   //
@@ -75,6 +79,12 @@ export function VistaBacktest() {
 
   const tfBase = base === "a" ? tfA : tfB;
   const velas = base === "a" ? a.velas : b.velas;
+  /**
+   * El reloj marca el momento de una vela de la BASE, así que se lee con
+   * la misma regla que su eje: en diario y semanal, la fecha de calendario
+   * en UTC; en intradía, la zona elegida.
+   */
+  const zonaReloj = zonaDelEje(zona, tfBase);
   const error = a.error ?? b.error;
 
   // ── el momento actual ───────────────────────────────────────────────
@@ -263,8 +273,13 @@ export function VistaBacktest() {
             ))}
           </select>
         </label>
+        <TimezoneSelector
+          valor={zona}
+          onCambiar={setZona}
+          titulo="Zona horaria de este backtest"
+        />
         <span className="ml-auto font-mono text-xs tabular-nums text-tv-text">
-          {new Date(tiempo * 1000).toISOString().slice(0, 16).replace("T", " ")}
+          {fechaHoraEn(tiempo, zonaReloj)}
           {precio > 0 && (
             <span className="ml-3 text-tv-text-muted">{formatPrice(precio)}</span>
           )}
@@ -290,6 +305,7 @@ export function VistaBacktest() {
             operaciones={bt.operaciones}
             curva={base === "a" ? (resumen?.curva ?? []) : []}
             vencimientos={vencimientos}
+            zona={zona}
             onTemporalidad={setTemporalidad}
             onAlternar={alternarIndicador}
             onMedias={setMedias}
@@ -312,6 +328,7 @@ export function VistaBacktest() {
               operaciones={bt.operaciones}
               curva={base === "b" ? (resumen?.curva ?? []) : []}
               vencimientos={vencimientos}
+              zona={zona}
               onTemporalidad={setTemporalidad}
               onAlternar={alternarIndicador}
               onMedias={setMedias}
@@ -335,6 +352,7 @@ export function VistaBacktest() {
               resumen={r}
               capitalInicial={bt.capitalInicial}
               precioDe={precioAhora}
+              zona={zonaReloj}
               onCerrar={(op) => cerrarOp(op.id, precioAhora(op), tiempo)}
             />
           )}

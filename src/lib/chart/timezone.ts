@@ -9,6 +9,18 @@ export type ChartTimezone = string;
 /** Zona por defecto: UTC−5 (Quito / Bogotá / Lima), sin horario de verano. */
 export const ZONA_POR_DEFECTO = "America/Guayaquil";
 
+/**
+ * Zona por defecto del backtesting: UTC−4 fijo.
+ *
+ * Fija a propósito, no una ciudad. Nueva York es UTC−4 de marzo a
+ * noviembre y UTC−5 el resto: si el backtest usara una ciudad, el mismo
+ * backtest mostraría las velas corridas una hora según el mes, y la
+ * campana de apertura caería en dos horas distintas dentro de la misma
+ * corrida. `Etc/GMT+4` es UTC−4 todo el año (el signo va al revés en los
+ * identificadores `Etc/`, es así por POSIX).
+ */
+export const ZONA_BACKTEST = "Etc/GMT+4";
+
 export interface OpcionZona {
   id: ChartTimezone;
   nombre: string;
@@ -19,6 +31,14 @@ export interface OpcionZona {
 export const ZONAS: OpcionZona[] = [
   { id: "utc", nombre: "UTC (exchanges)", grupo: "Referencia" },
   { id: "local", nombre: "Hora del navegador", grupo: "Referencia" },
+
+  // Desfases FIJOS, sin horario de verano. Son los que uno quiere cuando
+  // compara dos épocas del año: una ciudad cambia de desfase en marzo y
+  // en noviembre, y las velas se corren una hora a mitad del backtest.
+  { id: "Etc/GMT+3", nombre: "UTC−3 fijo", grupo: "Desfase fijo" },
+  { id: "Etc/GMT+4", nombre: "UTC−4 fijo", grupo: "Desfase fijo" },
+  { id: "Etc/GMT+5", nombre: "UTC−5 fijo", grupo: "Desfase fijo" },
+  { id: "Etc/GMT+6", nombre: "UTC−6 fijo", grupo: "Desfase fijo" },
 
   { id: "America/Guayaquil", nombre: "Quito · Bogotá · Lima", grupo: "América" },
   { id: "America/Santiago", nombre: "Santiago", grupo: "América" },
@@ -182,6 +202,32 @@ export function timeFormatter(tz: ChartTimezone) {
     const p = partes(aSegundos(time), tz);
     return `${p.dia} ${MESES[p.mes]} ${p.anio}  ${dosDigitos(p.hora)}:${dosDigitos(p.min)}`;
   };
+}
+
+/**
+ * Con qué zona se escribe el eje de una temporalidad dada.
+ *
+ * Las velas diarias y semanales NO son instantes: son fechas de
+ * calendario. Binance marca la diaria a las 00:00 UTC, así que leída en
+ * UTC−4 cae el día ANTERIOR a las 20:00 y el eje muestra "2" donde la
+ * vela es la del 3. Medido. Para esas dos temporalidades el eje se
+ * escribe en UTC —que es la fecha que el exchange quiso decir— y la zona
+ * elegida manda solo en las intradía, que sí son momentos del día.
+ */
+export function zonaDelEje(tz: ChartTimezone, tf: string): ChartTimezone {
+  return tf === "1d" || tf === "1w" || tf === "1M" ? "utc" : tz;
+}
+
+/** Fecha y hora "2026-03-03 18:00" en la zona que se pida. */
+export function fechaHoraEn(timeSec: number, tz: ChartTimezone): string {
+  const p = partes(timeSec, tz);
+  return `${p.anio}-${dosDigitos(p.mes + 1)}-${dosDigitos(p.dia)} ${dosDigitos(p.hora)}:${dosDigitos(p.min)}`;
+}
+
+/** Solo la fecha, "03 mar", para las etiquetas que no tienen sitio. */
+export function fechaCortaEn(timeSec: number, tz: ChartTimezone): string {
+  const p = partes(timeSec, tz);
+  return `${dosDigitos(p.dia)} ${MESES[p.mes]}`;
 }
 
 /** Minutos de desfase respecto de UTC en este momento (Quito → −300). */

@@ -24,15 +24,31 @@ const GRUPOS = ZONAS.reduce<Record<string, OpcionZona[]>>((acc, z) => {
   return acc;
 }, {});
 
-export function TimezoneSelector() {
-  const timezone = useChartStore((s) => s.timezone);
-  const setTimezone = useChartStore((s) => s.setTimezone);
+interface Props {
+  /**
+   * Zona a mostrar y función para cambiarla.
+   *
+   * Sin estas dos, el selector maneja la zona del gráfico principal, que
+   * es lo de siempre. El backtesting le pasa la suya, porque cada corrida
+   * guarda la zona con la que se miró.
+   */
+  valor?: string;
+  onCambiar?: (tz: string) => void;
+  /** Texto del tooltip, para decir de qué gráfico se está hablando. */
+  titulo?: string;
+}
+
+export function TimezoneSelector({ valor, onCambiar, titulo }: Props = {}) {
+  const delGrafico = useChartStore((s) => s.timezone);
+  const setDelGrafico = useChartStore((s) => s.setTimezone);
+  const timezone = valor ?? delGrafico;
+  const setTimezone = onCambiar ?? setDelGrafico;
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        title={`Zona horaria del gráfico: ${nombreZona(timezone)} (${etiquetaZona(timezone)})`}
-        aria-label="Elegir zona horaria del gráfico"
+        title={`${titulo ?? "Zona horaria del gráfico"}: ${nombreZona(timezone)} (${etiquetaZona(timezone)})`}
+        aria-label="Elegir zona horaria"
         className="flex items-center gap-1.5 rounded px-2.5 py-1.5 text-xs text-tv-text-muted hover:bg-tv-panel-hover hover:text-tv-text"
       >
         <Clock className="h-3.5 w-3.5" />

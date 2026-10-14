@@ -8,6 +8,7 @@ import {
   type Operacion,
   type Resumen,
 } from "@/lib/backtest/tipos";
+import { fechaHoraEn } from "@/lib/chart/timezone";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -16,6 +17,8 @@ interface Props {
   capitalInicial: number;
   /** Precio actual del instrumento de cada operación abierta. */
   precioDe: (op: Operacion) => number;
+  /** Zona horaria para los momentos de entrada (no para los vencimientos). */
+  zona: string;
   onCerrar: (op: Operacion) => void;
 }
 
@@ -57,6 +60,9 @@ function nombreDe(op: Operacion): string {
     return op.lado === "compra" ? "Compra" : "Venta en corto";
   }
   const t = op.instrumento === "call" ? "Call" : "Put";
+  // El vencimiento es una FECHA de calendario, no un instante: el tercer
+  // viernes es el tercer viernes en cualquier zona. Leerlo en UTC−4 lo
+  // correría al jueves. Por eso este se queda en UTC a propósito.
   const v = op.vencimiento
     ? new Date(op.vencimiento * 1000).toISOString().slice(5, 10)
     : "";
@@ -68,6 +74,7 @@ export function Operaciones({
   resumen,
   capitalInicial,
   precioDe,
+  zona,
   onCerrar,
 }: Props) {
   const r = resumen;
@@ -149,9 +156,7 @@ export function Operaciones({
                     <td className="px-3 py-1.5">
                       <span className="text-tv-text">{nombreDe(op)}</span>
                       <span className="ml-1.5 text-[10px] text-tv-text-dim">
-                        {new Date(op.tiempoEntrada * 1000)
-                          .toISOString()
-                          .slice(0, 10)}
+                        {fechaHoraEn(op.tiempoEntrada, zona).slice(0, 10)}
                         {op.motivo === "vencimiento" && " · venció"}
                       </span>
                     </td>

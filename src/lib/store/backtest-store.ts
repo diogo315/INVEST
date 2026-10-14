@@ -11,6 +11,7 @@ import {
 } from "@/lib/backtest/tipos";
 import type { Timeframe } from "@/lib/binance/types";
 import { otraTemporalidad } from "@/lib/backtest/multi";
+import { ZONA_BACKTEST } from "@/lib/chart/timezone";
 import {
   MAX_MEDIAS,
   mediasPorDefecto,
@@ -79,6 +80,8 @@ interface Estado {
   setSegunda: (on: boolean) => void;
   /** Elige cuál de las dos manda el reproductor. */
   setBase: (panel: Panel) => void;
+  /** Cambia la zona horaria con la que se leen las fechas del backtest. */
+  setZona: (tz: string) => void;
   reproducir: (v: boolean) => void;
   setVelocidad: (v: number) => void;
 
@@ -169,6 +172,7 @@ export const useBacktestStore = create<Estado>()(
           desde,
           capitalInicial: borrador.capital,
           historiaPrevia: borrador.historia,
+          zonaHoraria: ZONA_BACKTEST,
           operaciones: [],
           indicadores: [],
           medias: mediasPorDefecto(),
@@ -279,6 +283,8 @@ export const useBacktestStore = create<Estado>()(
             };
           }),
         ),
+
+      setZona: (tz) => set((s) => enActivo(s, (b) => ({ ...b, zonaHoraria: tz }))),
 
       setBase: (panel) =>
         set((s) =>
