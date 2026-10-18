@@ -163,6 +163,21 @@ comprobar("cruz válida se conserva", sanearApariencia({ cruz: "iman" }).cruz ==
 comprobar("opacidad se recorta arriba", sanearApariencia({ opacidadVolumen: 500 }).opacidadVolumen === 100);
 comprobar("opacidad se recorta abajo", sanearApariencia({ opacidadVolumen: 0 }).opacidadVolumen === 10);
 comprobar("opacidad NaN cae al por defecto", sanearApariencia({ opacidadVolumen: NaN }).opacidadVolumen === D.opacidadVolumen);
+// Chapas de los indicadores: el modo nuevo.
+comprobar("por defecto las chapas van normales", D.chapas === "normal", String(D.chapas));
+comprobar("«agua» se conserva", sanearApariencia({ chapas: "agua" }).chapas === "agua");
+comprobar("«ocultas» se conserva", sanearApariencia({ chapas: "ocultas" }).chapas === "ocultas");
+comprobar("un modo inventado cae al por defecto",
+  sanearApariencia({ chapas: "neon" }).chapas === "normal");
+comprobar("y un número también",
+  sanearApariencia({ chapas: 3 }).chapas === "normal");
+// Lo guardado ANTES de que existiera el campo tiene que abrir en normal,
+// no dejar el gráfico sin chapas.
+comprobar("una apariencia vieja, sin el campo, abre en normal",
+  sanearApariencia({ fondo: "#000000", subida: "#26a69a" }).chapas === "normal");
+// Y cambiar el modo NO puede desmarcar el tema: no es un color.
+comprobar("cambiar las chapas no desmarca el tema", !tocaColores({ chapas: "agua" }));
+
 comprobar(
   "lo saneado vuelve a salir igual si se sanea otra vez",
   JSON.stringify(sanearApariencia(sanearApariencia({ subida: "#ABC" }))) ===

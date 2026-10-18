@@ -9,11 +9,18 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { TEMAS, type Apariencia } from "@/lib/chart/apariencia";
+import { TEMAS, type Apariencia, type ModoChapas } from "@/lib/chart/apariencia";
 import { useChartStore } from "@/lib/store/chart-store";
 import { cn } from "@/lib/utils";
 
 /** Una fila con su interruptor. */
+/** Los tres modos de chapa, con su explicación corta. */
+const MODOS_CHAPAS: Array<{ id: ModoChapas; nombre: string; ayuda: string }> = [
+  { id: "normal", nombre: "Normal", ayuda: "Como siempre: con fondo y botones a la vista" },
+  { id: "agua", nombre: "Marca de agua", ayuda: "Chiquitas y translúcidas; al pasar el mouse se ven enteras" },
+  { id: "ocultas", nombre: "Ocultas", ayuda: "Sin chapas: solo las velas y los indicadores dibujados" },
+];
+
 function Interruptor({
   etiqueta,
   ayuda,
@@ -319,6 +326,32 @@ export function AparienciaMenu() {
               activo={a.escalaLog}
               onChange={campo("escalaLog")}
             />
+          </Seccion>
+
+          <Seccion titulo="Chapas de los indicadores">
+            <div className="flex gap-1 px-2 py-1">
+              {MODOS_CHAPAS.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => set({ chapas: m.id })}
+                  title={m.ayuda}
+                  className={cn(
+                    "flex-1 rounded px-1.5 py-1 text-[11px] transition-colors",
+                    a.chapas === m.id
+                      ? "bg-tv-blue text-white"
+                      : "bg-tv-bg text-tv-text-muted hover:bg-tv-panel-hover hover:text-tv-text",
+                  )}
+                >
+                  {m.nombre}
+                </button>
+              ))}
+            </div>
+            <p className="px-2 pb-1 text-[10px] leading-relaxed text-tv-text-dim">
+              Con varios gráficos a la vez, las listas de indicadores tapan
+              buena parte de las velas. «Marca de agua» las deja chiquitas y
+              translúcidas, y vuelven a verse enteras al pasar el mouse.
+            </p>
           </Seccion>
 
           <Seccion titulo="Volumen">

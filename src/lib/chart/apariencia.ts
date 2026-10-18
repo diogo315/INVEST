@@ -48,7 +48,22 @@ export interface Apariencia {
 
   /** Qué tan opacas se ven las barras de volumen, de 10 a 100. */
   opacidadVolumen: number;
+
+  // ── chapas de los indicadores ─────────────────────────────────────
+  /**
+   * Cómo se ven las chapas (la lista de indicadores arriba a la
+   * izquierda de cada panel).
+   *
+   * Con varios gráficos a la vez son varias listas a la vez, y entre
+   * todas tapan buena parte de las velas. «agua» las deja como marca de
+   * agua: más chicas, sin fondo ni marco y translúcidas, y recuperan su
+   * aspecto normal al pasar el mouse por encima.
+   */
+  chapas: ModoChapas;
 }
+
+/** Normal, marca de agua, u ocultas del todo. */
+export type ModoChapas = "normal" | "agua" | "ocultas";
 
 export interface Tema {
   id: string;
@@ -143,6 +158,7 @@ export const APARIENCIA_POR_DEFECTO: Apariencia = {
   lineaPrecio: true,
   escalaLog: false,
   opacidadVolumen: 40,
+  chapas: "normal",
 };
 
 /** Los campos que un preset fija. El resto son interruptores. */
@@ -308,5 +324,7 @@ export function sanearApariencia(crudo: unknown): Apariencia {
       typeof c.opacidadVolumen === "number" && Number.isFinite(c.opacidadVolumen)
         ? Math.min(100, Math.max(10, Math.round(c.opacidadVolumen)))
         : d.opacidadVolumen,
+    chapas:
+      c.chapas === "agua" || c.chapas === "ocultas" ? c.chapas : d.chapas,
   };
 }

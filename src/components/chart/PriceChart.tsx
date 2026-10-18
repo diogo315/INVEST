@@ -421,6 +421,8 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
     setSettingsTargetStore(k, graficoId);
   const timezone = useChartStore((s) => s.timezone);
   const apariencia = useChartStore((s) => s.apariencia);
+  /** Cómo se dibujan las chapas de los indicadores: normal, agua u ocultas. */
+  const modoChapas = apariencia.chapas;
   const refreshNonce = useChartStore((s) => s.refreshNonce);
   const velasHistoria = useChartStore((s) => s.velasHistoria);
   const seleccionarDibujo = useChartStore((s) => s.seleccionarDibujo);
@@ -3427,6 +3429,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
       value={def.valor(lastValues.nuevos?.[def.clave] ?? {}, formatPrice)}
       color={INDICATOR_COLORS[def.clave]}
       hidden={hidden[def.clave]}
+      modo={modoChapas}
       onToggleHide={() => toggleHidden(def.clave)}
       onSettings={() => setSettingsTarget(def.clave)}
       onRemove={() => removeIndicator(def.clave)}
@@ -3667,6 +3670,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
                 apagada: !m.visible,
               }))}
               hidden={hidden.medias}
+              modo={modoChapas}
               onToggleHide={() => toggleHidden("medias")}
               onSettings={() => setSettingsTarget("medias")}
               onRemove={() => removeIndicator("medias")}
@@ -3678,6 +3682,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
               value={lastValues.volume !== undefined ? formatVolume(lastValues.volume) : undefined}
               color={INDICATOR_COLORS.volume}
               hidden={hidden.volume}
+              modo={modoChapas}
               onToggleHide={() => toggleHidden("volume")}
               onSettings={() => setSettingsTarget("volume")}
               onRemove={() => removeIndicator("volume")}
@@ -3693,6 +3698,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
               }
               color={INDICATOR_COLORS.bb}
               hidden={hidden.bb}
+              modo={modoChapas}
               onToggleHide={() => toggleHidden("bb")}
               onSettings={() => setSettingsTarget("bb")}
               onRemove={() => removeIndicator("bb")}
@@ -3723,6 +3729,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
               }
               color={INDICATOR_COLORS.vwap}
               hidden={hidden.vwap}
+              modo={modoChapas}
               onToggleHide={() => toggleHidden("vwap")}
               onSettings={() => setSettingsTarget("vwap")}
               onRemove={() => removeIndicator("vwap")}
@@ -3738,6 +3745,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
               }
               color={INDICATOR_COLORS.gli}
               hidden={hidden.gli}
+              modo={modoChapas}
               onToggleHide={() => toggleHidden("gli")}
               onSettings={() => setSettingsTarget("gli")}
               onRemove={() => removeIndicator("gli")}
@@ -3782,6 +3790,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
             value={lastValues.rsi !== undefined ? lastValues.rsi.toFixed(2) : undefined}
             color={INDICATOR_COLORS.rsi}
             hidden={hidden.rsi}
+            modo={modoChapas}
             onToggleHide={() => toggleHidden("rsi")}
             onSettings={() => setSettingsTarget("rsi")}
             onRemove={() => removeIndicator("rsi")}
@@ -3804,6 +3813,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
             }
             color={INDICATOR_COLORS.macd}
             hidden={hidden.macd}
+            modo={modoChapas}
             onToggleHide={() => toggleHidden("macd")}
             onSettings={() => setSettingsTarget("macd")}
             onRemove={() => removeIndicator("macd")}
@@ -3826,6 +3836,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
             }
             color={INDICATOR_COLORS.cipher}
             hidden={hidden.cipher}
+            modo={modoChapas}
             onToggleHide={() => toggleHidden("cipher")}
             onSettings={() => setSettingsTarget("cipher")}
             onRemove={() => removeIndicator("cipher")}
@@ -3848,6 +3859,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
             }
             color={INDICATOR_COLORS.stoch}
             hidden={hidden.stoch}
+            modo={modoChapas}
             onToggleHide={() => toggleHidden("stoch")}
             onSettings={() => setSettingsTarget("stoch")}
             onRemove={() => removeIndicator("stoch")}
@@ -3870,6 +3882,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
             }
             color={INDICATOR_COLORS.srsi}
             hidden={hidden.srsi}
+            modo={modoChapas}
             onToggleHide={() => toggleHidden("srsi")}
             onSettings={() => setSettingsTarget("srsi")}
             onRemove={() => removeIndicator("srsi")}
