@@ -18,11 +18,24 @@ import {
   type ConfigEstrategia,
   type OperacionEstrategia,
 } from "@/lib/estrategia/motor";
+import {
+  correrDosFvg,
+  type ConfigDosFvg,
+  type OperacionDosFvg,
+} from "@/lib/estrategia/dosfvg";
 import { resumir, type Resumen } from "@/lib/estrategia/estadistica";
+
+/** Qué estrategia se corre. Son dos cosas distintas, no variantes de una. */
+export type QueEstrategia = "smc" | "dosfvg";
+
+/** La configuración de la estrategia elegida. */
+export type ConfigDeEstrategia =
+  | { cual: "smc"; cfg: ConfigEstrategia }
+  | { cual: "dosfvg"; cfg: ConfigDosFvg };
 
 export interface ResultadoActivo {
   simbolo: string;
-  operaciones: OperacionEstrategia[];
+  operaciones: Array<OperacionEstrategia | OperacionDosFvg>;
   resumen: Resumen;
   caducados: number;
   invalidados: number;
@@ -57,10 +70,47 @@ export async function correrUno(
   simbolo: string,
   tfEntrada: Timeframe,
   meses: number,
-  cfg: ConfigEstrategia,
+  elegida: ConfigDeEstrategia,
   traer: (simbolo: string, tf: Timeframe, limite: number) => Promise<Candle[]>,
 ): Promise<ResultadoActivo> {
   const vacio = { h4: 0, m15: 0, entrada: 0 };
+  // La de los dos FVG entra en la misma vela de 15M, así que no baja una
+  // tercera serie: pedirla sería tráfico al vacío.
+  if (elegida.cual === "dosfvg") {
+    try {
+      const [h4, m15] = await Promise.all([
+        traer(simbolo, "4h", velasNecesarias("4h", meses)),
+        traer(simbolo, "15m", velasNecesarias("15m", meses)),
+      ]);
+      const velas = { h4: h4.length, m15: m15.length, entrada: m15.length };
+      if (h4.length < 50 || m15.length < 200) {
+        return {
+          simbolo, operaciones: [], resumen: resumir([]), caducados: 0, invalidados: 0,
+          error: `Datos insuficientes (${h4.length} de 4H, ${m15.length} de 15M)`,
+          velas,
+        };
+      }
+      const r = correrDosFvg(h4, m15, elegida.cfg);
+      return {
+        simbolo,
+        operaciones: r.operaciones,
+        resumen: resumir(r.operaciones.map((o) => o.erres)),
+        // Los montajes que se cayeron, cada uno en su columna: acá un
+        // toque de 4H se cae por no dar FVG de 15M («caducado») o por
+        // darlo y que el precio nunca vuelva a él («invalidado»).
+        caducados: r.sinFvg15,
+        invalidados: r.sinEntrada,
+        velas,
+      };
+    } catch (e) {
+      return {
+        simbolo, operaciones: [], resumen: resumir([]), caducados: 0, invalidados: 0,
+        error: e instanceof Error ? e.message : "No se pudieron bajar las velas",
+        velas: vacio,
+      };
+    }
+  }
+  const cfg = elegida.cfg;
   try {
     const [h4, m15, entrada] = await Promise.all([
       traer(simbolo, "4h", velasNecesarias("4h", meses)),
@@ -100,7 +150,7 @@ export async function correrVarios(
   simbolos: string[],
   tfEntrada: Timeframe,
   meses: number,
-  cfg: ConfigEstrategia,
+  elegida: ConfigDeEstrategia,
   traer: (simbolo: string, tf: Timeframe, limite: number) => Promise<Candle[]>,
   alAvanzar?: (a: Avance) => void,
   seguir?: () => boolean,
@@ -109,7 +159,7 @@ export async function correrVarios(
   for (let i = 0; i < simbolos.length; i++) {
     if (seguir && !seguir()) break;
     alAvanzar?.({ hecho: i, total: simbolos.length, simbolo: simbolos[i], paso: "bajando" });
-    const r = await correrUno(simbolos[i], tfEntrada, meses, cfg, traer);
+    const r = await correrUno(simbolos[i], tfEntrada, meses, elegida, traer);
     salida.push(r);
     alAvanzar?.({ hecho: i + 1, total: simbolos.length, simbolo: simbolos[i], paso: "calculando" });
   }

@@ -6,11 +6,13 @@ import { getAdapter, parseSymbol } from "@/lib/exchanges";
 import { useChartStore } from "@/lib/store/chart-store";
 import type { Candle, Timeframe } from "@/lib/binance/types";
 import { CONFIG_POR_DEFECTO, type ConfigEstrategia } from "@/lib/estrategia/motor";
+import { DOSFVG_POR_DEFECTO, type ConfigDosFvg } from "@/lib/estrategia/dosfvg";
 import {
   correrVarios,
   resumenGlobal,
   velasNecesarias,
   type Avance,
+  type QueEstrategia,
   type ResultadoActivo,
 } from "@/lib/estrategia/corrida";
 import { operacionesNecesarias, seSolapan } from "@/lib/estrategia/estadistica";
@@ -26,7 +28,9 @@ export function VistaEstrategias() {
   const listas = useChartStore((s) => s.listas);
   const [tfEntrada, setTfEntrada] = useState<Timeframe>("5m");
   const [meses, setMeses] = useState(6);
+  const [cual, setCual] = useState<QueEstrategia>("smc");
   const [cfg, setCfg] = useState<ConfigEstrategia>(CONFIG_POR_DEFECTO);
+  const [cfg2, setCfg2] = useState<ConfigDosFvg>(DOSFVG_POR_DEFECTO);
   const [elegidos, setElegidos] = useState<Set<string>>(new Set());
   const [avance, setAvance] = useState<Avance | null>(null);
   const [resultados, setResultados] = useState<ResultadoActivo[] | null>(null);
@@ -68,7 +72,9 @@ export function VistaEstrategias() {
     setActivo(true);
     setResultados(null);
     const r = await correrVarios(
-      lista, tfEntrada, meses, cfg, traer,
+      lista, tfEntrada, meses,
+      cual === "smc" ? { cual: "smc", cfg } : { cual: "dosfvg", cfg: cfg2 },
+      traer,
       (a) => setAvance(a),
       () => corriendo.current,
     );
@@ -89,24 +95,62 @@ export function VistaEstrategias() {
   const mejor = ordenados.find((r) => r.resumen.n >= 2) ?? null;
 
   const velasPorActivo =
-    velasNecesarias("4h", meses) +
-    velasNecesarias("15m", meses) +
-    velasNecesarias(tfEntrada, meses);
+    cual === "dosfvg"
+      ? velasNecesarias("4h", meses) + velasNecesarias("15m", meses)
+      : velasNecesarias("4h", meses) +
+        velasNecesarias("15m", meses) +
+        velasNecesarias(tfEntrada, meses);
+
+  // Cambiar de estrategia tira los resultados: dejar la tabla de la otra
+  // puesta mientras el encabezado ya dice otra cosa es la mejor forma de
+  // que alguien lea los números equivocados.
+  const cambiarEstrategia = (q: QueEstrategia) => {
+    if (q === cual) return;
+    setCual(q);
+    setResultados(null);
+  };
 
   return (
     <div className="mx-auto w-full max-w-6xl space-y-5 p-5">
-      <header className="space-y-2">
+      <header className="space-y-3">
+        <div className="flex flex-wrap gap-1">
+          <Boton activo={cual === "smc"} onClick={() => cambiarEstrategia("smc")}>
+            SMC de tres tiempos
+          </Boton>
+          <Boton activo={cual === "dosfvg"} onClick={() => cambiarEstrategia("dosfvg")}>
+            Dos FVG (4H → 15M)
+          </Boton>
+        </div>
         <h1 className="text-lg font-semibold text-tv-text">
-          Estrategia SMC de tres tiempos
+          {cual === "smc"
+            ? "Estrategia SMC de tres tiempos"
+            : "Estrategia de dos FVG: 4H marca, 15M entra"}
         </h1>
-        <p className="max-w-3xl text-xs leading-relaxed text-tv-text-muted">
-          4H da el contexto: el precio vuelve a un desequilibrio alcista sin
-          mitigar, después de barrer un máximo previo. 15M confirma con un
-          cambio de carácter dentro de esa zona y deja un POI. La temporalidad
-          fina entra cuando el precio vuelve a ese POI y rompe su último
-          máximo. Parciales en el máximo previo de 15M, stop a breakeven, el
-          resto a {cfg.rrObjetivo} erres.
-        </p>
+        {cual === "smc" ? (
+          <p className="max-w-3xl text-xs leading-relaxed text-tv-text-muted">
+            4H da el contexto: el precio vuelve a un desequilibrio alcista sin
+            mitigar, después de barrer un máximo previo. 15M confirma con un
+            cambio de carácter dentro de esa zona y deja un POI. La
+            temporalidad fina entra cuando el precio vuelve a ese POI y rompe
+            su último máximo. Parciales en el máximo previo de 15M, stop a
+            breakeven, el resto a {cfg.rrObjetivo} erres.
+          </p>
+        ) : (
+          <div className="max-w-3xl space-y-1.5 text-xs leading-relaxed text-tv-text-muted">
+            <p>
+              Cuatro pasos: aparece un FVG en 4H, el precio vuelve a tocarlo,
+              se forma un FVG nuevo de 15M en la misma dirección, y se entra
+              en ese FVG de 15M buscando {cfg2.rr} erres.
+            </p>
+            <p className="text-tv-yellow">
+              El planteo original no dice dónde va el stop, y sin stop no hay
+              erres. Acá va al swing que creó el hueco de 15M, que es el
+              supuesto más conservador de los dos: al borde del hueco las
+              operaciones duran una vela y lo que se mide es el recorrido
+              intravela, no la estrategia.
+            </p>
+          </div>
+        )}
       </header>
 
       {/* ── la advertencia que más importa ─────────────────────────── */}
@@ -115,40 +159,59 @@ export function VistaEstrategias() {
         <div className="space-y-1.5">
           <p>
             <strong className="text-tv-yellow">Esto mide UNA codificación
-            de la estrategia, no «la estrategia».</strong> Marcar el POI o
-            decidir qué cuenta como barrido es discrecional: acá está
-            congelado en las reglas de abajo, que podés mover.
+            de la estrategia, no «la estrategia».</strong>{" "}
+            {cual === "smc"
+              ? "Marcar el POI o decidir qué cuenta como barrido es discrecional: acá está congelado en las reglas de abajo, que podés mover."
+              : "Dónde va el stop, qué cuenta como tocar el hueco de 4H y en qué parte del hueco de 15M se entra son decisiones que el planteo original no toma: acá están congeladas en las reglas de abajo, que podés mover."}
           </p>
           <p>
             Dentro de cada vela se supone siempre lo peor: si tocó el stop y
             el objetivo, se cobra el stop. El resultado es una cota inferior.
           </p>
           <p>
-            Y lo más importante: esta estrategia dispara poco. Con ganadoras
-            de {cfg.rrObjetivo}R y perdedoras de 1R hacen falta más de cien
-            operaciones para separar el resultado del azar. Por activo, en
-            seis meses, no se llega — por eso cada fila lleva su margen de
-            error y la tabla marca cuáles diferencias son ruido.
+            Y lo más importante: con ganadoras de{" "}
+            {cual === "smc" ? cfg.rrObjetivo : cfg2.rr}R y perdedoras de 1R
+            hacen falta más de cien operaciones para separar el resultado del
+            azar. Por activo, en seis meses, no se llega — por eso cada fila
+            lleva su margen de error y la tabla marca cuáles diferencias son
+            ruido.
           </p>
         </div>
       </div>
 
       {/* ── configuración ──────────────────────────────────────────── */}
       <section className="grid gap-4 rounded border border-tv-border bg-tv-panel p-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Campo titulo="Temporalidad de entrada">
-          <div className="flex gap-1">
-            {TF_ENTRADA.map((t) => (
-              <Boton key={t} activo={t === tfEntrada} onClick={() => setTfEntrada(t)}>
-                {t}
-              </Boton>
-            ))}
-          </div>
-          <Nota>
-            {tfEntrada === "1m"
-              ? "Fiel a la foto, pero son ~260 peticiones por activo."
-              : "Cinco veces menos datos. Buena para la primera pasada."}
-          </Nota>
-        </Campo>
+        {cual === "smc" ? (
+          <Campo titulo="Temporalidad de entrada">
+            <div className="flex gap-1">
+              {TF_ENTRADA.map((t) => (
+                <Boton key={t} activo={t === tfEntrada} onClick={() => setTfEntrada(t)}>
+                  {t}
+                </Boton>
+              ))}
+            </div>
+            <Nota>
+              {tfEntrada === "1m"
+                ? "Fiel a la foto, pero son ~260 peticiones por activo."
+                : "Cinco veces menos datos. Buena para la primera pasada."}
+            </Nota>
+          </Campo>
+        ) : (
+          <Campo titulo="Dónde va el stop">
+            <div className="flex gap-1">
+              {(["swing", "hueco"] as const).map((s) => (
+                <Boton key={s} activo={cfg2.stop === s} onClick={() => setCfg2({ ...cfg2, stop: s })}>
+                  {s === "swing" ? "swing del impulso" : "borde del hueco"}
+                </Boton>
+              ))}
+            </div>
+            <Nota>
+              {cfg2.stop === "swing"
+                ? "El supuesto honesto: operaciones de varias velas."
+                : "Cuidado: con el stop ahí las operaciones abren y cierran en la misma vela y el resultado no es comparable."}
+            </Nota>
+          </Campo>
+        )}
 
         <Campo titulo="Ventana">
           <div className="flex gap-1">
@@ -164,13 +227,17 @@ export function VistaEstrategias() {
         <Campo titulo="Costos (ida y vuelta)">
           <div className="flex items-center gap-2">
             <Numero
-              valor={cfg.comision}
-              onCambiar={(v) => setCfg({ ...cfg, comision: v })}
+              valor={cual === "smc" ? cfg.comision : cfg2.comision}
+              onCambiar={(v) =>
+                cual === "smc" ? setCfg({ ...cfg, comision: v }) : setCfg2({ ...cfg2, comision: v })
+              }
               sufijo="% com."
             />
             <Numero
-              valor={cfg.spread}
-              onCambiar={(v) => setCfg({ ...cfg, spread: v })}
+              valor={cual === "smc" ? cfg.spread : cfg2.spread}
+              onCambiar={(v) =>
+                cual === "smc" ? setCfg({ ...cfg, spread: v }) : setCfg2({ ...cfg2, spread: v })
+              }
               sufijo="% spread"
             />
           </div>
@@ -180,26 +247,58 @@ export function VistaEstrategias() {
           </Nota>
         </Campo>
 
-        <Campo titulo="Reglas discrecionales">
-          <div className="space-y-1.5">
-            <label className="flex items-center gap-2 text-[11px] text-tv-text-muted">
-              <input
-                type="checkbox"
-                checked={cfg.exigirBarrido}
-                onChange={(e) => setCfg({ ...cfg, exigirBarrido: e.target.checked })}
-                className="accent-tv-blue"
-              />
-              Exigir barrido del máximo previo
-            </label>
-            <div className="flex gap-1">
-              {(["vela", "hueco"] as const).map((p) => (
-                <Boton key={p} activo={cfg.poi === p} onClick={() => setCfg({ ...cfg, poi: p })}>
-                  POI: {p === "vela" ? "order block" : "desequilibrio"}
-                </Boton>
-              ))}
+        {cual === "smc" ? (
+          <Campo titulo="Reglas discrecionales">
+            <div className="space-y-1.5">
+              <label className="flex items-center gap-2 text-[11px] text-tv-text-muted">
+                <input
+                  type="checkbox"
+                  checked={cfg.exigirBarrido}
+                  onChange={(e) => setCfg({ ...cfg, exigirBarrido: e.target.checked })}
+                  className="accent-tv-blue"
+                />
+                Exigir barrido del máximo previo
+              </label>
+              <div className="flex gap-1">
+                {(["vela", "hueco"] as const).map((p) => (
+                  <Boton key={p} activo={cfg.poi === p} onClick={() => setCfg({ ...cfg, poi: p })}>
+                    POI: {p === "vela" ? "order block" : "desequilibrio"}
+                  </Boton>
+                ))}
+              </div>
             </div>
-          </div>
-        </Campo>
+          </Campo>
+        ) : (
+          <Campo titulo="Lo que el planteo no dice">
+            <div className="space-y-1.5">
+              <label className="flex items-center gap-2 text-[11px] text-tv-text-muted">
+                <input
+                  type="checkbox"
+                  checked={cfg2.toqueCompleto}
+                  onChange={(e) => setCfg2({ ...cfg2, toqueCompleto: e.target.checked })}
+                  className="accent-tv-blue"
+                />
+                Exigir que el hueco de 4H se rellene entero
+              </label>
+              <div className="flex items-center gap-2">
+                <Numero
+                  valor={cfg2.rr}
+                  onCambiar={(v) => setCfg2({ ...cfg2, rr: v })}
+                  sufijo="R objetivo"
+                />
+                <Numero
+                  valor={cfg2.entradaEn}
+                  onCambiar={(v) => setCfg2({ ...cfg2, entradaEn: v })}
+                  sufijo="del hueco"
+                />
+              </div>
+              <Nota>
+                Entrada: 0 el borde que el precio toca primero, 0.5 la mitad,
+                1 el fondo.
+              </Nota>
+            </div>
+          </Campo>
+        )}
       </section>
 
       {/* ── activos ────────────────────────────────────────────────── */}

@@ -309,15 +309,35 @@ console.log("Paseo aleatorio puro: la estrategia tiene que PERDER");
   // hay NADA que explotar. Si el motor sacara ventaja acá, sería porque
   // está viendo algo que no debería, y es la mejor red contra una fuga
   // sutil de futuro que no atrape la prueba de los cortes.
-  const paseo = (sem, n = 20000) => {
-    let s = sem;
-    const r = () => ((s = (s * 1103515245 + 12345) % 2147483648) / 2147483648 - 0.5);
+  //
+  // Los máximos y mínimos de cada vela salen de SUB-PASOS, no de
+  // inflarle un porcentaje fijo al cuerpo. La versión anterior usaba
+  // `high = max(apertura, cierre) * 1.0015`, o sea un 0,3 % de rango
+  // regalado por vela que no venía del paseo. Como los FVG y los
+  // pivotes se leen de máximos y mínimos, eso le mete al control una
+  // ventaja propia del generador: en la otra estrategia (dosfvg) llegó
+  // a marcar +0,15R donde no había nada. Acá el control ya pasaba, pero
+  // un control que se cree por un defecto que tiene a favor no sirve.
+  const paseo = (sem, n = 20000, sub = 40) => {
+    let a0 = sem | 0;
+    const u = () => {
+      a0 = (a0 + 0x6d2b79f5) | 0;
+      let t = Math.imul(a0 ^ (a0 >>> 15), 1 | a0);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
     let p = 100;
     const m5 = [];
     for (let i = 0; i < n; i++) {
-      p = Math.max(1, p * (1 + r() * 0.005));
-      const o = p / (1 + r() * 0.001);
-      m5.push(vela(T0 + i * M5, o, Math.max(o, p) * 1.0015, Math.min(o, p) * 0.9985, p, 1000));
+      const o = p;
+      let hi = p;
+      let lo = p;
+      for (let k = 0; k < sub; k++) {
+        p = Math.max(1, p * (1 + (u() - 0.5) * 0.0013));
+        if (p > hi) hi = p;
+        if (p < lo) lo = p;
+      }
+      m5.push(vela(T0 + i * M5, o, hi, lo, p, 1000));
     }
     const ag = (f, k) => {
       const out = [];
@@ -332,24 +352,39 @@ console.log("Paseo aleatorio puro: la estrategia tiene que PERDER");
     return { m5, m15: ag(m5, 3), h4: ag(m5, 48) };
   };
 
-  let ops = 0;
+  const sin = [];
   let conCosto = 0;
-  let sinCosto = 0;
-  for (let sem = 1; sem <= 10; sem++) {
+  for (let sem = 1; sem <= 60; sem++) {
     const W2 = paseo(sem * 4567);
     const a = correrEstrategia(W2.h4, W2.m15, W2.m5, M5, CONFIG_POR_DEFECTO);
     const b = correrEstrategia(W2.h4, W2.m15, W2.m5, M5,
       { ...CONFIG_POR_DEFECTO, comision: 0, spread: 0 });
-    ops += a.operaciones.length;
     conCosto += a.operaciones.reduce((s, o) => s + o.erres, 0);
-    sinCosto += b.operaciones.reduce((s, o) => s + o.erres, 0);
+    for (const o of b.operaciones) sin.push(o.erres);
   }
+  const ops = sin.length;
+  const media = sin.reduce((s, x) => s + x, 0) / ops;
+  const desv = Math.sqrt(sin.reduce((s, x) => s + (x - media) ** 2, 0) / (ops - 1));
+  const margen = (1.96 * desv) / Math.sqrt(ops);
+
+  // El umbral es el INTERVALO, no un número puesto a dedo.
+  //
+  // Antes esto comparaba la media contra 0,05 con unas doscientas
+  // operaciones. Con una desviación de ~1,6R por operación, doscientas
+  // operaciones dan un margen de ±0,22R: el umbral pedía una precisión
+  // diez veces mayor que la que tenía la muestra, así que el control
+  // fallaba o pasaba según la semilla. Medido con 10.081 operaciones, la
+  // esperanza real del motor en paseo aleatorio es +0,016R ± 0,029, o
+  // sea cero. Lo correcto es exigir que el cero esté DENTRO del
+  // intervalo, y decir qué tamaño de fuga alcanza a ver esta muestra.
   comprobar("dispara lo suficiente como para que el control signifique algo",
-    ops >= 40, String(ops));
-  comprobar("SIN costos, la esperanza NO es positiva",
-    sinCosto / ops <= 0.05, `${(sinCosto / ops).toFixed(3)}R por operación`);
+    ops >= 1000, String(ops));
+  comprobar("SIN costos, el cero está dentro del intervalo de confianza",
+    media - margen <= 0,
+    `${media >= 0 ? "+" : ""}${media.toFixed(3)}R ± ${margen.toFixed(3)} → [${(media - margen).toFixed(3)}, ${(media + margen).toFixed(3)}]`);
+  console.log(`     (esta muestra detecta fugas de ${margen.toFixed(2)}R por operación o más)`);
   comprobar("CON costos, pierde todavía más",
-    conCosto < sinCosto, `${(conCosto / ops).toFixed(3)} vs ${(sinCosto / ops).toFixed(3)}`);
+    conCosto / ops < media, `${(conCosto / ops).toFixed(3)} vs ${media.toFixed(3)}`);
 }
 
 // ── EL SUPUESTO PELIGROSO: qué pasa primero dentro de una vela ──
@@ -377,10 +412,11 @@ console.log("Dentro de una vela se supone SIEMPRE lo malo");
   const soloStop = gestionar(nueva(), vela(T0, 100, 101, 98, 99), cfg, 0);
   comprobar("solo stop también es stop", soloStop?.motivo === "stop");
 
-  // Solo parcial: no cierra, pero mueve el stop a breakeven.
+  // Solo parcial, con la vela SIN bajar de la entrada: no cierra, pero
+  // mueve el stop a breakeven.
   const viva = nueva();
   comprobar("tocar el objetivo 1 no cierra la operación",
-    gestionar(viva, vela(T0, 100, 103.5, 100, 103), cfg, 0) === null);
+    gestionar(viva, vela(T0, 100, 103.5, 100.5, 103), cfg, 0) === null);
   comprobar("pero mueve el stop a la entrada", viva.stop === 100, String(viva.stop));
   comprobar("y deja cobrada la mitad de 3R", Math.abs(viva.acumulado - 1.5) < 1e-9,
     String(viva.acumulado));
@@ -391,11 +427,24 @@ console.log("Dentro de una vela se supone SIEMPRE lo malo");
   comprobar("y conserva lo cobrado en la parcial", Math.abs((be?.erres ?? 0) - 1.5) < 1e-9,
     String(be?.erres));
 
-  // Una vela que recorre de 100 a 106 pasa por el objetivo 1 ANTES que
-  // por el 2: acá el orden sí se conoce, así que cobra los dos. No es el
-  // mismo caso que stop-y-objetivo, donde el orden es una incógnita.
+  // LA MISMA VELA QUE COBRA LA PARCIAL YA SE REVISA CONTRA EL BREAKEVEN.
+  // Si esa vela llegó al objetivo 1 y además bajó de la entrada, no se
+  // sabe en qué orden pasó, así que se supone lo peor: parcial cobrada y
+  // operación cerrada en breakeven ahí mismo. Sin esto, la vela de la
+  // parcial le regalaba a la operación una opción gratis sobre el 5R.
+  const mismaVela = nueva();
+  const ahi = gestionar(mismaVela, vela(T0, 100, 103.5, 99.5, 101), cfg, 0);
+  comprobar("la vela de la parcial que baja de la entrada cierra en breakeven",
+    ahi?.motivo === "breakeven", JSON.stringify(ahi?.motivo));
+  comprobar("y se queda solo con la parcial", Math.abs((ahi?.erres ?? 0) - 1.5) < 1e-9,
+    String(ahi?.erres));
+
+  // Una vela que recorre de 100 a 106 SIN bajar de la entrada pasa por el
+  // objetivo 1 antes que por el 2: acá el orden sí se conoce, así que
+  // cobra los dos. No es el mismo caso que stop-y-objetivo, donde el
+  // orden es una incógnita.
   const sinParcial = nueva();
-  const salto = gestionar(sinParcial, vela(T0, 100, 105.5, 100, 105), cfg, 0);
+  const salto = gestionar(sinParcial, vela(T0, 100, 105.5, 100.5, 105), cfg, 0);
   comprobar("una vela que recorre los dos objetivos cobra los dos",
     salto?.motivo === "objetivo", JSON.stringify(salto?.motivo));
   comprobar("1.5R de la parcial más 2.5R del resto",

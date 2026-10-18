@@ -337,6 +337,21 @@ export function gestionar(
     a.tocoParcial = true;
     // Stop a breakeven, como dice la foto: "TP1 (BE)".
     a.stop = a.entrada;
+    // Y LA MISMA VELA SE REVISA CONTRA EL STOP NUEVO.
+    //
+    // Sin esto, la vela que cobra la parcial le regala a la operación
+    // una opción gratis: dentro de esa vela el precio puede haber
+    // vuelto a la entrada —que ya es el stop— y aun así la operación
+    // seguía viva para cobrar el 3R después. Como no se sabe en qué
+    // orden pasaron las cosas dentro de la vela, hay que suponer lo
+    // peor, igual que en todo el resto del motor. El control del paseo
+    // aleatorio lo cantó: con los máximos y mínimos bien construidos
+    // daba +0,13R por operación donde no hay nada que ganar.
+    if (v.low <= a.stop) {
+      // El stop ES la entrada, así que el resto de la posición sale en
+      // cero erres y solo queda lo cobrado en la parcial, menos costos.
+      return cerrar(a, a.stop, v.time, "breakeven", a.acumulado - costoEnErres(costo, a), cfg);
+    }
   }
   if (a.tocoParcial && v.high >= a.objetivo2) {
     const resto = 1 - a.cerradoParcial;
