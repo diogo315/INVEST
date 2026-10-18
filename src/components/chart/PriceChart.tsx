@@ -3576,8 +3576,19 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
       {/* Top-left of main pane: symbol info + OHLC + Volume pill + EMA pills */}
       <div
         hidden={!verPane(0)}
-        style={{ top: (paneOffsets[0]?.top ?? 0) + 12, left: 12 }}
-        className="pointer-events-none absolute z-10 flex flex-col gap-1 text-xs tabular-nums"
+        // El `right` es lo que hace que la chapa NO se desborde.
+        //
+        // Iba solo con `left`, así que el bloque crecía con su contenido y
+        // el `overflow-hidden` de la fila no recortaba nada: en una celda
+        // angosta —tres gráficos lado a lado— la línea "SÍMBOLO · 15M ·
+        // Binance O… H… L… C…" se montaba encima de la escala de precios
+        // y del gráfico de al lado. Acotada a la escala, se corta sola.
+        style={{
+          top: (paneOffsets[0]?.top ?? 0) + 12,
+          left: 12,
+          right: anchoEscala + 8,
+        }}
+        className="pointer-events-none absolute z-10 flex flex-col items-start gap-1 text-xs tabular-nums"
       >
         {/* Row 1: symbol info + OHLC stats inline on hover (fixed height, never wraps) */}
         <div className="flex h-5 flex-nowrap items-center gap-x-3 overflow-hidden whitespace-nowrap">

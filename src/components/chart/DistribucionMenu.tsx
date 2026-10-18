@@ -38,6 +38,14 @@ function Miniatura({ id, activa }: { id: Distribucion; activa: boolean }) {
         <div className={cn(celda, "flex-1")} />
       </div>
     );
+  if (id === "3v")
+    return (
+      <div className={marco}>
+        <div className={cn(celda, "flex-1")} />
+        <div className={cn(celda, "flex-1")} />
+        <div className={cn(celda, "flex-1")} />
+      </div>
+    );
   if (id === "3")
     return (
       <div className={cn(marco, "flex-col")}>

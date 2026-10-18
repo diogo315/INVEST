@@ -1,7 +1,6 @@
 "use client";
 
 import { GRAFICOS_DE, useChartStore } from "@/lib/store/chart-store";
-import { cn } from "@/lib/utils";
 import { PriceChart } from "./PriceChart";
 
 /**
@@ -39,25 +38,20 @@ export function MultiChart() {
 
   // `grid-rows-2` con `minmax(0,1fr)` para que las filas se puedan encoger:
   // sin eso el canvas de cada chart impone su alto y la grilla se desborda.
-  const clase =
-    distribucion === "2v"
-      ? "grid-cols-2 grid-rows-1"
-      : distribucion === "2h"
-        ? "grid-cols-1 grid-rows-2"
-        : "grid-cols-2 grid-rows-2";
+  // Las columnas y filas van con `minmax(0,1fr)` para que se puedan
+  // encoger: sin eso el canvas de cada chart impone su tamaño y la grilla
+  // se desborda.
+  const una = "minmax(0,1fr)";
+  const columnas =
+    distribucion === "2h" ? una
+    : distribucion === "3v" ? `${una} ${una} ${una}`
+    : `${una} ${una}`;
+  const filas = distribucion === "2v" || distribucion === "3v" ? una : `${una} ${una}`;
 
   return (
     <div
-      className={cn(
-        "grid h-full min-h-0 w-full min-w-0 gap-px bg-tv-border",
-        clase,
-      )}
-      style={{
-        gridTemplateColumns:
-          distribucion === "2h" ? "minmax(0,1fr)" : "minmax(0,1fr) minmax(0,1fr)",
-        gridTemplateRows:
-          distribucion === "2v" ? "minmax(0,1fr)" : "minmax(0,1fr) minmax(0,1fr)",
-      }}
+      className="grid h-full min-h-0 w-full min-w-0 gap-px bg-tv-border"
+      style={{ gridTemplateColumns: columnas, gridTemplateRows: filas }}
     >
       {graficos.map((g, i) => (
         <div

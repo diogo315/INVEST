@@ -517,15 +517,17 @@ export interface Grafico {
  *  · 2v — dos, lado a lado
  *  · 2h — dos, uno arriba del otro
  *  · 3  — uno grande arriba y dos abajo
+ *  · 3v — tres en fila, lado a lado
  *  · 4  — cuatro en grilla
  */
-export type Distribucion = "1" | "2v" | "2h" | "3" | "4";
+export type Distribucion = "1" | "2v" | "2h" | "3" | "3v" | "4";
 
 export const DISTRIBUCIONES: Array<{ id: Distribucion; etiqueta: string }> = [
   { id: "1", etiqueta: "1 gráfico" },
   { id: "2v", etiqueta: "2 lado a lado" },
   { id: "2h", etiqueta: "2 arriba y abajo" },
   { id: "3", etiqueta: "3 gráficos" },
+  { id: "3v", etiqueta: "3 lado a lado" },
   { id: "4", etiqueta: "4 en grilla" },
 ];
 
@@ -534,6 +536,7 @@ export const GRAFICOS_DE: Record<Distribucion, number> = {
   "2v": 2,
   "2h": 2,
   "3": 3,
+  "3v": 3,
   "4": 4,
 };
 
