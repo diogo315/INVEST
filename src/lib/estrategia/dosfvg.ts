@@ -86,6 +86,18 @@ export interface ConfigDosFvg {
   stopMinimoPct: number;
   /** Erres objetivo. El tuit dice 3. */
   rr: number;
+  /**
+   * A cuántas erres a favor el stop sube a la entrada. 0 lo apaga.
+   *
+   * Subir el stop NO crea ventaja: cambia la forma del resultado, no su
+   * media. Cambia perdedoras enteras por salidas en cero, y a cambio
+   * corta operaciones que habrían llegado al objetivo después de un
+   * retroceso. Con costos es incluso algo peor que cero, porque salir en
+   * la entrada igual paga comisión y diferencial. Sirve para ver cuánto
+   * de la esperanza depende de aguantar el retroceso, que es información
+   * útil, pero no es una forma de mejorar el número.
+   */
+  breakevenEn: number;
   /** Comisión por lado, en porcentaje. */
   comision: number;
   /** Diferencial, en porcentaje. */
@@ -107,6 +119,7 @@ export const DOSFVG_POR_DEFECTO: ConfigDosFvg = {
   holguraStop: 0.03,
   stopMinimoPct: 0.15,
   rr: 3,
+  breakevenEn: 0,
   comision: 0.05,
   spread: 0.02,
   duracionMaxima: 480, // cinco días de 15M
@@ -114,7 +127,7 @@ export const DOSFVG_POR_DEFECTO: ConfigDosFvg = {
   fractal: 2,
 };
 
-export type MotivoDosFvg = "stop" | "objetivo" | "tiempo" | "final";
+export type MotivoDosFvg = "stop" | "objetivo" | "breakeven" | "tiempo" | "final";
 
 export interface OperacionDosFvg {
   lado: "largo" | "corto";
@@ -147,7 +160,11 @@ interface Viva {
   lado: 1 | -1;
   entrada: number;
   tiempoEntrada: number;
+  /** El stop vigente: sube a la entrada si se activa el breakeven. */
   stop: number;
+  /** El que se puso al abrir, que es el que se informa. */
+  stopOriginal: number;
+  enBreakeven: boolean;
   objetivo: number;
   riesgo: number;
   abiertaEn: number;
@@ -171,7 +188,30 @@ export function gestionarDosFvg(
   costo: number,
 ): OperacionDosFvg | null {
   const pegoStop = a.lado === 1 ? v.low <= a.stop : v.high >= a.stop;
-  if (pegoStop) return cerrar(a, a.stop, v.time, "stop", cfg, costo);
+  if (pegoStop) {
+    return cerrar(a, a.stop, v.time, a.enBreakeven ? "breakeven" : "stop", cfg, costo);
+  }
+
+  // Breakeven ANTES del objetivo, a propósito.
+  //
+  // Si una vela llega al disparador, vuelve a la entrada y recién
+  // después toca el objetivo, con solo OHLC ese orden es indistinguible
+  // del otro. Se supone el malo: stop movido y operación cerrada en
+  // cero. Revisar el objetivo primero sería quedarse con lo bueno de
+  // los dos mundos, que es justo lo que infla un backtest sin que se
+  // note.
+  if (cfg.breakevenEn > 0 && !a.enBreakeven) {
+    const disparo = a.entrada + a.lado * cfg.breakevenEn * a.riesgo;
+    const llego = a.lado === 1 ? v.high >= disparo : v.low <= disparo;
+    if (llego) {
+      a.enBreakeven = true;
+      a.stop = a.entrada;
+      // LA MISMA VELA SE REVISA CONTRA EL STOP NUEVO.
+      const volvio = a.lado === 1 ? v.low <= a.stop : v.high >= a.stop;
+      if (volvio) return cerrar(a, a.stop, v.time, "breakeven", cfg, costo);
+    }
+  }
+
   const pegoObjetivo = a.lado === 1 ? v.high >= a.objetivo : v.low <= a.objetivo;
   if (pegoObjetivo) return cerrar(a, a.objetivo, v.time, "objetivo", cfg, costo);
   if (t - a.abiertaEn >= cfg.duracionMaxima) {
@@ -193,7 +233,7 @@ function cerrar(
     lado: a.lado === 1 ? "largo" : "corto",
     entrada: a.entrada,
     tiempoEntrada: a.tiempoEntrada,
-    stop: a.stop,
+    stop: a.stopOriginal,
     objetivo: a.objetivo,
     salida,
     tiempoSalida,
@@ -340,6 +380,8 @@ export function correrDosFvg(
         entrada,
         tiempoEntrada: v.time,
         stop: fase.stop,
+        stopOriginal: fase.stop,
+        enBreakeven: false,
         objetivo: entrada + lado * riesgo * cfg.rr,
         riesgo,
         abiertaEn: t,

@@ -29,8 +29,12 @@ export function VistaEstrategias() {
   const [tfEntrada, setTfEntrada] = useState<Timeframe>("5m");
   const [meses, setMeses] = useState(6);
   const [cual, setCual] = useState<QueEstrategia>("smc");
-  const [cfg, setCfg] = useState<ConfigEstrategia>(CONFIG_POR_DEFECTO);
-  const [cfg2, setCfg2] = useState<ConfigDosFvg>(DOSFVG_POR_DEFECTO);
+  // El breakeven por erres arranca PRENDIDO en la pantalla, aunque el
+  // defecto de los motores sea cero. El defecto de la librería es
+  // neutro a propósito, para que las pruebas midan la estrategia sola;
+  // acá lo que importa es poder verlo andar y apagarlo para comparar.
+  const [cfg, setCfg] = useState<ConfigEstrategia>({ ...CONFIG_POR_DEFECTO, breakevenEn: 1.5 });
+  const [cfg2, setCfg2] = useState<ConfigDosFvg>({ ...DOSFVG_POR_DEFECTO, breakevenEn: 1.5 });
   const [elegidos, setElegidos] = useState<Set<string>>(new Set());
   const [avance, setAvance] = useState<Avance | null>(null);
   const [resultados, setResultados] = useState<ResultadoActivo[] | null>(null);
@@ -100,6 +104,14 @@ export function VistaEstrategias() {
       : velasNecesarias("4h", meses) +
         velasNecesarias("15m", meses) +
         velasNecesarias(tfEntrada, meses);
+
+  // El breakeven existe igual en los dos motores, así que el control es
+  // uno solo y escribe en la configuración que esté activa.
+  const beEn = cual === "smc" ? cfg.breakevenEn : cfg2.breakevenEn;
+  const ponerBe = (v: number) =>
+    cual === "smc"
+      ? setCfg({ ...cfg, breakevenEn: v })
+      : setCfg2({ ...cfg2, breakevenEn: v });
 
   // Cambiar de estrategia tira los resultados: dejar la tabla de la otra
   // puesta mientras el encabezado ya dice otra cosa es la mejor forma de
@@ -244,6 +256,28 @@ export function VistaEstrategias() {
           <Nota>
             Con stops chicos esto decide el resultado. Ponelo en 0 para ver
             cuánto se come.
+          </Nota>
+        </Campo>
+
+        <Campo titulo="Subir a breakeven">
+          <div className="space-y-1.5">
+            <label className="flex items-center gap-2 text-[11px] text-tv-text-muted">
+              <input
+                type="checkbox"
+                checked={beEn > 0}
+                onChange={(e) => ponerBe(e.target.checked ? 1.5 : 0)}
+                className="accent-tv-blue"
+              />
+              Mover el stop a la entrada
+            </label>
+            {beEn > 0 && (
+              <Numero valor={beEn} onCambiar={(v) => ponerBe(v)} sufijo="R a favor" />
+            )}
+          </div>
+          <Nota>
+            {beEn > 0
+              ? "Cambia la forma del resultado: menos perdedoras enteras, más salidas en cero. Con costos sale algo peor que cero, porque salir en la entrada igual paga comisión y diferencial."
+              : "Apagado: cada operación aguanta hasta el stop o el objetivo. Prendelo y corré de nuevo para comparar."}
           </Nota>
         </Campo>
 

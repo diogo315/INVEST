@@ -46,6 +46,19 @@ export interface ConfigEstrategia {
   poi: "vela" | "hueco";
   /** Erres objetivo del tramo que queda después de las parciales. */
   rrObjetivo: number;
+  /**
+   * A cuántas erres a favor el stop sube a la entrada, además del
+   * breakeven que ya dispara la parcial. 0 lo apaga.
+   *
+   * Acá el breakeven por parciales ya existe, pero salta en el máximo
+   * previo de 15M, que está a una distancia distinta en cada montaje —
+   * medido, entre 0,3 y 3,5 erres. Esto lo fija en un número igual para
+   * todas, que es lo que hace falta para preguntarse cuánto de la
+   * esperanza depende de aguantar el retroceso. Subir el stop no crea
+   * ventaja: cambia perdedoras enteras por salidas en cero y a cambio
+   * corta ganadoras que se recuperaban.
+   */
+  breakevenEn: number;
   /** Fracción que se cierra en el máximo previo de 15M, de 0 a 1. */
   parcial: number;
   /** Comisión por lado, en porcentaje (0.05 = 0,05 %). */
@@ -66,6 +79,7 @@ export const CONFIG_POR_DEFECTO: ConfigEstrategia = {
   poi: "vela",
   rrObjetivo: 5,
   parcial: 0.5,
+  breakevenEn: 0,
   // Binance futuros taker, ida y vuelta: 0,05 % por lado.
   comision: 0.05,
   spread: 0.02,
@@ -116,6 +130,8 @@ export interface Abierta {
   riesgo: number;
   zona4h: { piso: number; techo: number; time: number };
   tocoParcial: boolean;
+  /** Si el stop ya subió a la entrada por el disparador de erres. */
+  enBreakeven: boolean;
   cerradoParcial: number;
   acumulado: number;
 }
@@ -284,6 +300,7 @@ export function correrEstrategia(
         riesgo,
         zona4h: { piso: estado.zona.piso, techo: estado.zona.techo, time: estado.zona.time },
         tocoParcial: false,
+        enBreakeven: false,
         cerradoParcial: 0,
         acumulado: 0,
       };
@@ -328,7 +345,23 @@ export function gestionar(
     const resto = 1 - a.cerradoParcial;
     const erresStop = (a.stop - a.entrada) / a.riesgo;
     const erres = a.acumulado + erresStop * resto - costoEnErres(costo, a);
-    return cerrar(a, a.stop, v.time, a.tocoParcial ? "breakeven" : "stop", erres, cfg);
+    return cerrar(a, a.stop, v.time,
+      a.tocoParcial || a.enBreakeven ? "breakeven" : "stop", erres, cfg);
+  }
+
+  // Breakeven por erres, ANTES de la parcial y del objetivo.
+  //
+  // Mismo criterio que en todo el motor: si la vela llegó al
+  // disparador y además volvió a la entrada, el orden dentro de la
+  // vela es una incógnita y se supone el malo.
+  if (cfg.breakevenEn > 0 && !a.enBreakeven && !a.tocoParcial) {
+    if (v.high >= a.entrada + cfg.breakevenEn * a.riesgo) {
+      a.enBreakeven = true;
+      a.stop = a.entrada;
+      if (v.low <= a.stop) {
+        return cerrar(a, a.stop, v.time, "breakeven", -costoEnErres(costo, a), cfg);
+      }
+    }
   }
   if (!a.tocoParcial && v.high >= a.objetivo1) {
     const erresP = (a.objetivo1 - a.entrada) / a.riesgo;

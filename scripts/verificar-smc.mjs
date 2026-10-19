@@ -385,6 +385,29 @@ console.log("Paseo aleatorio puro: la estrategia tiene que PERDER");
   console.log(`     (esta muestra detecta fugas de ${margen.toFixed(2)}R por operación o más)`);
   comprobar("CON costos, pierde todavía más",
     conCosto / ops < media, `${(conCosto / ops).toFixed(3)} vs ${media.toFixed(3)}`);
+
+  // Y con el breakeven por erres prendido, tampoco puede haber ventaja.
+  //
+  // Mover el stop cambia la FORMA del resultado —más salidas en cero,
+  // menos perdedoras enteras— pero no su media. Si prenderlo hiciera
+  // aparecer ventaja en un paseo sin tendencia, la regla estaría mal
+  // escrita, y es justo el tipo de regla que la intuición da por buena.
+  const be = [];
+  for (let sem = 1; sem <= 60; sem++) {
+    const W2 = paseo(sem * 4567);
+    for (const o of correrEstrategia(W2.h4, W2.m15, W2.m5, M5, {
+      ...CONFIG_POR_DEFECTO, comision: 0, spread: 0, breakevenEn: 1.5,
+    }).operaciones) be.push(o.erres);
+  }
+  const mBe = be.reduce((s, x) => s + x, 0) / be.length;
+  const dBe = Math.sqrt(be.reduce((s, x) => s + (x - mBe) ** 2, 0) / (be.length - 1));
+  const eBe = (1.96 * dBe) / Math.sqrt(be.length);
+  comprobar("con el breakeven prendido el cero sigue dentro del intervalo",
+    mBe - eBe <= 0, `${mBe >= 0 ? "+" : ""}${mBe.toFixed(3)}R ± ${eBe.toFixed(3)}`);
+  comprobar("y el breakeven no inventa ventaja en un paseo aleatorio",
+    mBe <= media + eBe, `con ${mBe.toFixed(3)} vs sin ${media.toFixed(3)}`);
+  comprobar("pero sí cambia el resultado, o no estaría haciendo nada",
+    Math.abs(mBe - media) > 1e-9, `${mBe.toFixed(4)} vs ${media.toFixed(4)}`);
 }
 
 // ── EL SUPUESTO PELIGROSO: qué pasa primero dentro de una vela ──
@@ -454,6 +477,44 @@ console.log("Dentro de una vela se supone SIEMPRE lo malo");
   const conStop = gestionar(nueva(), vela(T0, 100, 105.5, 98, 105), cfg, 0);
   comprobar("si además tocó el stop, manda el stop", conStop?.motivo === "stop",
     JSON.stringify(conStop?.motivo));
+
+  // ── el breakeven por erres, que es opcional ──────────────────────
+  //
+  // Es una regla de gestión aparte de la parcial: apenas la operación
+  // lleva N erres a favor, el stop sube a la entrada. Acá la entrada
+  // está en 100 y el riesgo es 1, así que el disparador de 1,5R cae
+  // en 101,5.
+  const conBe = { ...cfg, breakevenEn: 1.5 };
+  const sinBe = { ...cfg, breakevenEn: 0 };
+
+  const subio = nueva();
+  comprobar("llegar a 1,5R no cierra la operación",
+    gestionar(subio, vela(T0, 100, 101.6, 100.2, 101.4), conBe, 0) === null);
+  comprobar("pero sube el stop a la entrada", subio.stop === 100, String(subio.stop));
+  comprobar("y deja intacto el stop que se informa",
+    subio.stopOriginal === 99, String(subio.stopOriginal));
+
+  const noLlego = nueva();
+  comprobar("por debajo del disparador el stop no se mueve",
+    gestionar(noLlego, vela(T0, 100, 101.4, 100.2, 101.2), conBe, 0) === null
+      && noLlego.stop === 99, String(noLlego.stop));
+
+  // La misma vela que dispara el breakeven y vuelve a la entrada: el
+  // orden es una incógnita, así que se supone el malo.
+  const vuelta = gestionar(nueva(), vela(T0, 100, 101.6, 99.8, 100), conBe, 0);
+  comprobar("la vela que dispara el breakeven y vuelve cierra ahí mismo",
+    vuelta?.motivo === "breakeven", JSON.stringify(vuelta?.motivo));
+  comprobar("y sale en cero, no en menos 1R",
+    Math.abs(vuelta?.erres ?? 9) < 1e-9, String(vuelta?.erres));
+  comprobar("sin el breakeven esa misma vela sigue viva",
+    gestionar(nueva(), vela(T0, 100, 101.6, 99.8, 100), sinBe, 0) === null);
+
+  // Y no tiene que pisar la parcial: si la vela llega al objetivo 1,
+  // la parcial se cobra igual.
+  const conParcial = nueva();
+  gestionar(conParcial, vela(T0, 100, 103.5, 100.5, 103), conBe, 0);
+  comprobar("el breakeven por erres no se come la parcial",
+    Math.abs(conParcial.acumulado - 1.5) < 1e-9, String(conParcial.acumulado));
 
   // Y el caso ambiguo de verdad: YA con parciales tomadas y el stop en
   // breakeven, una vela que toca el breakeven Y el objetivo 2. Acá el

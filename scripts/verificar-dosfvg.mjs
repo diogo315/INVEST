@@ -89,12 +89,14 @@ const W = mundo(4242);
 console.log("Dentro de la vela se supone lo peor");
 {
   const largo = () => ({
-    lado: 1, entrada: 100, tiempoEntrada: T0, stop: 99, objetivo: 103, riesgo: 1,
+    lado: 1, entrada: 100, tiempoEntrada: T0, stop: 99, stopOriginal: 99,
+    enBreakeven: false, objetivo: 103, riesgo: 1,
     abiertaEn: 0, zona4h: { piso: 90, techo: 95, time: T0 },
     zona15: { piso: 99, techo: 101, time: T0 },
   });
   const corto = () => ({
-    lado: -1, entrada: 100, tiempoEntrada: T0, stop: 101, objetivo: 97, riesgo: 1,
+    lado: -1, entrada: 100, tiempoEntrada: T0, stop: 101, stopOriginal: 101,
+    enBreakeven: false, objetivo: 97, riesgo: 1,
     abiertaEn: 0, zona4h: { piso: 105, techo: 110, time: T0 },
     zona15: { piso: 99, techo: 101, time: T0 },
   });
@@ -130,6 +132,70 @@ console.log("Dentro de la vela se supone lo peor");
   comprobar("el costo resta en el largo", (cL?.erres ?? 0) < 3, String(cL?.erres));
   const cC = gestionarDosFvg(corto(), vela(T0, 100, 100.5, 96.5, 97), 1, cfg, 0.001);
   comprobar("y también en el corto", (cC?.erres ?? 0) < 3, String(cC?.erres));
+}
+
+console.log("El breakeven por erres");
+{
+  const largo = () => ({
+    lado: 1, entrada: 100, tiempoEntrada: T0, stop: 99, stopOriginal: 99,
+    enBreakeven: false, objetivo: 103, riesgo: 1,
+    abiertaEn: 0, zona4h: { piso: 90, techo: 95, time: T0 },
+    zona15: { piso: 99, techo: 101, time: T0 },
+  });
+  const corto = () => ({
+    lado: -1, entrada: 100, tiempoEntrada: T0, stop: 101, stopOriginal: 101,
+    enBreakeven: false, objetivo: 97, riesgo: 1,
+    abiertaEn: 0, zona4h: { piso: 105, techo: 110, time: T0 },
+    zona15: { piso: 99, techo: 101, time: T0 },
+  });
+  const con = { ...DOSFVG_POR_DEFECTO, comision: 0, spread: 0, breakevenEn: 1.5 };
+  const sin = { ...con, breakevenEn: 0 };
+
+  // Sube el stop y no cierra, si la vela no volvió a la entrada.
+  const viva = largo();
+  comprobar("llegar a 1,5R no cierra la operación",
+    gestionarDosFvg(viva, vela(T0, 100, 101.6, 100.2, 101.4), 1, con, 0) === null);
+  comprobar("pero sube el stop a la entrada", viva.stop === 100, String(viva.stop));
+  comprobar("y no toca el stop informado", viva.stopOriginal === 99, String(viva.stopOriginal));
+
+  // Antes del disparador no pasa nada.
+  const corta = largo();
+  comprobar("por debajo del disparador el stop no se mueve",
+    gestionarDosFvg(corta, vela(T0, 100, 101.4, 100.2, 101.2), 1, con, 0) === null &&
+    corta.stop === 99, String(corta.stop));
+
+  // LA MISMA VELA: dispara y vuelve a la entrada.
+  const ahi = gestionarDosFvg(largo(), vela(T0, 100, 101.6, 99.8, 100), 1, con, 0);
+  comprobar("la vela que dispara el breakeven y vuelve cierra ahí mismo",
+    ahi?.motivo === "breakeven", JSON.stringify(ahi?.motivo));
+  comprobar("y sale en cero, no en menos 1R", Math.abs(ahi?.erres ?? 9) < 1e-9,
+    String(ahi?.erres));
+  comprobar("sin breakeven esa misma vela sigue viva",
+    gestionarDosFvg(largo(), vela(T0, 100, 101.6, 99.8, 100), 1, sin, 0) === null);
+
+  // Disparador, vuelta a la entrada Y objetivo en la misma vela: manda
+  // el breakeven, porque el orden no se conoce.
+  const todo = gestionarDosFvg(largo(), vela(T0, 100, 103.5, 99.8, 103), 1, con, 0);
+  comprobar("si la vela hace todo, manda el breakeven y no el objetivo",
+    todo?.motivo === "breakeven", JSON.stringify(todo?.motivo));
+  comprobar("sin breakeven esa vela sí cobra el objetivo",
+    gestionarDosFvg(largo(), vela(T0, 100, 103.5, 99.8, 103), 1, sin, 0)?.motivo === "objetivo");
+
+  // El stop original sigue mandando antes del disparador.
+  const stopAntes = gestionarDosFvg(largo(), vela(T0, 100, 101.4, 98.5, 99), 1, con, 0);
+  comprobar("si pega el stop sin haber disparado, pierde 1R entera",
+    stopAntes?.motivo === "stop" && Math.abs((stopAntes?.erres ?? 0) + 1) < 1e-9,
+    `${stopAntes?.motivo} ${stopAntes?.erres}`);
+
+  // En corto, todo espejado.
+  const cortoAhi = gestionarDosFvg(corto(), vela(T0, 100, 100.2, 98.4, 100), 1, con, 0);
+  comprobar("en corto el breakeven funciona igual", cortoAhi?.motivo === "breakeven",
+    JSON.stringify(cortoAhi?.motivo));
+
+  // Con costos, salir en la entrada NO es cero: igual se paga.
+  const conCosto = gestionarDosFvg(largo(), vela(T0, 100, 101.6, 99.8, 100), 1, con, 0.001);
+  comprobar("con costos el breakeven sale en negativo, no en cero",
+    (conCosto?.erres ?? 0) < 0, String(conCosto?.erres));
 }
 
 // ───────────── el motor entero ─────────────
@@ -220,6 +286,29 @@ console.log("Paseo aleatorio puro: no puede haber ventaja");
   console.log(`     (esta muestra detecta fugas de ${margen.toFixed(2)}R por operación o más)`);
   comprobar("CON costos pierde más", con < sin,
     `${(con / ops).toFixed(3)} vs ${(sin / ops).toFixed(3)}`);
+
+  // Y con el breakeven prendido, tampoco.
+  //
+  // Esto es lo que más importa de la opción nueva: mover el stop cambia
+  // la FORMA del resultado, no su media. Si prenderlo hiciera aparecer
+  // ventaja en un paseo sin tendencia, la regla estaría mal escrita.
+  const conBe = [];
+  for (let s = 1; s <= 10; s++) {
+    const P = mundo(s * 7919, 14000, false);
+    for (const o of correrDosFvg(P.h4, P.m15, {
+      ...DOSFVG_POR_DEFECTO, comision: 0, spread: 0, breakevenEn: 1.5,
+    }).operaciones) conBe.push(o.erres);
+  }
+  const mBe = conBe.reduce((x, y) => x + y, 0) / conBe.length;
+  const dBe = Math.sqrt(conBe.reduce((x, y) => x + (y - mBe) ** 2, 0) / (conBe.length - 1));
+  const eBe = (1.96 * dBe) / Math.sqrt(conBe.length);
+  comprobar("con el breakeven prendido el cero sigue dentro del intervalo",
+    mBe - eBe <= 0,
+    `${mBe >= 0 ? "+" : ""}${mBe.toFixed(3)}R ± ${eBe.toFixed(3)}`);
+  comprobar("y el breakeven no mejora el resultado en un paseo aleatorio",
+    mBe <= media + 1e-9, `con ${mBe.toFixed(3)} vs sin ${media.toFixed(3)}`);
+  comprobar("pero sí cambia la mezcla de salidas", conBe.length !== ops || mBe !== media,
+    `${conBe.length} vs ${ops} operaciones`);
 }
 
 // El motivo de que el stop por defecto NO sea el borde del hueco, escrito

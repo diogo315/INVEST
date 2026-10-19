@@ -9,6 +9,12 @@
 import { chromium } from "playwright";
 import { correrEstrategia, CONFIG_POR_DEFECTO } from "./src/lib/estrategia/motor.ts";
 import { correrDosFvg, DOSFVG_POR_DEFECTO } from "./src/lib/estrategia/dosfvg.ts";
+
+// La pantalla arranca con el breakeven por erres prendido en 1,5R, así
+// que lo esperado tiene que calcularse con esa misma configuración.
+const BE = 1.5;
+const CFG_SMC = { ...CONFIG_POR_DEFECTO, breakevenEn: BE };
+const CFG_DOS = { ...DOSFVG_POR_DEFECTO, breakevenEn: BE };
 import { resumir } from "./src/lib/estrategia/estadistica.ts";
 
 const EXEC = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome";
@@ -50,9 +56,9 @@ const MUNDOS = Object.fromEntries(Object.entries(SIMBOLOS).map(([s, sem]) => [s,
 const esperado = {};
 const esperado2 = {};
 for (const [sym, W] of Object.entries(MUNDOS)) {
-  const r = correrEstrategia(W.h4, W.m15, W.m5, M5, CONFIG_POR_DEFECTO);
+  const r = correrEstrategia(W.h4, W.m15, W.m5, M5, CFG_SMC);
   esperado[sym] = { ops: r.operaciones.length, res: resumir(r.operaciones.map((o) => o.erres)) };
-  const d = correrDosFvg(W.h4, W.m15, DOSFVG_POR_DEFECTO);
+  const d = correrDosFvg(W.h4, W.m15, CFG_DOS);
   esperado2[sym] = { ops: d.operaciones.length, res: resumir(d.operaciones.map((o) => o.erres)) };
 }
 console.log("Esperado por el motor:");
@@ -244,8 +250,8 @@ console.log("\n6. La segunda estrategia es OTRA, no una variante");
   // Los costos quedaron en 0 de la sección 5; se reponen para que los
   // números sean los del motor con su configuración por defecto.
   const nums = page.locator('input[type="number"]');
-  await nums.nth(0).fill(String(DOSFVG_POR_DEFECTO.comision));
-  await nums.nth(1).fill(String(DOSFVG_POR_DEFECTO.spread));
+  await nums.nth(0).fill(String(CFG_DOS.comision));
+  await nums.nth(1).fill(String(CFG_DOS.spread));
   await page.waitForTimeout(300);
   await page.getByRole("button", { name: /Correr sobre/ }).click();
   for (let i = 0; i < 120; i++) {
@@ -279,6 +285,67 @@ console.log("\n6. La segunda estrategia es OTRA, no una variante");
   await page.getByRole("button", { name: /SMC de tres tiempos/ }).click();
   await page.waitForTimeout(400);
   ok("y volver atrás también tira la tabla", (await page.locator("table").count()) === 0);
+}
+
+console.log("\n7. El breakeven por erres se puede prender y apagar");
+{
+  // Venimos de volver a la SMC al final de la sección 6.
+  const txt = await page.locator("body").innerText();
+  ok("la opción está a la vista", /subir a breakeven/i.test(txt));
+  const casilla = page.locator('input[type="checkbox"]').first();
+  ok("arranca prendida", await casilla.isChecked());
+  const nums = page.locator('input[type="number"]');
+  ok("y con el disparador en 1,5R", (await nums.nth(2).inputValue()) === String(BE),
+     await nums.nth(2).inputValue());
+
+  // Los costos quedaron en cero desde la sección 5: se fijan a mano en
+  // vez de confiar en lo que haya quedado, que es como una prueba
+  // empieza a medir otra cosa sin avisar.
+  await nums.nth(0).fill("0");
+  await nums.nth(1).fill("0");
+  await page.waitForTimeout(200);
+
+  // Lo que importa: apagarlo tiene que dar los números del motor SIN
+  // breakeven, no los mismos de antes.
+  const base = { ...CONFIG_POR_DEFECTO, comision: 0, spread: 0 };
+  const medir = (c) => {
+    const o = {};
+    for (const [sym, W] of Object.entries(MUNDOS)) {
+      const r = correrEstrategia(W.h4, W.m15, W.m5, M5, c);
+      o[sym] = { ops: r.operaciones.length, res: resumir(r.operaciones.map((x) => x.erres)) };
+    }
+    return o;
+  };
+  const sinBe = medir({ ...base, breakevenEn: 0 });
+  const conBe = medir({ ...base, breakevenEn: BE });
+  const cambia = Object.keys(SIMBOLOS).some(
+    (s) => Math.abs(sinBe[s].res.esperanza - conBe[s].res.esperanza) > 0.011);
+  ok("prendido y apagado dan resultados distintos, así que la prueba discrimina", cambia,
+     JSON.stringify(Object.fromEntries(Object.keys(SIMBOLOS).map(
+       (s) => [s, [conBe[s].res.esperanza.toFixed(2), sinBe[s].res.esperanza.toFixed(2)]]))));
+
+  await casilla.uncheck();
+  await page.waitForTimeout(300);
+  ok("al apagarla desaparece el disparador",
+     (await page.locator('input[type="number"]').count()) === 2);
+  await page.getByRole("button", { name: /Correr sobre/ }).click();
+  for (let i = 0; i < 120; i++) {
+    await page.waitForTimeout(500);
+    if (await page.locator("table").count()) break;
+  }
+  await page.waitForTimeout(1200);
+  const filas = await page.evaluate(() =>
+    [...document.querySelectorAll("table tbody tr")].map((tr) =>
+      [...tr.querySelectorAll("td")].map((td) => td.textContent.trim())));
+  for (const [sym, e] of Object.entries(sinBe)) {
+    const fila = filas.find((f) => f[0] === sym);
+    if (!fila) { ok(`${sym}: está en la tabla`, false); continue; }
+    ok(`${sym}: apagado da los números del motor sin breakeven`,
+       Number(fila[1]) === e.ops
+         && Math.abs(parseFloat(fila[3].replace("R", "").replace("+", "")) - e.res.esperanza) < 0.011,
+       `tabla ${fila[1]} ops / ${fila[3]} vs motor ${e.ops} ops / ${e.res.esperanza.toFixed(2)}R`);
+  }
+  await page.screenshot({ path: "shots/estrategias-breakeven.png", fullPage: true });
 }
 
 ok("sin errores de JavaScript", errores.length === 0, errores.slice(0, 3).join(" | "));
