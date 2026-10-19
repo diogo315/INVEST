@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Search, ChevronDown, Check, Plus } from "lucide-react";
+import { Search, ChevronDown, Check, Plus, TriangleAlert } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -30,6 +30,7 @@ import {
   type ActivoBuscable,
   type FiltroTipo,
 } from "@/lib/exchanges/buscar";
+import { conceptoDe } from "@/lib/exchanges/macro";
 import { listaActivaDe, useChartStore,
   graficoActivo,
 } from "@/lib/store/chart-store";
@@ -104,6 +105,15 @@ export function SymbolSelector() {
   const setOpen = useChartStore((s) => s.setSymbolDialogOpen);
 
   const [query, setQuery] = useState("");
+  /**
+   * El concepto macro que corresponde a lo escrito, si hay.
+   *
+   * Sirve para dos cosas: explicar qué se está mirando, y avisar cuando
+   * el papel NO es lo que el nombre promete (VIXY no es el VIX). El
+   * aviso va acá arriba, antes de los resultados, porque después de
+   * hacer clic ya es tarde.
+   */
+  const concepto = useMemo(() => conceptoDe(query), [query]);
   const [catalogo, setCatalogo] = useState<ActivoBuscable[]>([]);
   // Se pone en true cuando la descarga termina, haya traído algo o no: sin
   // esto un exchange caído deja el cartel de "Cargando…" para siempre.
@@ -276,9 +286,24 @@ export function SymbolSelector() {
                 Cargando activos…
               </div>
             )}
+            {concepto && (
+              <div className="border-b border-tv-border/60 bg-tv-bg/60 px-4 py-2.5 text-[11px] leading-relaxed">
+                <p className="text-tv-text-muted">{concepto.que}</p>
+                {concepto.advertencia && (
+                  <p className="mt-1 flex gap-1.5 text-tv-yellow">
+                    <TriangleAlert className="mt-px h-3 w-3 shrink-0" />
+                    <span>{concepto.advertencia}</span>
+                  </p>
+                )}
+              </div>
+            )}
             {catalogoListo && resultados.length === 0 && (
               <div className="p-6 text-center text-xs text-tv-text-muted">
-                Sin resultados para «{query}»
+                {concepto && concepto.simbolos.length === 0
+                  ? "Todavía no hay nada que abrir para esto."
+                  : concepto
+                    ? `«${query}» debería ser ${concepto.simbolos.join(" o ")}, pero no aparece en el catálogo del exchange elegido.`
+                    : `Sin resultados para «${query}»`}
               </div>
             )}
             {resultados.map((a, i) => {

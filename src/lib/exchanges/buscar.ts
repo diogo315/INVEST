@@ -6,6 +6,9 @@
  */
 
 import type { ExchangeId } from "./types";
+// Los atajos en español y sus advertencias viven en macro.ts, que es
+// donde se puede leer qué significa cada uno sin pasar por el ranking.
+import { atajosDe } from "./macro";
 
 /** Clase de activo, para los filtros del buscador. */
 export type ClaseActivo = "cripto" | "accion";
@@ -77,35 +80,6 @@ const POPULARES = [
  * "oro" no encontraría nada. La clave se compara con la consulta entera,
  * sin tildes, para no ensuciar los resultados de búsquedas normales.
  */
-const ATAJOS: Record<string, string[]> = {
-  oro: ["GLD", "IAU", "GDX"],
-  plata: ["SLV"],
-  petroleo: ["USO", "XLE", "BNO"],
-  crudo: ["USO", "BNO"],
-  gas: ["UNG"],
-  cobre: ["CPER"],
-  agro: ["DBA"],
-  "materias primas": ["DBC", "GLD", "SLV", "USO", "UNG", "CPER", "DBA"],
-  commodities: ["DBC", "GLD", "SLV", "USO", "UNG", "CPER", "DBA"],
-  "sp500": ["SPY", "VOO", "IVV"],
-  "s&p": ["SPY", "VOO", "IVV"],
-  "s&p 500": ["SPY", "VOO", "IVV"],
-  nasdaq: ["QQQ"],
-  "dow jones": ["DIA"],
-  bonos: ["TLT", "IEF", "SHY"],
-  inmobiliario: ["VNQ"],
-  dolar: ["UUP"],
-};
-
-/** Símbolos que un atajo en español pone arriba de todo. */
-function atajosDe(consulta: string): Set<string> {
-  const limpio = consulta
-    .trim()
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
-  return new Set(ATAJOS[limpio] ?? []);
-}
 
 function indiceO(lista: readonly string[], v: string, porDefecto: number) {
   const i = lista.indexOf(v);
@@ -165,7 +139,8 @@ export function rankearSimbolos(
   const t = consulta.trim().toUpperCase();
   if (!t) return [...base].sort(compararSinConsulta).slice(0, limite);
 
-  const atajos = atajosDe(consulta);
+  // Prioridad declarada por el concepto: posición en la lista.
+  const atajos = new Map(atajosDe(consulta).map((sym, i) => [sym, i]));
   const niveles: ActivoBuscable[][] = [[], [], [], [], [], [], []];
   for (const a of base) {
     const nombre = a.nombre?.toUpperCase() ?? "";
@@ -181,10 +156,20 @@ export function rankearSimbolos(
     else if (a.symbol.includes(t) || nombre.includes(t)) niveles[6].push(a);
   }
 
+  // El nivel de los atajos se ordena por la prioridad del concepto, no
+  // por el desempate genérico: ahí «el mejor primero» es información que
+  // puso una persona, y el alfabético la pisaba.
+  niveles[0].sort(
+    (a, b) =>
+      (atajos.get(a.base) ?? 99) - (atajos.get(b.base) ?? 99) || comparar(a, b),
+  );
+
   const salida: ActivoBuscable[] = [];
-  for (const nivel of niveles) {
+  for (const [i, nivel] of niveles.entries()) {
     if (salida.length >= limite) break;
-    salida.push(...nivel.sort(comparar).slice(0, limite - salida.length));
+    salida.push(
+      ...(i === 0 ? nivel : nivel.sort(comparar)).slice(0, limite - salida.length),
+    );
   }
   return salida;
 }
