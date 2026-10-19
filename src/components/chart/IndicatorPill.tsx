@@ -1,6 +1,6 @@
 "use client";
 
-import { Eye, EyeOff, Settings, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Eye, EyeOff, Settings, X } from "lucide-react";
 import type { ModoChapas } from "@/lib/chart/apariencia";
 import { cn } from "@/lib/utils";
 
@@ -23,6 +23,17 @@ interface Props {
   onToggleHide: () => void;
   onSettings: () => void;
   onRemove: () => void;
+  /**
+   * Subir o bajar el indicador un panel. Si no se pasan, los botones no
+   * aparecen: las chapas que van sobre las velas (medias, volumen,
+   * VWAP) no tienen panel propio que mover.
+   *
+   * Se pasan como `null` cuando el indicador ya está en el borde: el
+   * botón se dibuja igual pero apagado, para que la chapa no cambie de
+   * ancho al mover y los demás botones no se corran bajo el cursor.
+   */
+  onSubir?: (() => void) | null;
+  onBajar?: (() => void) | null;
 }
 
 export function IndicatorPill({
@@ -35,6 +46,8 @@ export function IndicatorPill({
   onToggleHide,
   onSettings,
   onRemove,
+  onSubir,
+  onBajar,
 }: Props) {
   // "ocultas" se resuelve acá y no en cada sitio donde se pone una chapa:
   // son once, repartidas entre el panel del precio y el de cada
@@ -80,6 +93,28 @@ export function IndicatorPill({
             : "ml-1",
         )}
       >
+        {onSubir !== undefined && (
+          <button
+            onClick={onSubir ?? undefined}
+            disabled={!onSubir}
+            title="Subir un panel"
+            aria-label="Subir un panel"
+            className="rounded p-0.5 text-tv-text-dim transition-colors hover:bg-tv-panel-hover hover:text-tv-text disabled:cursor-default disabled:opacity-25 disabled:hover:bg-transparent disabled:hover:text-tv-text-dim"
+          >
+            <ChevronUp className="h-3 w-3" />
+          </button>
+        )}
+        {onBajar !== undefined && (
+          <button
+            onClick={onBajar ?? undefined}
+            disabled={!onBajar}
+            title="Bajar un panel"
+            aria-label="Bajar un panel"
+            className="rounded p-0.5 text-tv-text-dim transition-colors hover:bg-tv-panel-hover hover:text-tv-text disabled:cursor-default disabled:opacity-25 disabled:hover:bg-transparent disabled:hover:text-tv-text-dim"
+          >
+            <ChevronDown className="h-3 w-3" />
+          </button>
+        )}
         <button
           onClick={onToggleHide}
           title={hidden ? "Mostrar" : "Ocultar"}

@@ -386,6 +386,20 @@ export const DEFAULT_FUTURES = ["BINF:BTCUSDT", "BINF:ETHUSDT"];
  * Indicadores que se dibujan en su propio panel debajo del gráfico del
  * activo (el resto son superposiciones sobre las velas).
  */
+/**
+ * El orden real de los paneles: primero los que el usuario movió a mano,
+ * después los que nunca tocó, en el orden natural de la lista.
+ *
+ * Así, prender un indicador nuevo lo manda al final en vez de dejarlo
+ * fuera del orden guardado, y borrar el orden guardado vuelve al natural.
+ */
+export function ordenEfectivo(g: {
+  ordenPaneles: IndicatorKey[];
+}): IndicatorKey[] {
+  const puestos = g.ordenPaneles.filter((k) => INDICADORES_CON_PANEL.includes(k));
+  return [...puestos, ...INDICADORES_CON_PANEL.filter((k) => !puestos.includes(k))];
+}
+
 export const INDICADORES_CON_PANEL: IndicatorKey[] = [
   "rsi",
   "macd",
@@ -509,6 +523,15 @@ export interface Grafico {
   config: IndicatorConfig;
   /** Líneas del indicador de medias móviles, en el orden en que se dibujan. */
   medias: MediaMovil[];
+  /**
+   * Orden de los paneles de indicadores, de arriba hacia abajo.
+   *
+   * Solo las claves que llevan panel propio, y solo las que el usuario
+   * movió: lo que no esté acá va después, en el orden natural. Se guarda
+   * para que el orden sobreviva a recargar la página, que es justo
+   * cuando se nota si no se guarda.
+   */
+  ordenPaneles: IndicatorKey[];
 }
 
 /**
@@ -654,6 +677,15 @@ export interface ChartState {
   setTimeframe: (t: Timeframe, grafico?: string) => void;
   toggleIndicator: (key: IndicatorKey, grafico?: string) => void;
   removeIndicator: (key: IndicatorKey, grafico?: string) => void;
+  /**
+   * Sube o baja un indicador un panel. `direccion` es -1 (arriba) o +1.
+   * Devuelve el orden nuevo, o null si no se podía mover.
+   */
+  moverPanel: (
+    key: IndicatorKey,
+    direccion: -1 | 1,
+    grafico?: string,
+  ) => IndicatorKey[] | null;
   toggleHidden: (key: IndicatorKey, grafico?: string) => void;
   setConfig: (patch: Partial<IndicatorConfig>, grafico?: string) => void;
   agregarMedia: (periodo: number, grafico?: string) => void;
@@ -782,6 +814,7 @@ export function graficoNuevo(symbol: string, timeframe: Timeframe = "15m" as Tim
     hidden: indicadoresVacios(),
     config: { ...DEFAULT_CONFIG },
     medias: mediasPorDefecto(),
+    ordenPaneles: [],
   };
 }
 
@@ -857,6 +890,17 @@ function sanearGrafico(
     },
     config: { ...DEFAULT_CONFIG, ...stripNullish(g.config as IndicatorConfig | undefined) },
     medias,
+    // Orden de paneles guardado: se queda solo con claves que de verdad
+    // llevan panel y sin repetidas. Una clave vieja o repetida acá
+    // desordenaría los paneles de forma imposible de explicar.
+    ordenPaneles: Array.isArray(g.ordenPaneles)
+      ? (g.ordenPaneles as unknown[]).filter(
+          (k, i, a): k is IndicatorKey =>
+            typeof k === "string" &&
+            (INDICADORES_CON_PANEL as readonly string[]).includes(k) &&
+            a.indexOf(k) === i,
+        )
+      : [],
   };
 }
 
@@ -946,6 +990,23 @@ export const useChartStore = create<ChartState>()(
             hidden: prendiendo ? { ...g.hidden, [key]: false } : g.hidden,
           };
         }),
+      moverPanel: (key, direccion, grafico) => {
+        let salida: IndicatorKey[] | null = null;
+        tocar(set, grafico, (g) => {
+          // El orden EFECTIVO: lo que el usuario movió, y detrás lo que
+          // nunca tocó, en el orden natural. Guardar solo los movidos
+          // evita que prender un indicador nuevo quede fuera del orden.
+          const prendidos = ordenEfectivo(g).filter((k) => g.indicators[k]);
+          const i = prendidos.indexOf(key);
+          const j = i + direccion;
+          if (i < 0 || j < 0 || j >= prendidos.length) return null;
+          const nuevo = [...prendidos];
+          [nuevo[i], nuevo[j]] = [nuevo[j], nuevo[i]];
+          salida = nuevo;
+          return { ordenPaneles: nuevo };
+        });
+        return salida;
+      },
       removeIndicator: (key, grafico) =>
         tocar(set, grafico, (g) => ({
           indicators: { ...g.indicators, [key]: false },

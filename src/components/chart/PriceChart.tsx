@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   createChart,
   createSeriesMarkers,
@@ -71,6 +71,7 @@ import {
   INDICATOR_COLORS,
   MAX_PANELES_INDICADOR,
   graficoPorId,
+  ordenEfectivo,
   useChartStore,
   type IndicatorKey,
 } from "@/lib/store/chart-store";
@@ -416,6 +417,65 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
   const toggleHiddenStore = useChartStore((s) => s.toggleHidden);
   const setSettingsTargetStore = useChartStore((s) => s.setSettingsTarget);
   const removeIndicator = (k: IndicatorKey) => removeIndicatorStore(k, graficoId);
+  const ordenPaneles = useChartStore((s) => graficoPorId(s, graficoId).ordenPaneles);
+  const moverPanelStore = useChartStore((s) => s.moverPanel);
+  /** Los indicadores con panel que están prendidos, de arriba a abajo. */
+  const ordenPrendidos = useMemo(
+    () => ordenEfectivo({ ordenPaneles }).filter((k) => indicators[k]),
+    [ordenPaneles, indicators],
+  );
+
+  /** La primera serie de un indicador, sea de los de siempre o de los nuevos. */
+  const serieDeClave = useCallback((k: IndicatorKey) => {
+    switch (k) {
+      case "rsi":
+        return rsiRef.current;
+      case "macd":
+        return macdRef.current;
+      case "stoch":
+        return stochKRef.current;
+      case "cipher":
+        return cipherWt1Ref.current;
+      case "srsi":
+        return srsiKRef.current;
+      default:
+        return nuevosRef.current.get(k)?.series.values().next().value ?? null;
+    }
+  }, []);
+
+  /**
+   * Pone los paneles en el orden guardado.
+   *
+   * Recorre el orden deseado y va colocando cada panel en el puesto que
+   * le toca, empezando por el 1: el 0 es el del precio y no se mueve
+   * nunca. Colocar de arriba hacia abajo funciona tanto si `moveTo`
+   * inserta como si intercambia, porque al llegar al puesto `destino`
+   * todo lo de más arriba ya está en su sitio y solo se tocan puestos
+   * que todavía no se colocaron.
+   *
+   * Devuelve si movió algo, para no disparar un recálculo —y con él un
+   * render— cada vez que ya estaba todo en su lugar.
+   */
+  const aplicarOrdenPaneles = useCallback((orden?: IndicatorKey[]) => {
+    const chart = chartRef.current;
+    if (!chart) return false;
+    let movio = false;
+    let destino = 1;
+    for (const clave of orden ?? ordenPrendidos) {
+      const actual = paneDeSerie(serieDeClave(clave));
+      if (actual < 1) continue; // sin panel todavía, o apagado
+      if (actual !== destino) {
+        try {
+          chart.panes()[actual]?.moveTo(destino);
+          movio = true;
+        } catch {
+          // Un panel que ya no existe: lo arregla el próximo pasada.
+        }
+      }
+      destino++;
+    }
+    return movio;
+  }, [ordenPrendidos, serieDeClave]);
   const toggleHidden = (k: IndicatorKey) => toggleHiddenStore(k, graficoId);
   const setSettingsTarget = (k: IndicatorKey | null) =>
     setSettingsTargetStore(k, graficoId);
@@ -473,6 +533,29 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
   // las curvas del símbolo anterior.
   const [sinDatos, setSinDatos] = useState(false);
   const [paneOffsets, setPaneOffsets] = useState<PaneOffset[]>([]);
+
+  // Mantiene los paneles en el orden guardado.
+  //
+  // Depende de `paneOffsets` a propósito: cuando se prende un indicador
+  // nuevo, su panel aparece y los offsets se recalculan, así que esto
+  // vuelve a correr y lo pone donde va. No hay bucle porque solo se
+  // recalcula si de verdad se movió algo, y una vez ordenado no se
+  // mueve nada.
+  useEffect(() => {
+    if (aplicarOrdenPaneles()) recomputePaneOffsets();
+  }, [aplicarOrdenPaneles, paneOffsets]);
+
+  /** Sube o baja un indicador un panel, y guarda el orden nuevo. */
+  const moverPanel = (k: IndicatorKey, direccion: -1 | 1) => {
+    const nuevo = moverPanelStore(k, direccion, graficoId);
+    if (!nuevo) return;
+    // Se aplica con el orden que DEVUELVE la acción, no con el del
+    // render: en este punto el componente todavía tiene el viejo, así
+    // que usarlo movería los paneles al sitio donde ya estaban. El
+    // efecto de arriba lo volvería a arreglar en el render siguiente,
+    // pero se vería el salto.
+    if (aplicarOrdenPaneles(nuevo.filter((x) => indicators[x]))) recomputePaneOffsets();
+  };
   // Ancho de la escala de precios: las chapas de maximizar van a su
   // izquierda, si no quedan encima de los números.
   const [anchoEscala, setAnchoEscala] = useState(70);
@@ -3421,6 +3504,21 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
     const primera = nuevosRef.current.get(def.clave)?.series.values().next().value;
     panelesNuevos[def.clave] = paneDeSerie(primera ?? null);
   }
+  /**
+   * Las flechas de una chapa de panel: `null` en los bordes, para que el
+   * botón quede apagado en vez de desaparecer y correr a los demás.
+   */
+  const flechas = (k: IndicatorKey) => {
+    const i = ordenPrendidos.indexOf(k);
+    // Con el chart maximizado en un panel, mover de sitio no se vería y
+    // además el índice del maximizado dejaría de apuntar a lo mismo.
+    if (i < 0 || paneMaximizado !== null) return { onSubir: undefined, onBajar: undefined };
+    return {
+      onSubir: i > 0 ? () => moverPanel(k, -1) : null,
+      onBajar: i < ordenPrendidos.length - 1 ? () => moverPanel(k, 1) : null,
+    };
+  };
+
   /** La chapa de un indicador nuevo, con su último valor. */
   const chapaNueva = (def: IndicadorNuevo) => (
     <IndicatorPill
@@ -3433,6 +3531,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
       onToggleHide={() => toggleHidden(def.clave)}
       onSettings={() => setSettingsTarget(def.clave)}
       onRemove={() => removeIndicator(def.clave)}
+      {...(def.conPanel ? flechas(def.clave) : {})}
     />
   );
 
@@ -3797,6 +3896,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
             onToggleHide={() => toggleHidden("rsi")}
             onSettings={() => setSettingsTarget("rsi")}
             onRemove={() => removeIndicator("rsi")}
+            {...flechas("rsi")}
           />
         </div>
       )}
@@ -3820,6 +3920,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
             onToggleHide={() => toggleHidden("macd")}
             onSettings={() => setSettingsTarget("macd")}
             onRemove={() => removeIndicator("macd")}
+            {...flechas("macd")}
           />
         </div>
       )}
@@ -3843,6 +3944,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
             onToggleHide={() => toggleHidden("cipher")}
             onSettings={() => setSettingsTarget("cipher")}
             onRemove={() => removeIndicator("cipher")}
+            {...flechas("cipher")}
           />
         </div>
       )}
@@ -3866,6 +3968,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
             onToggleHide={() => toggleHidden("stoch")}
             onSettings={() => setSettingsTarget("stoch")}
             onRemove={() => removeIndicator("stoch")}
+            {...flechas("stoch")}
           />
         </div>
       )}
@@ -3889,6 +3992,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
             onToggleHide={() => toggleHidden("srsi")}
             onSettings={() => setSettingsTarget("srsi")}
             onRemove={() => removeIndicator("srsi")}
+            {...flechas("srsi")}
           />
         </div>
       )}
