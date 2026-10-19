@@ -188,16 +188,22 @@ interface BitgetTickerMsg {
 
 type AnyMsg = BitgetCandleMsg | BitgetTickerMsg | { event: string };
 
-class BitgetWS {
+/** Se exporta para poder probar el reparto de suscripciones sin red. */
+export class BitgetWS {
   private ws: WebSocket | null = null;
   private connected = false;
   private closing = false;
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
-  // key: `${channel}|${instId}` → handlers
-  private klineHandlers = new Map<string, KlineSubscription>();
-  private tickerHandlers = new Map<string, (t: MiniTick) => void>();
+  // key: `${channel}|${instId}` → CONJUNTO de handlers.
+  //
+  // Un conjunto, no uno solo: con dos gráficos del mismo par abiertos,
+  // `.set()` pisaba al primero y lo dejaba mudo, y al cerrar cualquiera
+  // de los dos el `unsubscribe` cortaba el canal para el otro. Mismo
+  // defecto que tenía el multiplexor de Binance.
+  private klineHandlers = new Map<string, Set<KlineSubscription>>();
+  private tickerHandlers = new Map<string, Set<(t: MiniTick) => void>>();
 
   connect() {
     if (this.ws || this.closing) return;
@@ -207,22 +213,22 @@ class BitgetWS {
       this.connected = true;
       this.reconnectAttempts = 0;
       // re-subscribe everything
-      this.klineHandlers.forEach((s, key) => {
+      // Las CLAVES son los canales, así que cada uno se vuelve a pedir
+      // una sola vez por más oyentes que tenga.
+      for (const key of this.klineHandlers.keys()) {
         const [channel, instId] = key.split("|");
         this.send({
           op: "subscribe",
           args: [{ instType: "SPOT", channel, instId }],
         });
-        // touch s to satisfy eslint
-        void s;
-      });
-      this.tickerHandlers.forEach((_h, key) => {
+      }
+      for (const key of this.tickerHandlers.keys()) {
         const [, instId] = key.split("|");
         this.send({
           op: "subscribe",
           args: [{ instType: "SPOT", channel: "ticker", instId }],
         });
-      });
+      }
       // Bitget requires periodic pings every 30s
       if (this.pingTimer) clearInterval(this.pingTimer);
       this.pingTimer = setInterval(() => {
@@ -277,13 +283,13 @@ class BitgetWS {
     if (!arg) return;
     if (arg.channel.startsWith("candle")) {
       const key = `${arg.channel}|${arg.instId}`;
-      const sub = this.klineHandlers.get(key);
-      if (!sub) return;
+      const subs = this.klineHandlers.get(key);
+      if (!subs || subs.size === 0) return;
       const data = (msg as BitgetCandleMsg).data ?? [];
       // Bitget kline row: [ts, open, high, low, close, baseVol, ...]
       // For updates, the latest in-progress candle is the last element.
       for (const row of data) {
-        sub.onCandle({
+        const vela = {
           time: Math.floor(parseInt(row[0], 10) / 1000),
           open: parseFloat(row[1]),
           high: parseFloat(row[2]),
@@ -291,23 +297,26 @@ class BitgetWS {
           close: parseFloat(row[4]),
           volume: parseFloat(row[5]),
           isFinal: false,
-        });
+        };
+        // Copia: un oyente puede darse de baja desde su propio callback.
+        for (const sub of [...subs]) sub.onCandle({ ...vela });
       }
     } else if (arg.channel === "ticker") {
       const key = `ticker|${arg.instId}`;
-      const handler = this.tickerHandlers.get(key);
-      if (!handler) return;
+      const handlers = this.tickerHandlers.get(key);
+      if (!handlers || handlers.size === 0) return;
       const rows = (msg as BitgetTickerMsg).data ?? [];
       for (const row of rows) {
         const close = parseFloat(row.lastPr);
         const open = parseFloat(row.open24h || row.openUtc || "0");
         if (!Number.isFinite(close)) continue;
-        handler({
+        const tick = {
           symbol: row.instId,
           close,
           open,
           pct: open === 0 ? 0 : ((close - open) / open) * 100,
-        });
+        };
+        for (const h of [...handlers]) h(tick);
       }
     }
   }
@@ -317,14 +326,26 @@ class BitgetWS {
     if (!channel) return () => {};
     const instId = sub.symbol.toUpperCase();
     const key = `${channel}|${instId}`;
-    this.klineHandlers.set(key, sub);
-    if (this.connected) {
-      this.send({
-        op: "subscribe",
-        args: [{ instType: "SPOT", channel, instId }],
-      });
+    const previos = this.klineHandlers.get(key);
+    if (previos) {
+      previos.add(sub);
+    } else {
+      this.klineHandlers.set(key, new Set([sub]));
+      if (this.connected) {
+        this.send({
+          op: "subscribe",
+          args: [{ instType: "SPOT", channel, instId }],
+        });
+      }
     }
+    let suelto = false;
     return () => {
+      if (suelto) return;
+      suelto = true;
+      const actuales = this.klineHandlers.get(key);
+      if (!actuales) return;
+      actuales.delete(sub);
+      if (actuales.size > 0) return;
       this.klineHandlers.delete(key);
       if (this.connected) {
         this.send({
@@ -344,7 +365,12 @@ class BitgetWS {
       const instId = s.toUpperCase();
       const key = `ticker|${instId}`;
       keys.push(key);
-      this.tickerHandlers.set(key, onTick);
+      const previos = this.tickerHandlers.get(key);
+      if (previos) {
+        previos.add(onTick);
+        continue;
+      }
+      this.tickerHandlers.set(key, new Set([onTick]));
       if (this.connected) {
         this.send({
           op: "subscribe",
@@ -352,9 +378,16 @@ class BitgetWS {
         });
       }
     }
+    let suelto = false;
     return () => {
+      if (suelto) return;
+      suelto = true;
       for (const key of keys) {
         const instId = key.split("|")[1];
+        const actuales = this.tickerHandlers.get(key);
+        if (!actuales) continue;
+        actuales.delete(onTick);
+        if (actuales.size > 0) continue;
         this.tickerHandlers.delete(key);
         if (this.connected) {
           this.send({

@@ -58,14 +58,29 @@ export interface TickerSubscription {
  */
 export class BinanceWS {
   /** Spot y futuros hablan el mismo protocolo; solo cambia el host. */
-  constructor(private readonly base: string = WS_SPOT) {}
+  private readonly base: string;
+
+  // Campo normal y asignación a mano, en vez de propiedad de parámetro:
+  // así el archivo se puede importar con `--experimental-strip-types` y
+  // probarse con un WebSocket de mentira, sin compilar nada.
+  constructor(base: string = WS_SPOT) {
+    this.base = base;
+  }
 
   private ws: WebSocket | null = null;
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private nextId = 1;
-  private klineSubs = new Map<string, KlineSubscription>();
-  private tickerSubs = new Map<string, (m: MiniTickerMsg["data"]) => void>();
+  // UN CONJUNTO DE SUSCRIPTORES POR STREAM, no uno solo.
+  //
+  // Antes esto era `Map<string, Sub>` y `.set()` pisaba al anterior. Con
+  // tres gráficos de BTCUSDT abiertos, el tercero en montarse dejaba
+  // mudos a los otros dos, que se quedaban clavados en el precio de la
+  // petición REST inicial: el mismo activo mostraba tres precios
+  // distintos en la misma pantalla. Y al cerrar cualquiera de ellos, el
+  // `delete` más el UNSUBSCRIBE cortaban el stream para todos.
+  private klineSubs = new Map<string, Set<KlineSubscription>>();
+  private tickerSubs = new Map<string, Set<(m: MiniTickerMsg["data"]) => void>>();
   private connected = false;
   private closing = false;
   /** Último mensaje recibido. Un socket abierto pero mudo es un zombi. */
@@ -81,12 +96,9 @@ export class BinanceWS {
       this.reconnectAttempts = 0;
       this.lastMessageAt = Date.now();
       this.startWatchdog();
-      // Re-subscribe everything
-      const streams: string[] = [];
-      this.klineSubs.forEach((s) => {
-        streams.push(`${s.symbol.toLowerCase()}@kline_${s.interval}`);
-      });
-      this.tickerSubs.forEach((_v, k) => streams.push(k));
+      // Re-subscribe everything. Las CLAVES son los streams, así que
+      // cada uno se pide una sola vez aunque lo escuchen varios.
+      const streams = [...this.klineSubs.keys(), ...this.tickerSubs.keys()];
       if (streams.length > 0) this.send({ method: "SUBSCRIBE", params: streams, id: this.nextId++ });
     };
 
@@ -172,10 +184,10 @@ export class BinanceWS {
 
   private dispatch(msg: WSMsg) {
     if (msg.stream.includes("@kline_")) {
-      const sub = this.klineSubs.get(msg.stream);
-      if (!sub) return;
+      const subs = this.klineSubs.get(msg.stream);
+      if (!subs || subs.size === 0) return;
       const k = (msg as KlineMsg).data.k;
-      sub.onCandle({
+      const vela = {
         time: Math.floor(k.t / 1000),
         open: parseFloat(k.o),
         high: parseFloat(k.h),
@@ -183,18 +195,39 @@ export class BinanceWS {
         close: parseFloat(k.c),
         volume: parseFloat(k.v),
         isFinal: k.x,
-      });
+      };
+      // Copia del conjunto: un suscriptor puede darse de baja desde su
+      // propio callback, y modificar el Set mientras se recorre es la
+      // clase de error que aparece una vez cada mil y no se reproduce.
+      [...subs].forEach((s) => s.onCandle({ ...vela }));
     } else if (msg.stream.includes("@miniTicker")) {
-      const handler = this.tickerSubs.get(msg.stream);
-      if (handler) handler((msg as MiniTickerMsg).data);
+      const subs = this.tickerSubs.get(msg.stream);
+      if (!subs) return;
+      const d = (msg as MiniTickerMsg).data;
+      [...subs].forEach((h) => h(d));
     }
   }
 
   subscribeKline(sub: KlineSubscription): () => void {
     const stream = `${sub.symbol.toLowerCase()}@kline_${sub.interval}`;
-    this.klineSubs.set(stream, sub);
-    if (this.connected) this.send({ method: "SUBSCRIBE", params: [stream], id: this.nextId++ });
+    const subs = this.klineSubs.get(stream);
+    if (subs) {
+      // El stream ya está pedido al exchange: solo se suma el oyente.
+      subs.add(sub);
+    } else {
+      this.klineSubs.set(stream, new Set([sub]));
+      if (this.connected) this.send({ method: "SUBSCRIBE", params: [stream], id: this.nextId++ });
+    }
+    let suelto = false;
     return () => {
+      // Idempotente: React puede llamar a la limpieza dos veces y soltar
+      // el stream de otro gráfico que se suscribió en el medio.
+      if (suelto) return;
+      suelto = true;
+      const actuales = this.klineSubs.get(stream);
+      if (!actuales) return;
+      actuales.delete(sub);
+      if (actuales.size > 0) return;
       this.klineSubs.delete(stream);
       if (this.connected) this.send({ method: "UNSUBSCRIBE", params: [stream], id: this.nextId++ });
     };
@@ -205,22 +238,49 @@ export class BinanceWS {
     onTick: (s: { symbol: string; close: number; open: number; pct: number }) => void,
   ): () => void {
     const streams = symbols.map((s) => `${s.toLowerCase()}@miniTicker`);
-    streams.forEach((stream) => {
-      this.tickerSubs.set(stream, (d) => {
-        const close = parseFloat(d.c);
-        const open = parseFloat(d.o);
-        onTick({
-          symbol: d.s,
-          close,
-          open,
-          pct: open === 0 ? 0 : ((close - open) / open) * 100,
-        });
+    // UNA función por llamada, la misma para todos sus streams: es la
+    // identidad que después se borra del conjunto.
+    const handler = (d: MiniTickerMsg["data"]) => {
+      const close = parseFloat(d.c);
+      const open = parseFloat(d.o);
+      onTick({
+        symbol: d.s,
+        close,
+        open,
+        pct: open === 0 ? 0 : ((close - open) / open) * 100,
       });
+    };
+    // Solo se le piden al exchange los que todavía no estaban pedidos.
+    const nuevos: string[] = [];
+    streams.forEach((stream) => {
+      const subs = this.tickerSubs.get(stream);
+      if (subs) {
+        subs.add(handler);
+      } else {
+        this.tickerSubs.set(stream, new Set([handler]));
+        nuevos.push(stream);
+      }
     });
-    if (this.connected) this.send({ method: "SUBSCRIBE", params: streams, id: this.nextId++ });
+    if (this.connected && nuevos.length > 0) {
+      this.send({ method: "SUBSCRIBE", params: nuevos, id: this.nextId++ });
+    }
+    let suelto = false;
     return () => {
-      streams.forEach((s) => this.tickerSubs.delete(s));
-      if (this.connected) this.send({ method: "UNSUBSCRIBE", params: streams, id: this.nextId++ });
+      if (suelto) return;
+      suelto = true;
+      const vacios: string[] = [];
+      streams.forEach((stream) => {
+        const subs = this.tickerSubs.get(stream);
+        if (!subs) return;
+        subs.delete(handler);
+        if (subs.size === 0) {
+          this.tickerSubs.delete(stream);
+          vacios.push(stream);
+        }
+      });
+      if (this.connected && vacios.length > 0) {
+        this.send({ method: "UNSUBSCRIBE", params: vacios, id: this.nextId++ });
+      }
     };
   }
 

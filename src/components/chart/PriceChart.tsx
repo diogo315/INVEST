@@ -3636,6 +3636,9 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
           {lastPrice ? (
             <>
               <span
+                // Gancho para las pruebas: el número sin formatear, para
+                // no tener que adivinarle los separadores de miles.
+                data-precio={lastPrice.value}
                 className={cn(
                   "font-semibold tabular-nums",
                   compacto ? "text-sm" : "text-lg",
