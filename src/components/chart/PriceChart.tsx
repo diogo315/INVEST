@@ -293,6 +293,8 @@ const MAPA_MA: Record<TipoMedia, MaType> = {
 
 export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
+  /** La caja que envuelve al chart y a todo lo que se le pone encima. */
+  const raizRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
@@ -533,6 +535,66 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
   // las curvas del símbolo anterior.
   const [sinDatos, setSinDatos] = useState(false);
   const [paneOffsets, setPaneOffsets] = useState<PaneOffset[]>([]);
+
+  // La rueda tiene que hacer zoom aunque el cursor esté sobre una chapa.
+  //
+  // Las chapas de los indicadores, la capa de dibujos y los botones son
+  // HTML por encima del canvas, y son HERMANOS del div del chart, no
+  // hijos. Así que una rueda sobre ellos no llega nunca al gráfico: no
+  // sube por burbujeo, porque el que escucha está al costado, no arriba.
+  //
+  // Medido: con el cursor sobre cualquiera de las seis chapas, la rueda
+  // no hacía absolutamente nada. Y en una vista de tres gráficos en una
+  // ventana chica, los paneles de indicador miden unos 60 px de alto y
+  // la chapa ocupa 21 de esos: uno le apunta a la chapa la mitad de las
+  // veces, y la conclusión razonable es «el zoom no anda».
+  //
+  // Se reenvía el evento a lo que haya DEBAJO del cursor dentro del
+  // chart. No alcanza con dispararlo sobre el contenedor: quien escucha
+  // es un elemento interno, y un evento disparado en el padre no baja.
+  useEffect(() => {
+    const raiz = raizRef.current;
+    const caja = containerRef.current;
+    if (!raiz || !caja) return;
+    const alRodar = (e: WheelEvent) => {
+      const destinoOriginal = e.target;
+      if (!(destinoOriginal instanceof Node)) return;
+      // Si ya cayó dentro del chart, la librería se encarga.
+      if (caja.contains(destinoOriginal)) return;
+      // Algo que de verdad se desplaza (un menú largo) se queda con su
+      // rueda: robársela sería peor que el problema que se arregla.
+      if (destinoOriginal instanceof Element) {
+        for (let n: Element | null = destinoOriginal; n && n !== raiz; n = n.parentElement) {
+          if (n.scrollHeight > n.clientHeight + 1) return;
+        }
+      }
+      const debajo = document
+        .elementsFromPoint(e.clientX, e.clientY)
+        .find((el) => caja.contains(el));
+      if (!debajo) return;
+      e.preventDefault();
+      debajo.dispatchEvent(
+        new WheelEvent("wheel", {
+          deltaX: e.deltaX,
+          deltaY: e.deltaY,
+          deltaZ: e.deltaZ,
+          deltaMode: e.deltaMode,
+          clientX: e.clientX,
+          clientY: e.clientY,
+          ctrlKey: e.ctrlKey,
+          shiftKey: e.shiftKey,
+          altKey: e.altKey,
+          metaKey: e.metaKey,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    };
+    // `passive: false` porque hace falta poder cancelar el evento: si no,
+    // el navegador desplaza la página por detrás del zoom.
+    raiz.addEventListener("wheel", alRodar, { passive: false });
+    return () => raiz.removeEventListener("wheel", alRodar);
+  }, []);
 
   // Mantiene los paneles en el orden guardado.
   //
@@ -3626,7 +3688,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
   void renderTick;
 
   return (
-    <div className="relative h-full w-full">
+    <div ref={raizRef} className="relative h-full w-full">
       <div ref={containerRef} className="h-full w-full" />
       {capaDibujos}
       {measureRender}
