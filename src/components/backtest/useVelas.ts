@@ -8,6 +8,14 @@ import { TIMEFRAME_SECONDS, type Candle, type Timeframe } from "@/lib/binance/ty
 /** Tope de velas que se le piden al proveedor de una sola vez. */
 export const TOPE_VELAS = 10000;
 
+/**
+ * Cuánto se espera antes de pedir, en milisegundos.
+ *
+ * Es lo que convierte un arrastre de la barra de posición en UNA
+ * petición en vez de cuarenta y cuatro.
+ */
+export const ESPERA_MS = 300;
+
 export interface Velas {
   velas: Candle[];
   cargando: boolean;
@@ -76,8 +84,22 @@ export function useVelas(
     if (!simbolo || !desde || !tf) return;
     if (!ventana) return;
     let vivo = true;
-    const { adapter, symbol } = getAdapter(simbolo);
-    adapter
+    /**
+     * Un respiro antes de pedir.
+     *
+     * Medido: arrastrar la barra de posición de punta a punta cruzaba
+     * varios bloques de la ventana deslizante y disparaba 44 peticiones
+     * por arrastre, con 22 en vuelo a la vez. Contra Binance de verdad
+     * eso es un bloqueo por exceso de peticiones, no una app rápida.
+     *
+     * Con la espera, mientras el usuario arrastra no se pide nada: solo
+     * se pide la ventana donde SUELTA. El retraso en la carga normal es
+     * imperceptible y se paga una sola vez.
+     */
+    const id = setTimeout(() => {
+      if (!vivo) return;
+      const { adapter, symbol } = getAdapter(simbolo);
+      adapter
       .fetchKlines(symbol, tf, ventana.limite, ventana.hastaMs)
       .then((k) => {
         if (!vivo) return;
@@ -107,8 +129,10 @@ export function useVelas(
         if (vivo)
           setDatos({ clave, velas: [], error: `No se pudieron bajar las velas de ${tf}.` });
       });
+    }, ESPERA_MS);
     return () => {
       vivo = false;
+      clearTimeout(id);
     };
     // `ventana` se recalcula en cada render pero solo cambia de verdad
     // cuando cambia `clave`, que es lo que manda acá.
