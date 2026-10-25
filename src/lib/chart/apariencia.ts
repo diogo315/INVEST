@@ -60,6 +60,15 @@ export interface Apariencia {
    * aspecto normal al pasar el mouse por encima.
    */
   chapas: ModoChapas;
+  /**
+   * A qué modo volver cuando se vuelven a mostrar las chapas.
+   *
+   * El botón de la barra es un interruptor, y sin esto apagar y
+   * encender te devolvía siempre a «normal»: quien tenía la marca de
+   * agua la perdía cada vez. Se guarda con el resto, así que el viaje
+   * de ida y vuelta sobrevive a recargar.
+   */
+  chapasAntes: ModoChapas;
 }
 
 /** Normal, marca de agua, u ocultas del todo. */
@@ -159,6 +168,7 @@ export const APARIENCIA_POR_DEFECTO: Apariencia = {
   escalaLog: false,
   opacidadVolumen: 40,
   chapas: "normal",
+  chapasAntes: "normal",
 };
 
 /** Los campos que un preset fija. El resto son interruptores. */
@@ -326,5 +336,7 @@ export function sanearApariencia(crudo: unknown): Apariencia {
         : d.opacidadVolumen,
     chapas:
       c.chapas === "agua" || c.chapas === "ocultas" ? c.chapas : d.chapas,
+    // Nunca «ocultas»: sería volver a lo mismo y el botón no haría nada.
+    chapasAntes: c.chapasAntes === "agua" ? "agua" : "normal",
   };
 }
