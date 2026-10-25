@@ -67,6 +67,7 @@ import {
   type IndicadorNuevo,
 } from "@/lib/chart/indicadores-nuevos";
 import { reconnectAllBinanceWS } from "@/lib/binance/ws";
+import { marcarDato } from "@/lib/chart/pulso";
 import {
   INDICATOR_COLORS,
   MAX_PANELES_INDICADOR,
@@ -3416,6 +3417,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
           .catch(() => {});
         unsubTicker = adapter.subscribeMiniTickers([rawSymbol], (tick) => {
           if (cancelled) return;
+          marcarDato();
           apertura24hRef.current = tick.open || apertura24hRef.current;
           setLastPrice({ value: tick.close, pct: tick.pct });
         });
@@ -3509,6 +3511,7 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
                 color: colorVolumen(aparienciaRef.current, k.close >= k.open),
               });
             }
+            marcarDato();
             // EL PRECIO DE LA CABECERA TAMBIÉN SE MUEVE CON LA VELA.
             //
             // Antes solo lo movía el ticker de 24 h, que es otro stream y

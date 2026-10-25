@@ -230,6 +230,39 @@ console.log("5. En replay el precio NO salta al de ahora");
   void antes;
 }
 
+console.log("6. El cartel de abajo dice la verdad sobre los datos");
+await montar([uno("g1", "5m")], "1");
+{
+  const pulso = page.locator("[data-pulso]").first();
+  ok("el cartel existe", await pulso.isVisible());
+
+  // Al cargar llegó el ticker por REST, así que debería estar en vivo.
+  await page.evaluate(([t]) => window.__kline("5m", t, 80700), [abre("5m")]);
+  await page.waitForTimeout(900);
+  ok("con datos llegando dice «en vivo»",
+    (await pulso.getAttribute("data-pulso")) === "vivo",
+    (await pulso.getAttribute("data-pulso")) ?? "");
+  ok("y lo dice con palabras, no solo con un color",
+    /en vivo/i.test((await pulso.innerText()) ?? ""), await pulso.innerText());
+
+  // Se corta el flujo: nadie empuja nada durante 12 segundos.
+  console.log("     (esperando 12 s sin datos, a propósito)");
+  await page.waitForTimeout(12000);
+  ok("sin datos deja de decir «en vivo»",
+    (await pulso.getAttribute("data-pulso")) !== "vivo",
+    (await pulso.getAttribute("data-pulso")) ?? "");
+  ok("y dice cuánto hace", /hace \d+ s/i.test((await pulso.innerText()) ?? ""),
+    await pulso.innerText());
+
+  // Y vuelve solo en cuanto llega un dato.
+  await page.evaluate(([t]) => window.__kline("5m", t, 80710), [abre("5m")]);
+  await page.waitForTimeout(1400);
+  ok("vuelve a «en vivo» con el primer dato nuevo",
+    (await pulso.getAttribute("data-pulso")) === "vivo",
+    (await pulso.getAttribute("data-pulso")) ?? "");
+  await page.screenshot({ path: "shots/pulso-datos.png" });
+}
+
 ok("sin errores de JavaScript", errores.length === 0, errores.slice(0, 3).join(" | "));
 await browser.close();
 console.log(`\n${fallos.length === 0 ? "TODO BIEN" : `FALLARON ${fallos.length}:\n - ${fallos.join("\n - ")}`}`);
