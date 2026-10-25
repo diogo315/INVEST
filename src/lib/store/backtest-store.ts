@@ -61,6 +61,13 @@ interface Estado {
   // Lo de abajo no se guarda: es el estado del reproductor.
   reproduciendo: boolean;
   velocidad: number;
+  /**
+   * Si el panel de la derecha (operar y resultados) está desplegado.
+   *
+   * Se guarda, a diferencia del reproductor: quien lo plegó para ver las
+   * dos gráficas anchas no quiere encontrárselo abierto en cada recarga.
+   */
+  panelLateral: boolean;
 
   setBorrador: (parche: Partial<Borrador>) => void;
   crear: () => string | null;
@@ -87,6 +94,7 @@ interface Estado {
   setPararEnOro: (v: boolean) => void;
   reproducir: (v: boolean) => void;
   setVelocidad: (v: number) => void;
+  setPanelLateral: (v: boolean) => void;
 
   operar: (op: Omit<Operacion, "id">) => void;
   cerrar: (
@@ -178,6 +186,7 @@ export const useBacktestStore = create<Estado>()(
       activoId: null,
       borrador: BORRADOR_INICIAL,
       reproduciendo: false,
+      panelLateral: true,
       velocidad: 2,
 
       setBorrador: (parche) =>
@@ -328,6 +337,7 @@ export const useBacktestStore = create<Estado>()(
 
       reproducir: (reproduciendo) => set({ reproduciendo }),
       setVelocidad: (velocidad) => set({ velocidad }),
+      setPanelLateral: (panelLateral) => set({ panelLateral }),
 
       operar: (op) =>
         set((s) =>
@@ -429,6 +439,7 @@ export const useBacktestStore = create<Estado>()(
         backtests: s.backtests,
         activoId: s.activoId,
         borrador: s.borrador,
+        panelLateral: s.panelLateral,
       }),
       merge: (persistido, actual) => {
         const p = (persistido ?? {}) as Partial<Estado>;
@@ -445,6 +456,9 @@ export const useBacktestStore = create<Estado>()(
           // encontrarse el backtest corriendo solo.
           reproduciendo: false,
           velocidad: actual.velocidad,
+          // Un valor viejo o corrupto no puede dejar el panel en un
+          // estado que no sea ni plegado ni desplegado.
+          panelLateral: p.panelLateral !== false,
         };
       },
     },

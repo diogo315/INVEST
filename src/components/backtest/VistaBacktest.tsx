@@ -66,6 +66,8 @@ export function VistaBacktest() {
   const setPararEnOro = useBacktestStore((s) => s.setPararEnOro);
   const setNiveles = useBacktestStore((s) => s.setNiveles);
   const setConfigBT = useBacktestStore((s) => s.setConfigBT);
+  const panelLateral = useBacktestStore((s) => s.panelLateral);
+  const setPanelLateral = useBacktestStore((s) => s.setPanelLateral);
   const liquidarPorNivel = useBacktestStore((s) => s.liquidarPorNivel);
 
   /**
@@ -529,29 +531,94 @@ export function VistaBacktest() {
           )}
         </div>
 
-        <aside className="flex w-full shrink-0 flex-col border-t border-tv-border bg-tv-panel lg:w-96 lg:border-l lg:border-t-0">
-          <PanelOperar
-            precio={precio}
-            tiempo={tiempo}
-            vol={vol}
-            efectivo={r?.efectivo ?? bt.capitalInicial}
-            permiteOpciones={permiteOpciones}
-            simbolo={symbol}
-            onOperar={operar}
-            niveles={niveles}
-            onNiveles={parcharNiveles}
-          />
-          {r && (
-            <Operaciones
-              operaciones={bt.operaciones}
-              resumen={r}
-              capitalInicial={bt.capitalInicial}
-              precioDe={precioAhora}
-              zona={zonaReloj}
-              onCerrar={(op) => cerrarOp(op.id, precioAhora(op), tiempo)}
+        {/* El panel de la derecha se pliega para dejar las gráficas
+            anchas. Plegado no desaparece del todo: deja una tira con el
+            resultado y el efectivo libre, que es lo que uno mira de
+            reojo mientras avanza el reproductor. Desplegarlo solo para
+            leer dos números sería cambiar un problema por otro. */}
+        {panelLateral ? (
+          <aside className="flex w-full shrink-0 flex-col border-t border-tv-border bg-tv-panel lg:w-96 lg:border-l lg:border-t-0">
+            <div className="flex items-center justify-between border-b border-tv-border px-2 py-1">
+              <span className="text-[10px] uppercase tracking-wider text-tv-text-dim">
+                Operar
+              </span>
+              <button
+                onClick={() => setPanelLateral(false)}
+                title="Plegar el panel para ver las gráficas más anchas"
+                aria-label="Plegar el panel"
+                aria-expanded
+                className="rounded p-1 text-tv-text-muted hover:bg-tv-panel-hover hover:text-tv-text"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
+            <PanelOperar
+              precio={precio}
+              tiempo={tiempo}
+              vol={vol}
+              efectivo={r?.efectivo ?? bt.capitalInicial}
+              permiteOpciones={permiteOpciones}
+              simbolo={symbol}
+              onOperar={operar}
+              niveles={niveles}
+              onNiveles={parcharNiveles}
             />
-          )}
-        </aside>
+            {r && (
+              <Operaciones
+                operaciones={bt.operaciones}
+                resumen={r}
+                capitalInicial={bt.capitalInicial}
+                precioDe={precioAhora}
+                zona={zonaReloj}
+                onCerrar={(op) => cerrarOp(op.id, precioAhora(op), tiempo)}
+              />
+            )}
+          </aside>
+        ) : (
+          <aside className="flex w-full shrink-0 items-center gap-3 border-t border-tv-border bg-tv-panel px-2 py-1 lg:w-10 lg:flex-col lg:items-center lg:gap-2 lg:border-l lg:border-t-0 lg:py-2">
+            <button
+              onClick={() => setPanelLateral(true)}
+              title="Desplegar el panel de operar"
+              aria-label="Desplegar el panel"
+              aria-expanded={false}
+              className="rounded p-1 text-tv-text-muted hover:bg-tv-panel-hover hover:text-tv-text"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            {r && (
+              <>
+                <span
+                  title={`Resultado: ${r.resultado >= 0 ? "+" : "−"}$${Math.abs(r.resultado).toFixed(0)}`}
+                  className={cn(
+                    "font-mono text-[11px] tabular-nums lg:[writing-mode:vertical-rl]",
+                    r.resultado > 0
+                      ? "text-tv-green"
+                      : r.resultado < 0
+                        ? "text-tv-red"
+                        : "text-tv-text-muted",
+                  )}
+                >
+                  {r.pct >= 0 ? "+" : ""}
+                  {r.pct.toFixed(2)} %
+                </span>
+                <span
+                  title="Efectivo libre"
+                  className="font-mono text-[11px] tabular-nums text-tv-text-dim lg:[writing-mode:vertical-rl]"
+                >
+                  ${r.efectivo.toFixed(0)}
+                </span>
+                {r.abiertas > 0 && (
+                  <span
+                    title={`${r.abiertas} operación(es) abierta(s)`}
+                    className="rounded bg-tv-blue/20 px-1 font-mono text-[10px] tabular-nums text-tv-blue"
+                  >
+                    {r.abiertas}
+                  </span>
+                )}
+              </>
+            )}
+          </aside>
+        )}
       </div>
 
       {/* ── barra de reproducción ────────────────────────────────── */}
