@@ -9,9 +9,27 @@ import {
   pasoDeStrike,
   vencimientosDesde,
 } from "@/lib/backtest/cadena";
+import {
+  cantidadEfectiva,
+  nivelesPorPct,
+  premioPorUnidad,
+  problemaDeNiveles,
+  redondearNivel,
+  relacionRB,
+  riesgoPorUnidad,
+} from "@/lib/backtest/niveles";
 import type { Operacion } from "@/lib/backtest/tipos";
 import { formatPrice } from "@/lib/format";
 import { cn } from "@/lib/utils";
+
+/** El plan que se está dibujando en el gráfico, antes de ejecutarlo. */
+export interface Plan {
+  lado: "compra" | "venta";
+  entrada: number;
+  cantidad: number;
+  stopLoss?: number;
+  takeProfit?: number;
+}
 
 interface Props {
   /** Precio del subyacente en el momento del backtest. */
@@ -24,7 +42,28 @@ interface Props {
   /** Las opciones solo existen sobre acciones y ETFs. */
   permiteOpciones: boolean;
   onOperar: (op: Omit<Operacion, "id">) => void;
+  /** El plan, controlado desde arriba porque el gráfico también lo mueve. */
+  niveles: EstadoNiveles;
+  onNiveles: (parche: Partial<EstadoNiveles>) => void;
 }
+
+/** Lo que el usuario está planificando antes de apretar el botón. */
+export interface EstadoNiveles {
+  usarNiveles: boolean;
+  ladoPlan: "compra" | "venta";
+  stopLoss: number | null;
+  takeProfit: number | null;
+  /** null = «la que entre con el efectivo libre». */
+  cantidadManual: number | null;
+}
+
+export const NIVELES_INICIAL: EstadoNiveles = {
+  usarNiveles: false,
+  ladoPlan: "compra",
+  stopLoss: null,
+  takeProfit: null,
+  cantidadManual: null,
+};
 
 type Modo = "activo" | "opciones";
 
@@ -36,15 +75,13 @@ export function PanelOperar({
   efectivo,
   permiteOpciones,
   onOperar,
+  niveles,
+  onNiveles,
 }: Props) {
   const [modo, setModo] = useState<Modo>("activo");
   /**
-   * `null` quiere decir «la que entre». Con 1.000 de capital y un papel a
-   * 300, una cantidad fija de 10 no se puede comprar nunca y el botón
-   * aparece siempre apagado; así arranca en lo máximo que alcanza y solo
-   * se queda fija cuando el usuario escribe un número.
+   * La cantidad vive en `niveles`, arriba: ver el comentario de ahí.
    */
-  const [cantidadManual, setCantidadManual] = useState<number | null>(null);
   const [contratos, setContratos] = useState(1);
   const [idxVenc, setIdxVenc] = useState(0);
   /** null = el salto que propone la tabla para este precio. */
@@ -67,10 +104,63 @@ export function PanelOperar({
     [precio, tiempo, vencimiento, vol, cuantos, paso],
   );
 
-  const maximo = precio > 0 ? Math.max(1, Math.floor(efectivo / precio)) : 1;
-  const cantidad = cantidadManual ?? maximo;
+  const maximo = cantidadEfectiva(null, efectivo, precio);
+  const cantidad = cantidadEfectiva(niveles.cantidadManual, efectivo, precio);
   const costoActivo = cantidad * precio;
   const alcanza = costoActivo <= efectivo + 0.01;
+
+  /**
+   * Los niveles del plan viven ARRIBA, en la vista, no acá.
+   *
+   * Es a propósito y vale la pena entender por qué: el gráfico también
+   * los modifica (arrastrando las líneas). Con el estado acá abajo, el
+   * arrastre tenía que volver por una prop y copiarse a un estado local
+   * dentro de un efecto, y eso es un espejo: dos copias del mismo dato
+   * que pueden quedar distintas. Con una sola fuente, lo que se arrastra
+   * y lo que ejecuta el botón de comprar son literalmente el mismo
+   * número, que es lo único que hace creíble a un simulador.
+   *
+   * Están en PRECIO y no en porcentaje: en porcentaje habría que
+   * recalcularlos en cada vela y el nivel elegido se movería solo.
+   */
+  const { usarNiveles, stopLoss, takeProfit, ladoPlan } = niveles;
+  const nivelesActivos = usarNiveles
+    ? {
+        ...(stopLoss !== null ? { stopLoss } : {}),
+        ...(takeProfit !== null ? { takeProfit } : {}),
+      }
+    : {};
+  const problema = usarNiveles
+    ? problemaDeNiveles(ladoPlan, precio, nivelesActivos)
+    : null;
+  const rb = relacionRB(precio, nivelesActivos);
+  const riesgo = stopLoss !== null ? riesgoPorUnidad(precio, stopLoss) * cantidad : null;
+  const premio = takeProfit !== null ? premioPorUnidad(precio, takeProfit) * cantidad : null;
+  const puedeOperar = alcanza && !problema;
+
+  /**
+   * Al encender los niveles, o al cambiar de lado, se proponen unos de
+   * arranque. Pasa en el MANEJADOR del clic y no en un efecto: es la
+   * consecuencia de una acción del usuario, no una sincronización. Si
+   * estuviera en un efecto que mirase el precio, cada vela nueva le
+   * borraría al usuario el stop que acababa de arrastrar.
+   *
+   * No es una recomendación: es un punto de partida arrastrable. Un 2 %
+   * en diario y un 2 % en 5 minutos son cosas muy distintas.
+   */
+  const proponer = (on: boolean, lado: "compra" | "venta") => {
+    if (!on || precio <= 0) {
+      onNiveles({ usarNiveles: on, ladoPlan: lado });
+      return;
+    }
+    const n = nivelesPorPct(lado, precio, 2, 4);
+    onNiveles({
+      usarNiveles: true,
+      ladoPlan: lado,
+      stopLoss: redondearNivel(n.stopLoss),
+      takeProfit: redondearNivel(n.takeProfit),
+    });
+  };
 
   /**
    * La cadena se abre centrada en el dinero.
@@ -94,6 +184,11 @@ export function PanelOperar({
       cantidad,
       precioEntrada: precio,
       tiempoEntrada: tiempo,
+      // Los niveles solo viajan si están encendidos Y son del lado que se
+      // está ejecutando: si el plan era una compra y se aprieta vender,
+      // el stop quedaría debajo de la entrada en una venta, o sea saltaría
+      // de inmediato. En ese caso se opera sin niveles y se avisa.
+      ...(usarNiveles && lado === ladoPlan && !problema ? nivelesActivos : {}),
     });
 
   const operarOpcion = (
@@ -163,9 +258,9 @@ export function PanelOperar({
                 min={1}
                 value={cantidad}
                 onChange={(e) =>
-                  setCantidadManual(
-                    Math.max(1, Math.round(Number(e.target.value) || 1)),
-                  )
+                  onNiveles({
+                    cantidadManual: Math.max(1, Math.round(Number(e.target.value) || 1)),
+                  })
                 }
                 className="w-full rounded border border-tv-border bg-tv-bg px-2 py-1.5 text-xs tabular-nums text-tv-text"
               />
@@ -178,24 +273,165 @@ export function PanelOperar({
             </div>
             <button
               type="button"
-              onClick={() => setCantidadManual(null)}
+              onClick={() => onNiveles({ cantidadManual: null })}
               title={`Lo máximo que entra con el efectivo libre: ${maximo}`}
               className="mb-1.5 shrink-0 rounded border border-tv-border px-2 py-1 text-[10px] text-tv-text-muted hover:bg-tv-panel-hover hover:text-tv-text"
             >
               Máx {maximo}
             </button>
           </div>
+          {/* ── stop y objetivo ──────────────────────────────────── */}
+          <div className="rounded border border-tv-border bg-tv-bg/50">
+            <div className="flex items-center gap-2 px-2 py-1.5">
+              <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-tv-text">
+                <input
+                  type="checkbox"
+                  checked={usarNiveles}
+                  onChange={(e) => proponer(e.target.checked, ladoPlan)}
+                  className="h-3 w-3 accent-tv-blue"
+                />
+                Stop y objetivo
+              </label>
+              {usarNiveles && (
+                <div className="ml-auto flex gap-0.5 rounded bg-tv-bg p-0.5">
+                  {(["compra", "venta"] as const).map((l) => (
+                    <button
+                      key={l}
+                      type="button"
+                      onClick={() => proponer(true, l)}
+                      title={`Plan para ${l === "compra" ? "una compra (largo)" : "una venta (corto)"}`}
+                      className={cn(
+                        "rounded px-2 py-0.5 text-[10px] transition-colors",
+                        ladoPlan === l
+                          ? l === "compra"
+                            ? "bg-tv-green/80 text-white"
+                            : "bg-tv-red/80 text-white"
+                          : "text-tv-text-muted hover:text-tv-text",
+                      )}
+                    >
+                      {l === "compra" ? "Largo" : "Corto"}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {usarNiveles && (
+              <div className="flex flex-col gap-2 border-t border-tv-border px-2 py-2">
+                <div className="flex items-end gap-2">
+                  <label className="flex flex-1 flex-col gap-1">
+                    <span className="text-[10px] uppercase tracking-wider text-tv-red">
+                      Stop loss
+                    </span>
+                    <input
+                      type="number"
+                      step="any"
+                      value={stopLoss ?? ""}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        onNiveles({
+                          stopLoss: e.target.value === "" || !Number.isFinite(v) ? null : v,
+                        });
+                      }}
+                      className="w-full rounded border border-tv-red/40 bg-tv-bg px-2 py-1 text-xs tabular-nums text-tv-text"
+                    />
+                  </label>
+                  <label className="flex flex-1 flex-col gap-1">
+                    <span className="text-[10px] uppercase tracking-wider text-tv-green">
+                      Take profit
+                    </span>
+                    <input
+                      type="number"
+                      step="any"
+                      value={takeProfit ?? ""}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        onNiveles({
+                          takeProfit: e.target.value === "" || !Number.isFinite(v) ? null : v,
+                        });
+                      }}
+                      className="w-full rounded border border-tv-green/40 bg-tv-bg px-2 py-1 text-xs tabular-nums text-tv-text"
+                    />
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 text-[10px]">
+                  <div>
+                    <div className="uppercase tracking-wider text-tv-text-dim">Riesgo</div>
+                    <div className="tabular-nums text-tv-red">
+                      {riesgo === null ? "—" : `−$${riesgo.toFixed(0)}`}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="uppercase tracking-wider text-tv-text-dim">Premio</div>
+                    <div className="tabular-nums text-tv-green">
+                      {premio === null ? "—" : `+$${premio.toFixed(0)}`}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="uppercase tracking-wider text-tv-text-dim">
+                      Beneficio/riesgo
+                    </div>
+                    <div
+                      className={cn(
+                        "tabular-nums",
+                        rb === null
+                          ? "text-tv-text-dim"
+                          : rb >= 2
+                            ? "text-tv-green"
+                            : rb >= 1
+                              ? "text-tv-text"
+                              : "text-tv-yellow",
+                      )}
+                    >
+                      {rb === null ? "—" : `${rb.toFixed(2)} : 1`}
+                    </div>
+                  </div>
+                </div>
+
+                {problema ? (
+                  /* El plan se invalida solo cuando el reloj avanza y el
+                     precio cruza un nivel: lo que era un objetivo arriba
+                     queda abajo. No se recalcula solo a propósito —eso
+                     borraría lo que el usuario acaba de arrastrar—, pero
+                     tampoco se lo deja trabado: un botón y listo. */
+                  <div className="flex items-start gap-2">
+                    <p className="flex-1 text-[10px] leading-relaxed text-tv-red">
+                      {problema}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => proponer(true, ladoPlan)}
+                      title="Vuelve a proponer stop y objetivo desde el precio actual"
+                      className="shrink-0 rounded border border-tv-border px-2 py-1 text-[10px] text-tv-text-muted hover:bg-tv-panel-hover hover:text-tv-text"
+                    >
+                      Recalcular
+                    </button>
+                  </div>
+                ) : (
+                  <p className="text-[10px] leading-relaxed text-tv-text-dim">
+                    Arrastrá las líneas en el gráfico para moverlas. Si una
+                    vela toca los dos niveles, se resuelve por el{" "}
+                    <strong className="text-tv-red">stop</strong>: el OHLC no
+                    guarda cuál se tocó primero, y suponer lo contrario infla
+                    el resultado.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+
           <div className="flex gap-2">
             <button
               onClick={() => operarActivo("compra")}
-              disabled={!alcanza}
+              disabled={!puedeOperar}
               className="flex flex-1 items-center justify-center gap-1.5 rounded bg-tv-green/90 py-2 text-xs font-medium text-white hover:bg-tv-green disabled:cursor-not-allowed disabled:opacity-30"
             >
               <TrendingUp className="h-3.5 w-3.5" /> Comprar
             </button>
             <button
               onClick={() => operarActivo("venta")}
-              disabled={!alcanza}
+              disabled={!puedeOperar}
               className="flex flex-1 items-center justify-center gap-1.5 rounded bg-tv-red/90 py-2 text-xs font-medium text-white hover:bg-tv-red disabled:cursor-not-allowed disabled:opacity-30"
             >
               <TrendingDown className="h-3.5 w-3.5" /> Vender

@@ -30,6 +30,7 @@ import {
   mfiArea,
   rsi,
   stochRsi,
+  vwapAnchored,
   wavetrend,
   type MaType,
 } from "@/lib/indicators";
@@ -187,6 +188,31 @@ const CLASICOS: IndicadorBT[] = [
     },
     valor: (u, fmt) =>
       u.media === undefined ? undefined : `media ${fmt(u.media)}`,
+  },
+  {
+    clave: "vwap",
+    etiqueta: "VWAP",
+    nombre: () => "VWAP (sesión)",
+    conPanel: false,
+    series: [
+      { clave: "vwap", forma: "linea", color: AZUL, grosor: 2 },
+      { clave: "sup1", forma: "linea", color: `${AZUL}70`, estilo: 2 },
+      { clave: "inf1", forma: "linea", color: `${AZUL}70`, estilo: 2 },
+    ],
+    relleno: { arriba: "sup1", abajo: "inf1", color: "#2962ff10" },
+    calcular: (velas) => {
+      // Anclado a la sesión (día UTC) y con la banda de 1σ, que es el
+      // ajuste por defecto del VWAP de TradingView. El cálculo es el
+      // mismo que usa el gráfico principal: si acá se calculara aparte,
+      // el mismo indicador daría dos líneas distintas según la pestaña.
+      const p = vwapAnchored(velas, "session", "hlc3", "stdev", [1, 2, 3]);
+      return {
+        vwap: p.map((x) => ({ time: x.time, value: x.vwap })),
+        sup1: p.map((x) => ({ time: x.time, value: x.upper[0] })),
+        inf1: p.map((x) => ({ time: x.time, value: x.lower[0] })),
+      };
+    },
+    valor: (u, fmt) => (u.vwap === undefined ? undefined : fmt(u.vwap)),
   },
   {
     clave: "volumen",

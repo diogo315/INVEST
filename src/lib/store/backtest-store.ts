@@ -92,7 +92,25 @@ interface Estado {
     opId: string,
     precio: number,
     tiempo: number,
-    motivo?: "manual" | "vencimiento",
+    motivo?: "manual" | "vencimiento" | "stop" | "objetivo",
+  ) => void;
+  /**
+   * Mueve el stop o el objetivo de una operación ABIERTA.
+   *
+   * `undefined` en un campo lo deja como está; `null` lo quita. Hacen
+   * falta las dos cosas: arrastrar el stop manda solo el stop, y el botón
+   * de quitar tiene que poder borrarlo sin borrar el objetivo.
+   *
+   * No toca las cerradas a propósito: cambiarle el stop a una operación
+   * que ya terminó reescribiría su historia.
+   */
+  setNiveles: (
+    opId: string,
+    niveles: { stopLoss?: number | null; takeProfit?: number | null },
+  ) => void;
+  /** Cierra de golpe las que tocaron un nivel. `toqueDe` decide cuál. */
+  liquidarPorNivel: (
+    toqueDe: (op: Operacion) => { precio: number; time: number; motivo: "stop" | "objetivo" } | null,
   ) => void;
   /** Cierra de golpe lo que haya vencido. Devuelve cuántas cerró. */
   liquidarVencidas: (
@@ -321,6 +339,49 @@ export const useBacktestStore = create<Estado>()(
                 : o,
             ),
           })),
+        ),
+
+      setNiveles: (opId, niveles) =>
+        set((s) =>
+          enActivo(s, (b) => ({
+            ...b,
+            operaciones: b.operaciones.map((o) => {
+              if (o.id !== opId || o.precioSalida !== undefined) return o;
+              const n = { ...o };
+              if (niveles.stopLoss !== undefined) {
+                if (niveles.stopLoss === null) delete n.stopLoss;
+                else n.stopLoss = niveles.stopLoss;
+              }
+              if (niveles.takeProfit !== undefined) {
+                if (niveles.takeProfit === null) delete n.takeProfit;
+                else n.takeProfit = niveles.takeProfit;
+              }
+              return n;
+            }),
+          })),
+        ),
+
+      liquidarPorNivel: (toqueDe) =>
+        set((s) =>
+          enActivo(s, (b) => {
+            let cambio = false;
+            const operaciones = b.operaciones.map((o) => {
+              if (o.precioSalida !== undefined) return o;
+              const t = toqueDe(o);
+              if (!t) return o;
+              cambio = true;
+              return {
+                ...o,
+                precioSalida: t.precio,
+                tiempoSalida: t.time,
+                motivo: t.motivo,
+              };
+            });
+            // Devolver el mismo objeto cuando no cambió nada evita que
+            // zustand avise de un cambio y el efecto que llama a esto se
+            // vuelva a disparar en bucle.
+            return cambio ? { ...b, operaciones } : b;
+          }),
         ),
 
       liquidarVencidas: (tiempo, intrinseco) =>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   CandlestickSeries,
   LineSeries,
@@ -26,6 +26,7 @@ import { CONFIG_BT, indicadorPorClave } from "@/lib/backtest/indicadores";
 import type { MediaMovil } from "@/lib/chart/medias";
 import type { SerieSpec } from "@/lib/chart/indicadores-nuevos";
 import { indiceDeTiempo } from "@/lib/dibujos/coordenadas";
+import { CapaNiveles, type Cual, type NivelDibujado } from "./CapaNiveles";
 import type { Operacion } from "@/lib/backtest/tipos";
 import type { Candle } from "@/lib/binance/types";
 
@@ -47,6 +48,15 @@ interface Props {
   zona: string;
   /** Temporalidad de ESTA gráfica: decide si la zona aplica (ver `zonaDelEje`). */
   temporalidad: string;
+  /**
+   * Stops, objetivos y entradas para dibujar encima, arrastrables.
+   *
+   * Solo se pasan en la gráfica BASE: los niveles son precios del activo
+   * y se verían igual en las dos, pero arrastrar el mismo stop desde dos
+   * sitios a la vez no tiene sentido y confunde más de lo que ayuda.
+   */
+  niveles?: NivelDibujado[];
+  onMoverNivel?: (opId: string, cual: Cual, precio: number) => void;
 }
 
 /** Lo que hay montado de un indicador, para poder quitarlo después. */
@@ -144,6 +154,8 @@ export function GraficoBacktest({
   vencimientos,
   zona,
   temporalidad,
+  niveles,
+  onMoverNivel,
 }: Props) {
   const zonaEje = zonaDelEje(zona, temporalidad);
   const cajaRef = useRef<HTMLDivElement>(null);
@@ -175,6 +187,15 @@ export function GraficoBacktest({
   const capaRef = useRef<HTMLDivElement>(null);
   /** Las velas visibles, para poder ubicar fechas desde una suscripción. */
   const visiblesRef = useRef<Candle[]>([]);
+  /**
+   * El chart y la serie, en estado y no solo en ref, porque la capa de
+   * niveles es un componente hijo y tiene que volver a renderizar cuando
+   * existen. Se escribe UNA vez al montar.
+   */
+  const [listo, setListo] = useState<{
+    chart: IChartApi;
+    serie: ISeriesApi<"Candlestick">;
+  } | null>(null);
 
   /**
    * Reparte el alto entre los paneles.
@@ -273,11 +294,13 @@ export function GraficoBacktest({
       autoSize: true,
     } as DeepPartial<ChartOptions>);
 
-    velasRef.current = chart.addSeries(
+    const velas = chart.addSeries(
       CandlestickSeries,
       opcionesDeVelas(aparienciaRef.current) as CandlestickSeriesPartialOptions,
     );
+    velasRef.current = velas;
     chartRef.current = chart;
+    setListo({ chart, serie: velas });
     // Las líneas de vencimiento se dibujan en HTML encima del lienzo, así
     // que hay que recolocarlas cada vez que el gráfico se mueve o se
     // acerca. No es setState dentro del efecto: es una suscripción.
@@ -286,6 +309,7 @@ export function GraficoBacktest({
     return () => {
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(alMover);
       chart.remove();
+      setListo(null);
       chartRef.current = null;
       velasRef.current = null;
       capitalRef.current = null;
@@ -611,6 +635,14 @@ export function GraficoBacktest({
   return (
     <div className="relative h-full w-full">
       <div ref={cajaRef} className="h-full w-full" />
+      {niveles && niveles.length > 0 && onMoverNivel && (
+        <CapaNiveles
+          chart={listo?.chart ?? null}
+          serie={listo?.serie ?? null}
+          niveles={niveles}
+          onMover={onMoverNivel}
+        />
+      )}
       {/* Las líneas de vencimiento se colocan a mano desde `colocarVenc`,
           no con un `style` calculado al renderizar: leer el gráfico en
           pleno render no está permitido, y moverlas por DOM evita además

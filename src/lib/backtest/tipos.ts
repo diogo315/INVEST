@@ -15,6 +15,7 @@ import {
   type VelaMin,
 } from "@/lib/backtest/cadena";
 import { sanearIndicadores } from "@/lib/backtest/indicadores";
+import { sanearNiveles } from "@/lib/backtest/niveles";
 import {
   mediasPorDefecto,
   sanearMedias,
@@ -39,11 +40,24 @@ export interface Operacion {
   vencimiento?: number;
   /** Volatilidad con la que se abrió, para poder revalorarla igual. */
   volEntrada?: number;
+  /**
+   * Niveles de salida automática, en precio del INSTRUMENTO.
+   *
+   * Solo para el activo: en una opción el stop tendría que ser sobre la
+   * prima, que se mueve por el tiempo y la volatilidad además de por el
+   * precio, y un stop "a 2 dólares de prima" salta por razones que no
+   * tienen nada que ver con la idea que se quería probar.
+   *
+   * Cuándo ejecutan, con qué precio y qué pasa si una vela contiene los
+   * dos: todo eso vive en `niveles.ts`, probado aparte.
+   */
+  stopLoss?: number;
+  takeProfit?: number;
   /** Nulo mientras siga abierta. */
   precioSalida?: number;
   tiempoSalida?: number;
-  /** Por qué se cerró: a mano, o porque venció. */
-  motivo?: "manual" | "vencimiento";
+  /** Por qué se cerró: a mano, porque venció, o porque tocó un nivel. */
+  motivo?: "manual" | "vencimiento" | "stop" | "objetivo";
   nota?: string;
 }
 
@@ -374,6 +388,10 @@ export function sanearBacktests(crudo: unknown): Backtest[] {
             Number.isFinite(o.precioEntrada) &&
             Number.isFinite(o.cantidad),
         )
-        .slice(0, 500),
+        .slice(0, 500)
+        // Los niveles son nuevos: lo guardado antes no los tiene, y un
+        // valor basura ahí cerraría operaciones solo. `sanearNiveles`
+        // devuelve `{}` para cualquier cosa que no sea un precio > 0.
+        .map((o) => ({ ...o, ...sanearNiveles(o) })),
     }));
 }

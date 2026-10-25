@@ -6,6 +6,7 @@ import { EditorMedias } from "./EditorMedias";
 import { TEMPORALIDADES_BT } from "@/lib/backtest/multi";
 import type { Panel } from "@/lib/store/backtest-store";
 import type { MediaMovil } from "@/lib/chart/medias";
+import type { Cual, NivelDibujado } from "./CapaNiveles";
 import type { Operacion } from "@/lib/backtest/tipos";
 import type { Candle, Timeframe } from "@/lib/binance/types";
 import { cn } from "@/lib/utils";
@@ -31,6 +32,9 @@ interface Props {
   onAlternar: (clave: string, panel: Panel) => void;
   onMedias: (medias: MediaMovil[], panel: Panel) => void;
   onBase: (panel: Panel) => void;
+  /** Niveles arrastrables: solo llegan a la gráfica base. */
+  niveles?: NivelDibujado[];
+  onMoverNivel?: (opId: string, cual: Cual, precio: number) => void;
 }
 
 /** Una de las gráficas del backtest, con sus propios controles arriba. */
@@ -52,6 +56,8 @@ export function BarraPanel({
   onAlternar,
   onMedias,
   onBase,
+  niveles,
+  onMoverNivel,
 }: Props) {
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -116,6 +122,8 @@ export function BarraPanel({
           vencimientos={vencimientos}
           zona={zona}
           temporalidad={temporalidad}
+          niveles={niveles}
+          onMoverNivel={onMoverNivel}
         />
       </div>
     </div>

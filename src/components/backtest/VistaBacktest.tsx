@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -11,9 +11,11 @@ import {
 } from "lucide-react";
 import { Columns2, Square } from "lucide-react";
 import { BarraPanel } from "./BarraPanel";
-import { PanelOperar } from "./PanelOperar";
+import { NIVELES_INICIAL, PanelOperar, type EstadoNiveles } from "./PanelOperar";
 import { Operaciones } from "./Operaciones";
 import { useVelas } from "./useVelas";
+import type { Cual, NivelDibujado } from "./CapaNiveles";
+import { cantidadEfectiva, primerToque, redondearNivel } from "@/lib/backtest/niveles";
 import {
   indiceHasta,
   precioContrato,
@@ -61,6 +63,22 @@ export function VistaBacktest() {
   const setBase = useBacktestStore((s) => s.setBase);
   const setZona = useBacktestStore((s) => s.setZona);
   const setPararEnOro = useBacktestStore((s) => s.setPararEnOro);
+  const setNiveles = useBacktestStore((s) => s.setNiveles);
+  const liquidarPorNivel = useBacktestStore((s) => s.liquidarPorNivel);
+
+  /**
+   * El plan de entrada: una sola fuente para el panel Y para el gráfico.
+   *
+   * Vive acá y no dentro del panel porque las líneas del gráfico también
+   * lo mueven. Con una copia en cada sitio, lo que se arrastra y lo que
+   * ejecuta el botón podrían no coincidir.
+   */
+  const [niveles, setNivelesPlan] = useState<EstadoNiveles>(NIVELES_INICIAL);
+  const parcharNiveles = useCallback(
+    (parche: Partial<EstadoNiveles>) =>
+      setNivelesPlan((n) => ({ ...n, ...parche })),
+    [],
+  );
 
   const simbolo = bt?.simbolo ?? "";
   const desde = bt?.desde ?? 0;
@@ -188,6 +206,128 @@ export function VistaBacktest() {
       ).prima;
     });
   }, [bt, tiempo, velas, vol, precio, liquidarVencidas]);
+
+  // ── stops y objetivos ───────────────────────────────────────────────
+  //
+  // Hasta qué vela ya se revisaron los niveles. Es lo que hace que los
+  // niveles valgan HACIA ADELANTE: si se arrastra un stop a un precio por
+  // el que la vela de hace tres días ya pasó, la operación NO se cierra
+  // retroactivamente. Un nivel puesto hoy rige desde hoy, igual que una
+  // orden que se manda hoy al mercado.
+  const revisadoHasta = useRef(tiempo);
+  useEffect(() => {
+    // Al retroceder el reproductor se vuelve a abrir el tramo: lo que se
+    // revise de nuevo al avanzar tiene que dar lo mismo, no quedar mudo.
+    if (tiempo < revisadoHasta.current) revisadoHasta.current = tiempo;
+  }, [tiempo]);
+
+  useEffect(() => {
+    if (!bt || visiblesBase.length === 0) return;
+    const desdeRevision = revisadoHasta.current;
+    if (tiempo <= desdeRevision) return;
+    const hayNiveles = bt.operaciones.some(
+      (o) =>
+        o.precioSalida === undefined &&
+        o.instrumento === "activo" &&
+        (o.stopLoss !== undefined || o.takeProfit !== undefined),
+    );
+    revisadoHasta.current = tiempo;
+    if (!hayNiveles) return;
+    liquidarPorNivel((o) => {
+      if (o.instrumento !== "activo") return null;
+      if (o.stopLoss === undefined && o.takeProfit === undefined) return null;
+      // Nunca antes de la entrada NI antes del último punto revisado: las
+      // dos condiciones hacen falta, y por eso se toma la mayor.
+      const desde = Math.max(o.tiempoEntrada, desdeRevision);
+      const t = primerToque(
+        o.lado,
+        visiblesBase.filter((k) => k.time <= tiempo),
+        { stopLoss: o.stopLoss, takeProfit: o.takeProfit },
+        desde,
+      );
+      return t ? { precio: t.precio, time: t.time, motivo: t.motivo } : null;
+    });
+  }, [bt, tiempo, visiblesBase, liquidarPorNivel]);
+
+  /** Lo que se dibuja y se puede arrastrar en la gráfica base. */
+  const nivelesDibujados = useMemo<NivelDibujado[]>(() => {
+    const out: NivelDibujado[] = [];
+    const plan =
+      niveles.usarNiveles && precio > 0
+        ? {
+            lado: niveles.ladoPlan,
+            entrada: precio,
+            cantidad: cantidadEfectiva(
+              niveles.cantidadManual,
+              resumen?.r.efectivo ?? bt?.capitalInicial ?? 0,
+              precio,
+            ),
+            stopLoss: niveles.stopLoss ?? undefined,
+            takeProfit: niveles.takeProfit ?? undefined,
+          }
+        : null;
+    if (plan && plan.entrada > 0) {
+      out.push({
+        opId: "plan", cual: "entrada", precio: plan.entrada, lado: plan.lado,
+        cantidad: plan.cantidad, entrada: plan.entrada, arrastrable: false,
+        etiqueta: plan.lado === "compra" ? "Entrada largo" : "Entrada corto",
+      });
+      if (plan.stopLoss !== undefined) {
+        out.push({
+          opId: "plan", cual: "stop", precio: plan.stopLoss, lado: plan.lado,
+          cantidad: plan.cantidad, entrada: plan.entrada, arrastrable: true,
+          etiqueta: "Stop",
+        });
+      }
+      if (plan.takeProfit !== undefined) {
+        out.push({
+          opId: "plan", cual: "objetivo", precio: plan.takeProfit, lado: plan.lado,
+          cantidad: plan.cantidad, entrada: plan.entrada, arrastrable: true,
+          etiqueta: "Objetivo",
+        });
+      }
+    }
+    for (const o of bt?.operaciones ?? []) {
+      if (o.precioSalida !== undefined || o.instrumento !== "activo") continue;
+      if (o.stopLoss === undefined && o.takeProfit === undefined) continue;
+      out.push({
+        opId: o.id, cual: "entrada", precio: o.precioEntrada, lado: o.lado,
+        cantidad: o.cantidad, entrada: o.precioEntrada, arrastrable: false,
+        etiqueta: o.lado === "compra" ? "Largo" : "Corto",
+      });
+      if (o.stopLoss !== undefined) {
+        out.push({
+          opId: o.id, cual: "stop", precio: o.stopLoss, lado: o.lado,
+          cantidad: o.cantidad, entrada: o.precioEntrada, arrastrable: true,
+          etiqueta: "Stop",
+        });
+      }
+      if (o.takeProfit !== undefined) {
+        out.push({
+          opId: o.id, cual: "objetivo", precio: o.takeProfit, lado: o.lado,
+          cantidad: o.cantidad, entrada: o.precioEntrada, arrastrable: true,
+          etiqueta: "Objetivo",
+        });
+      }
+    }
+    return out;
+  }, [niveles, precio, bt?.operaciones, bt?.capitalInicial, resumen?.r.efectivo]);
+
+  const moverNivel = useCallback(
+    (opId: string, cual: Cual, precio: number) => {
+      if (cual === "entrada") return;
+      const p = redondearNivel(precio);
+      if (p <= 0) return;
+      // El plan todavía no es una operación: vuelve al panel, que es
+      // quien lo tiene. Una operación abierta se guarda directamente.
+      if (opId === "plan") {
+        parcharNiveles(cual === "stop" ? { stopLoss: p } : { takeProfit: p });
+      } else {
+        setNiveles(opId, cual === "stop" ? { stopLoss: p } : { takeProfit: p });
+      }
+    },
+    [setNiveles, parcharNiveles],
+  );
 
   // ── el freno en el punto de oro ─────────────────────────────────────
   //
@@ -340,6 +480,8 @@ export function VistaBacktest() {
             onAlternar={alternarIndicador}
             onMedias={setMedias}
             onBase={setBase}
+            niveles={base === "a" ? nivelesDibujados : undefined}
+            onMoverNivel={base === "a" ? moverNivel : undefined}
           />
           {panelB && (
             <div className="border-t border-tv-border lg:border-l lg:border-t-0" />
@@ -363,6 +505,8 @@ export function VistaBacktest() {
               onAlternar={alternarIndicador}
               onMedias={setMedias}
               onBase={setBase}
+              niveles={base === "b" ? nivelesDibujados : undefined}
+              onMoverNivel={base === "b" ? moverNivel : undefined}
             />
           )}
         </div>
@@ -375,6 +519,8 @@ export function VistaBacktest() {
             efectivo={r?.efectivo ?? bt.capitalInicial}
             permiteOpciones={permiteOpciones}
             onOperar={operar}
+            niveles={niveles}
+            onNiveles={parcharNiveles}
           />
           {r && (
             <Operaciones
