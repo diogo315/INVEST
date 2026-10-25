@@ -12,6 +12,8 @@ import {
 } from "@/lib/backtest/cadena";
 import {
   margenRequerido,
+  nocionalMaximo,
+  nocionalPorDefecto,
   precioLiquidacion,
   type ConfigFuturos,
 } from "@/lib/backtest/futuros";
@@ -133,20 +135,34 @@ export function PanelOperar({
   );
 
   /**
-   * Con apalancamiento, el efectivo libre alcanza para MÁS nocional: lo
-   * que se retiene es el margen. Con 1.000 libres y 10x entran 10.000 de
-   * posición, no 1.000.
+   * Dos números distintos, y confundirlos fue el error:
+   *
+   * - LO QUE SE PROPONE por defecto es el nocional del efectivo libre,
+   *   sin multiplicar por el apalancamiento. El apalancamiento no está
+   *   para abrir una posición diez veces más grande: está para que la
+   *   misma posición inmovilice menos capital. Proponiendo el máximo,
+   *   una sola compra a 10x se llevaba todo el capital como margen y
+   *   dejaba el backtest trabado.
+   * - EL MÁXIMO sí usa el apalancamiento, descontando la comisión de
+   *   entrada, y se pide con el botón.
    */
   const lev = Math.max(1, futuros.apalancamiento || 1);
-  const poder = efectivo * lev;
-  const maximo = cantidadEfectiva(null, poder, precio);
+  const cfgLev = { ...futuros, apalancamiento: lev };
+  const maximo = cantidadEfectiva(null, nocionalMaximo(efectivo, cfgLev), precio);
+  const sugerida = cantidadEfectiva(null, nocionalPorDefecto(efectivo, cfgLev), precio);
   /** Nombre corto de una unidad: «BTC», «AAPL»… para no decir «cantidad». */
   const unidad = (simbolo || "ud.").replace(/USDT?$/, "") || "ud.";
-  const cantidad = cantidadEfectiva(niveles.cantidadManual, poder, precio);
+  const cantidad =
+    niveles.cantidadManual !== null && niveles.cantidadManual > 0
+      ? cantidadEfectiva(niveles.cantidadManual, efectivo, precio)
+      : sugerida;
   const costoActivo = cantidad * precio;          // nocional
   const margen = margenRequerido(costoActivo, lev);
-  // Lo que tiene que caber es el MARGEN, no el nocional.
-  const alcanza = margen <= efectivo + 0.01;
+  const comisionEntrada = (costoActivo * futuros.comision) / 100;
+  // Tiene que caber el MARGEN MÁS LA COMISIÓN de entrada: con solo el
+  // margen, el «máximo» salía impagable por unos centavos y el botón se
+  // quedaba apagado sin explicar por qué.
+  const alcanza = cantidad > 0 && margen + comisionEntrada <= efectivo + 0.01;
   const comisionVuelta = (costoActivo * futuros.comision * 2) / 100;
 
   /**
@@ -366,8 +382,12 @@ export function PanelOperar({
               </div>
               <button
                 type="button"
-                onClick={() => onNiveles({ cantidadManual: null })}
-                title={`Lo máximo que entra con el efectivo libre: ${maximo}`}
+                onClick={() => onNiveles({ cantidadManual: maximo })}
+                title={
+                  lev > 1
+                    ? `Todo el efectivo libre como margen: ${Number(maximo.toFixed(8))} ${unidad}. Ojo: deja el capital en cero y no vas a poder abrir nada más sin cerrar algo.`
+                    : `Lo máximo que entra con el efectivo libre: ${Number(maximo.toFixed(8))} ${unidad}`
+                }
                 className="rounded border border-tv-border px-2 py-0.5 text-[10px] text-tv-text-muted hover:bg-tv-panel-hover hover:text-tv-text"
               >
                 Máx
@@ -549,7 +569,14 @@ export function PanelOperar({
               <TrendingDown className="h-3.5 w-3.5" /> Vender
             </button>
           </div>
-          {!alcanza && (
+          {!alcanza && efectivo < 0.01 && (
+            <p className="text-[10px] leading-relaxed text-tv-red">
+              No te queda efectivo libre: está todo inmovilizado como
+              margen de las posiciones abiertas. Cerrá alguna desde la
+              tabla de abajo para poder operar de nuevo.
+            </p>
+          )}
+          {!alcanza && efectivo >= 0.01 && (
             <p className="text-[10px] text-tv-red">
               No te alcanza el efectivo libre para esa cantidad. Con $
               {efectivo.toFixed(0)}

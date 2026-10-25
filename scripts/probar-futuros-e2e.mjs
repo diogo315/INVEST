@@ -189,6 +189,60 @@ console.log("4. EL CONMUTADOR DE COMISIONES cambia los números");
   await pag.close();
 }
 
+console.log("4b. EL ERROR DE DIEGO: una compra no puede dejar el capital en cero");
+{
+  const pag = await abrir({
+    mercado: "futuros",
+    futuros: { apalancamiento: 10, comision: 0.04, financiamiento: 0.01, mantenimiento: 0.005 },
+  });
+  const libre = async () =>
+    Number(((await texto(pag, /^libre \$/)) || "").replace(/[^\d.]/g, ""));
+  const habilitado = () =>
+    pag.getByRole("button", { name: /^Comprar$/ }).isEnabled().catch(() => false);
+
+  ck("arranca con los 10.000 libres", casi(await libre(), 10000, 1), String(await libre()));
+
+  // Cinco compras seguidas con la cantidad PROPUESTA. Antes, la primera
+  // se llevaba el 100 % del capital como margen y dejaba el backtest
+  // trabado: era imposible seguir operando.
+  const libres = [];
+  for (let i = 0; i < 5; i++) {
+    if (!(await habilitado())) break;
+    await pag.getByRole("button", { name: /^Comprar$/ }).click();
+    await pag.waitForTimeout(500);
+    libres.push(await libre());
+  }
+  ck("se pudieron hacer las cinco compras seguidas", libres.length === 5,
+    `${libres.length}: ${libres.join(", ")}`);
+  ck("NINGUNA dejó el capital en cero", libres.every((v) => v > 100), libres.join(", "));
+  ck("y cada una dejó menos que la anterior (va bajando, no se traba)",
+    libres.every((v, i) => i === 0 || v < libres[i - 1]), libres.join(", "));
+
+  // Lo que SÍ usa el apalancamiento entero es el botón, explícitamente.
+  const antes = await libre();
+  await pag.getByRole("button", { name: /^Máx$/ }).click();
+  await pag.waitForTimeout(500);
+  await pag.getByRole("button", { name: /^Comprar$/ }).click();
+  await pag.waitForTimeout(700);
+  const despues = await libre();
+  ck(`el botón Máx sí usa casi todo (${antes.toFixed(0)} → ${despues.toFixed(0)})`,
+    despues < antes * 0.05, `${antes} → ${despues}`);
+  ck("y ahí el botón queda apagado", !(await habilitado()));
+  const aviso = await texto(pag, /No te alcanza/);
+  ck("con un aviso que dice cuánto entra",
+    /entran [\d.]+/.test(aviso), aviso.replace(/\s+/g, " ").slice(0, 110));
+
+  // Y hay salida: cerrar una posición devuelve capital.
+  const cerrar = pag.getByRole("button", { name: /Cerrar/i }).first();
+  if (await cerrar.count()) {
+    await cerrar.click();
+    await pag.waitForTimeout(700);
+    ck("cerrar una posición devuelve capital libre", (await libre()) > despues,
+      `${despues} → ${await libre()}`);
+  }
+  await pag.close();
+}
+
 console.log("5. En SPOT no hay apalancamiento ni liquidación");
 {
   const pag = await abrir({ mercado: "spot" });

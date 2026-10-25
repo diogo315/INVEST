@@ -24,6 +24,8 @@ import {
   financiamientoPagado,
   margenDeMovimiento,
   margenRequerido,
+  nocionalMaximo,
+  nocionalPorDefecto,
   precioLiquidacion,
   sanearFuturos,
   tocaLiquidacion,
@@ -163,6 +165,34 @@ console.log("Cuánto se aguanta en contra, por apalancamiento");
       casi(margenDeMovimiento(cfg({ apalancamiento: lev })), esperado[lev], 1e-9),
       String(margenDeMovimiento(cfg({ apalancamiento: lev }))));
   }
+}
+
+console.log("EL ERROR DE DIEGO: una compra se llevaba todo el capital");
+{
+  const c = cfg({ apalancamiento: 10, comision: 0.04 });
+  // Lo que se PROPONE no depende del apalancamiento: es el efectivo.
+  ck("por defecto se propone el nocional del efectivo, no 10 veces más",
+    casi(nocionalPorDefecto(5000, c), 5000, 1), String(nocionalPorDefecto(5000, c)));
+  ck("a 1x propone lo mismo",
+    casi(nocionalPorDefecto(5000, cfg({ apalancamiento: 1 })), 5000, 3),
+    String(nocionalPorDefecto(5000, cfg({ apalancamiento: 1 }))));
+  // Y con esa propuesta QUEDA capital libre para seguir operando.
+  const margen = margenRequerido(nocionalPorDefecto(5000, c), 10);
+  ck("tras abrirla quedan ~4.500 libres, no cero",
+    casi(5000 - margen, 4500, 5), String(5000 - margen));
+
+  // El máximo SÍ usa el apalancamiento, pero descontando la comisión.
+  const max = nocionalMaximo(5000, c);
+  ck("el máximo a 10x es casi 50.000", max > 48000 && max < 50000, String(max));
+  ck("y SE PUEDE PAGAR de verdad (margen + comisión ≤ efectivo)",
+    margenRequerido(max, 10) + comisionDe(max, c) <= 5000.01,
+    String(margenRequerido(max, 10) + comisionDe(max, c)));
+  ck("ignorar la comisión daría un máximo impagable",
+    margenRequerido(5000 * 10, 10) + comisionDe(5000 * 10, c) > 5000);
+
+  ck("sin efectivo, el máximo es cero", nocionalMaximo(0, c) === 0);
+  ck("y lo propuesto también", nocionalPorDefecto(0, c) === 0);
+  ck("efectivo negativo no rompe", nocionalMaximo(-100, c) === 0);
 }
 
 console.log("Saneado");

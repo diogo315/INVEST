@@ -190,6 +190,46 @@ export function margenDeMovimiento(cfg: ConfigFuturos): number {
   return Math.max(0, (1 / lev - cfg.mantenimiento) * 100);
 }
 
+/**
+ * Nocional MÁXIMO que se puede abrir con el efectivo libre.
+ *
+ * No es `efectivo × apalancamiento`: para abrir una posición hace falta
+ * el margen Y la comisión de entrada, las dos sobre el nocional. O sea
+ *
+ *   N/L + N·c ≤ efectivo   →   N ≤ efectivo / (1/L + c)
+ *
+ * Ignorar la comisión deja un «máximo» que no se puede pagar, y el botón
+ * de comprar apagado sin decir por qué.
+ */
+export function nocionalMaximo(efectivo: number, cfg: ConfigFuturos): number {
+  if (!Number.isFinite(efectivo) || efectivo <= 0) return 0;
+  const lev = Math.max(1, cfg.apalancamiento || 1);
+  const porUnidad = 1 / lev + cfg.comision / 100;
+  return porUnidad > 0 ? efectivo / porUnidad : 0;
+}
+
+/**
+ * Nocional que se PROPONE por defecto.
+ *
+ * Es el efectivo libre, sin multiplicar por el apalancamiento, y la
+ * razón es la misma que explica la barra de arriba: el apalancamiento no
+ * está para abrir una posición diez veces más grande, está para que la
+ * misma posición inmovilice menos capital.
+ *
+ * Con el máximo como valor por defecto —que es lo que hacía antes— una
+ * sola compra a 10x se llevaba el 100 % del capital como margen, dejaba
+ * el efectivo libre en cero y el backtest trabado sin poder operar de
+ * nuevo. Medido, y es exactamente lo que le pasó a Diego.
+ *
+ * Quien quiera el máximo lo pide con el botón, que para eso está.
+ */
+export function nocionalPorDefecto(efectivo: number, cfg: ConfigFuturos): number {
+  if (!Number.isFinite(efectivo) || efectivo <= 0) return 0;
+  // Nunca más que el máximo: con apalancamiento 1 el margen ya es todo
+  // el nocional, así que la comisión no entraría.
+  return Math.min(efectivo, nocionalMaximo(efectivo, cfg));
+}
+
 /** Saca la basura de una configuración guardada. */
 export function sanearFuturos(crudo: unknown): ConfigFuturos {
   const c = (crudo ?? {}) as Partial<ConfigFuturos>;
