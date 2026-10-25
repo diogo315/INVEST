@@ -530,6 +530,16 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
 
   const [hover, setHover] = useState<HoverInfo | null>(null);
   const [lastPrice, setLastPrice] = useState<{ value: number; pct: number } | null>(null);
+  /**
+   * La apertura de hace 24 h, para poder calcular el porcentaje desde el
+   * precio que llega por el tick de vela.
+   *
+   * El tick de vela trae el precio pero no esa referencia; el ticker de
+   * 24 h trae las dos. Guardando la apertura, el porcentaje sigue siendo
+   * el de 24 h —el mismo que la columna del watchlist— aunque el precio
+   * venga del otro lado.
+   */
+  const apertura24hRef = useRef<number | null>(null);
   const [lastValues, setLastValues] = useState<LastValues>({});
   // El proveedor devolvió cero velas: se avisa en vez de dejar en pantalla
   // las curvas del símbolo anterior.
@@ -3397,11 +3407,16 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
           .then((ts) => {
             const t = ts[0];
             if (cancelled || !t) return;
+            if (t.priceChangePercent !== 0) {
+              apertura24hRef.current =
+                t.lastPrice / (1 + t.priceChangePercent / 100);
+            }
             setLastPrice({ value: t.lastPrice, pct: t.priceChangePercent });
           })
           .catch(() => {});
         unsubTicker = adapter.subscribeMiniTickers([rawSymbol], (tick) => {
           if (cancelled) return;
+          apertura24hRef.current = tick.open || apertura24hRef.current;
           setLastPrice({ value: tick.close, pct: tick.pct });
         });
 
@@ -3494,6 +3509,27 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
                 color: colorVolumen(aparienciaRef.current, k.close >= k.open),
               });
             }
+            // EL PRECIO DE LA CABECERA TAMBIÉN SE MUEVE CON LA VELA.
+            //
+            // Antes solo lo movía el ticker de 24 h, que es otro stream y
+            // llega a su propio ritmo. Con eso, el número grande se
+            // quedaba quieto mientras la vela que está justo debajo ya se
+            // había movido: medido, la vela y los indicadores cambiaban y
+            // el precio seguía marcando el valor con el que se cargó la
+            // página. Y con varias temporalidades a la vista, cada
+            // cabecera podía decir una cosa distinta de su propia vela.
+            //
+            // El cierre de la vela EN FORMACIÓN es el precio de ahora, así
+            // que la cabecera y el dibujo salen del mismo dato y no pueden
+            // contradecirse. El porcentaje sigue siendo el de 24 h, que es
+            // el que coincide con la columna del watchlist: para eso se
+            // guarda la apertura.
+            const base = apertura24hRef.current;
+            setLastPrice((prev) => ({
+              value: k.close,
+              pct: base && base > 0 ? ((k.close - base) / base) * 100 : (prev?.pct ?? 0),
+            }));
+
             updateEMAs();
             updateRSI();
             updateMACD();
