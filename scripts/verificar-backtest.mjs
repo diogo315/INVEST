@@ -26,6 +26,7 @@ import {
   sanearBacktests,
   unidades,
 } from "../src/lib/backtest/tipos.ts";
+import { FUTUROS_POR_DEFECTO } from "../src/lib/backtest/futuros.ts";
 import {
   CONFIG_BT,
   INDICADORES_BT,
@@ -224,7 +225,12 @@ console.log("Resumen");
         precioEntrada: 20, tiempoEntrada: 0, precioSalida: 18, tiempoSalida: DIA }, // -10
     ],
   };
-  const r = resumir(bt, () => 6); // el call abierto vale 6 → +400
+  // Sin costos: estas comprobaciones son de la contabilidad base, no de
+  // comisiones. Los costos tienen su propio archivo (verificar-futuros).
+  const sinCostos = (valorar) => ({
+    valorar, ahora: 0, cfg: FUTUROS_POR_DEFECTO, conComisiones: false,
+  });
+  const r = resumir(bt, sinCostos(() => 6)); // el call abierto vale 6 → +400
   comprobar("cuenta todas las operaciones", r.operaciones === 3);
   comprobar("cuenta las abiertas", r.abiertas === 1);
   comprobar("suma lo realizado", r.realizado === 40, String(r.realizado));
@@ -236,7 +242,7 @@ console.log("Resumen");
   comprobar("cuenta ganadoras", r.ganadoras === 1, String(r.ganadoras));
   comprobar("cuenta perdedoras", r.perdedoras === 1, String(r.perdedoras));
   comprobar("sin operaciones el resultado es cero",
-    resumir({ ...bt, operaciones: [] }, () => 0).pct === 0);
+    resumir({ ...bt, operaciones: [] }, sinCostos(() => 0)).pct === 0);
 }
 
 console.log("Caída máxima");
@@ -266,6 +272,34 @@ console.log("Curva de capital");
     c2[2].value === 1020 && c2[4].value === 1020, JSON.stringify(c2.map((p) => p.value)));
   comprobar("antes de abrir no cuenta",
     curvaDeCapital({ ...bt, operaciones: [{ ...bt.operaciones[0], tiempoEntrada: 3 * DIA }] }, velas, () => 0.3)[0].value === 1000);
+}
+
+console.log("La curva con y sin costos sale de las MISMAS operaciones")
+{
+  const op = {
+    id: "x", instrumento: "activo", lado: "compra", cantidad: 1,
+    precioEntrada: 100, tiempoEntrada: 0,
+  };
+  const b = {
+    id: "c", nombre: "costos", simbolo: "BIN:BTCUSDT", temporalidad: "1d",
+    desde: 0, capitalInicial: 1000, operaciones: [op], tiempoActual: 86400,
+    historiaPrevia: 365, medias: [], indicadores: [], creado: 0,
+  };
+  const velas = [
+    { time: 0, open: 100, high: 100, low: 100, close: 100 },
+    { time: 86400, open: 110, high: 110, low: 110, close: 110 },
+  ];
+  const cfg = { apalancamiento: 1, comision: 0.1, financiamiento: 0, mantenimiento: 0.005 };
+  const bruta = curvaDeCapital(b, velas, () => 0.5, cfg, false);
+  const neta = curvaDeCapital(b, velas, () => 0.5, cfg, true);
+  comprobar("sin costos, el capital sube los 10 enteros",
+    bruta.at(-1).value === 1010, String(bruta.at(-1).value));
+  // 0,1 % de 100 al abrir + 0,1 % de 110 al valorar = 0,21
+  comprobar("con costos, descuenta comisión de entrada y de salida",
+    Math.abs(neta.at(-1).value - (1010 - 0.21)) < 0.005, String(neta.at(-1).value));
+  comprobar("la diferencia entre las dos es exactamente la comisión",
+    Math.abs((bruta.at(-1).value - neta.at(-1).value) - 0.21) < 0.005);
+  comprobar("las dos curvas tienen los mismos puntos", bruta.length === neta.length);
 }
 
 console.log("Nombres y saneo");

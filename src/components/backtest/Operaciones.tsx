@@ -19,6 +19,8 @@ interface Props {
   precioDe: (op: Operacion) => number;
   /** Zona horaria para los momentos de entrada (no para los vencimientos). */
   zona: string;
+  /** Si los números que se muestran ya descuentan los costos. */
+  conComisiones: boolean;
   onCerrar: (op: Operacion) => void;
 }
 
@@ -75,6 +77,7 @@ export function Operaciones({
   capitalInicial,
   precioDe,
   zona,
+  conComisiones,
   onCerrar,
 }: Props) {
   const r = resumen;
@@ -115,6 +118,32 @@ export function Operaciones({
           pie={`libre $${r.efectivo.toFixed(0)}`}
         />
       </div>
+
+      {/* Los costos SIEMPRE a la vista, estén descontados o no. Mirar un
+          resultado bruto sin saber cuánto se habría ido en comisiones es
+          justamente lo que hace creer que una estrategia de muchas
+          operaciones funciona. */}
+      {(r.comisiones > 0.005 || Math.abs(r.financiamiento) > 0.005) && (
+        <div className="flex items-center gap-3 border-b border-tv-border px-3 py-1.5 text-[10px]">
+          <span className="uppercase tracking-wider text-tv-text-dim">
+            {conComisiones ? "Ya descontado" : "Sin descontar"}
+          </span>
+          <span className="tabular-nums text-tv-yellow">
+            comisión −${r.comisiones.toFixed(2)}
+          </span>
+          {Math.abs(r.financiamiento) > 0.005 && (
+            <span className="tabular-nums text-tv-yellow">
+              financiamiento {r.financiamiento >= 0 ? "−" : "+"}$
+              {Math.abs(r.financiamiento).toFixed(2)}
+            </span>
+          )}
+          {!conComisiones && (
+            <span className="ml-auto text-tv-text-dim">
+              estás viendo el bruto
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {ordenadas.length === 0 ? (
@@ -158,6 +187,19 @@ export function Operaciones({
                       <span className="ml-1.5 text-[10px] text-tv-text-dim">
                         {fechaHoraEn(op.tiempoEntrada, zona).slice(0, 10)}
                         {op.motivo === "vencimiento" && " · venció"}
+                        {op.motivo === "stop" && " · stop"}
+                        {op.motivo === "objetivo" && " · objetivo"}
+                        {op.motivo === "liquidacion" && (
+                          <span className="font-semibold text-tv-red">
+                            {" "}
+                            · LIQUIDADA
+                          </span>
+                        )}
+                        {(op.apalancamiento ?? 1) > 1 && (
+                          <span className="ml-1 text-tv-text-dim">
+                            {op.apalancamiento}×
+                          </span>
+                        )}
                       </span>
                     </td>
                     <td className="px-2 py-1.5 text-right tabular-nums text-tv-text-muted">

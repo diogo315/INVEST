@@ -18,6 +18,13 @@ import { sanearIndicadores } from "@/lib/backtest/indicadores";
 import { DEFAULT_CONFIG, type IndicatorConfig } from "@/lib/store/chart-store";
 import { sanearNiveles } from "@/lib/backtest/niveles";
 import {
+  FUTUROS_POR_DEFECTO,
+  costosDe,
+  margenRequerido,
+  sanearFuturos,
+  type ConfigFuturos,
+} from "@/lib/backtest/futuros";
+import {
   mediasPorDefecto,
   sanearMedias,
   type MediaMovil,
@@ -42,6 +49,13 @@ export interface Operacion {
   /** Volatilidad con la que se abrió, para poder revalorarla igual. */
   volEntrada?: number;
   /**
+   * Apalancamiento con el que se ABRIÓ. Se guarda en la operación y no
+   * se lee de la configuración al calcular, a propósito: cambiar el
+   * apalancamiento hoy no puede reescribir lo que inmovilizó una
+   * operación de la semana pasada. Ausente o 1 = sin apalancar.
+   */
+  apalancamiento?: number;
+  /**
    * Niveles de salida automática, en precio del INSTRUMENTO.
    *
    * Solo para el activo: en una opción el stop tendría que ser sobre la
@@ -58,7 +72,7 @@ export interface Operacion {
   precioSalida?: number;
   tiempoSalida?: number;
   /** Por qué se cerró: a mano, porque venció, o porque tocó un nivel. */
-  motivo?: "manual" | "vencimiento" | "stop" | "objetivo";
+  motivo?: "manual" | "vencimiento" | "stop" | "objetivo" | "liquidacion";
   nota?: string;
 }
 
@@ -91,6 +105,13 @@ export interface Backtest {
    * el resto sale de la configuración de fábrica.
    */
   config?: Partial<IndicatorConfig>;
+  /**
+   * Spot o futuros. En spot no hay apalancamiento ni liquidación: una
+   * posición inmoviliza todo su nocional y nadie te cierra nada.
+   */
+  mercado?: "spot" | "futuros";
+  /** Apalancamiento, comisión y financiamiento de ESTE backtest. */
+  futuros?: ConfigFuturos;
   /** Indicadores encendidos, por clave. Se guardan con la corrida: parte
    * de lo que se quiere recordar es QUÉ estabas mirando al decidir. */
   indicadores: string[];
@@ -149,6 +170,11 @@ export function unidades(op: Operacion): number {
  * el mismo importe que costaría comprarla, que es conservador y simple.
  */
 export function costoApertura(op: Operacion): number {
+  return margenRequerido(nocionalEntrada(op), op.apalancamiento ?? 1);
+}
+
+/** Nocional de la operación al abrirla: precio por unidades. */
+export function nocionalEntrada(op: Operacion): number {
   return op.precioEntrada * unidades(op);
 }
 
@@ -166,6 +192,38 @@ export function valorA(op: Operacion, precioInstrumento: number): number {
 export function resultadoA(op: Operacion, precioInstrumento: number): number {
   const dif = precioInstrumento - op.precioEntrada;
   return (op.lado === "compra" ? dif : -dif) * unidades(op);
+}
+
+/**
+ * Comisión y financiamiento de una operación.
+ *
+ * Para una CERRADA se calculan hasta su salida. Para una ABIERTA se
+ * calculan hasta `ahora` y con el precio actual, porque el
+ * financiamiento ya se pagó aunque la posición siga viva: no contarlo
+ * haría que una posición apalancada de tres semanas pareciera gratis
+ * hasta el día que se cierra.
+ *
+ * Las opciones no pagan nada de esto: no son futuros.
+ */
+export function costosOperacion(
+  op: Operacion,
+  cfg: ConfigFuturos,
+  precioAhora: number,
+  ahora: number,
+): { comision: number; financiamiento: number; total: number } {
+  if (op.instrumento !== "activo") {
+    return { comision: 0, financiamiento: 0, total: 0 };
+  }
+  const salida = op.precioSalida ?? precioAhora;
+  const hasta = op.tiempoSalida ?? ahora;
+  return costosDe(
+    op.lado,
+    op.precioEntrada,
+    salida,
+    unidades(op),
+    Math.max(0, hasta - op.tiempoEntrada),
+    { ...cfg, apalancamiento: op.apalancamiento ?? 1 },
+  );
 }
 
 /** Si ya está cerrada, su resultado definitivo. */
@@ -206,6 +264,17 @@ export function precioDe(
   ).prima;
 }
 
+/** Lo que hace falta para valorar: precios, momento y costos. */
+export interface Contexto {
+  /** Precio del instrumento de cada operación, ahora. */
+  valorar: (op: Operacion) => number;
+  /** Momento actual del backtest, para el financiamiento acumulado. */
+  ahora: number;
+  cfg: ConfigFuturos;
+  /** false = se muestran los resultados BRUTOS, sin comisiones. */
+  conComisiones: boolean;
+}
+
 export interface Resumen {
   /** Capital si se cerrara todo ahora mismo. */
   capital: number;
@@ -226,6 +295,11 @@ export interface Resumen {
   perdedoras: number;
   /** Peor caída desde un máximo de capital, en porcentaje. */
   maxCaida: number;
+  /** Comisión y financiamiento pagados, de lo cerrado y lo abierto. */
+  comisiones: number;
+  financiamiento: number;
+  /** Nocional de las posiciones abiertas: lo que de verdad está en juego. */
+  nocionalAbierto: number;
 }
 
 /**
@@ -237,7 +311,7 @@ export interface Resumen {
  */
 export function resumir(
   bt: Backtest,
-  valorar: (op: Operacion) => number,
+  ctx: Contexto,
   curva: number[] = [],
 ): Resumen {
   let realizado = 0;
@@ -246,17 +320,35 @@ export function resumir(
   let abiertas = 0;
   let ganadoras = 0;
   let perdedoras = 0;
+  let comisiones = 0;
+  let financiamiento = 0;
+  let nocionalAbierto = 0;
 
   for (const op of bt.operaciones) {
+    const precio = ctx.valorar(op);
+    const c = costosOperacion(op, ctx.cfg, precio, ctx.ahora);
+    // Los costos se SUMAN siempre —para poder enseñarlos— pero solo se
+    // RESTAN del resultado si el conmutador está puesto. Así los dos
+    // modos salen de las mismas operaciones y la comparación es honesta.
+    comisiones += c.comision;
+    financiamiento += c.financiamiento;
+    const resta = ctx.conComisiones ? c.total : 0;
+
     const fin = resultadoFinal(op);
     if (fin === null) {
       abiertas++;
       expuesto += costoApertura(op);
-      abierto += resultadoA(op, valorar(op));
+      nocionalAbierto += Math.abs(precio * unidades(op));
+      abierto += resultadoA(op, precio) - resta;
     } else {
-      realizado += fin;
-      if (fin > 0) ganadoras++;
-      else if (fin < 0) perdedoras++;
+      const neto = fin - resta;
+      realizado += neto;
+      // Ganadora o perdedora SEGÚN LO QUE SE ESTÁ MIRANDO: una operación
+      // que gana 3 dólares y paga 4 de comisión es perdedora, y decir lo
+      // contrario sería el tipo de maquillaje que hace creer que una
+      // estrategia de muchas operaciones funciona.
+      if (neto > 0) ganadoras++;
+      else if (neto < 0) perdedoras++;
     }
   }
 
@@ -277,6 +369,9 @@ export function resumir(
     ganadoras,
     perdedoras,
     maxCaida: caidaMaxima(curva),
+    comisiones,
+    financiamiento,
+    nocionalAbierto,
   };
 }
 
@@ -304,6 +399,13 @@ export function curvaDeCapital(
   bt: Backtest,
   velas: VelaMin[],
   volEn: (i: number) => number,
+  cfg: ConfigFuturos = FUTUROS_POR_DEFECTO,
+  /**
+   * Apagado por defecto A PROPÓSITO: descontar comisiones que el
+   * llamador nunca configuró es inventar números. Lo cazaron las
+   * pruebas de la curva cuando el valor por defecto era el contrario.
+   */
+  conComisiones = false,
 ): Array<{ time: number; value: number }> {
   const out: Array<{ time: number; value: number }> = [];
   for (let i = 0; i < velas.length; i++) {
@@ -314,10 +416,14 @@ export function curvaDeCapital(
       if (op.tiempoEntrada > time) continue;
       const cerradaYa =
         op.tiempoSalida !== undefined && op.tiempoSalida <= time;
-      if (cerradaYa) {
-        total += resultadoA(op, op.precioSalida as number);
-      } else {
-        total += resultadoA(op, precioDe(op, close, time, volEn(i)));
+      const precio = cerradaYa
+        ? (op.precioSalida as number)
+        : precioDe(op, close, time, volEn(i));
+      total += resultadoA(op, precio);
+      // La curva tiene que contar lo mismo que el resumen, si no el
+      // dibujo y el número de arriba dirían cosas distintas.
+      if (conComisiones) {
+        total -= costosOperacion(op, cfg, precio, time).total;
       }
     }
     out.push({ time, value: Number(total.toFixed(2)) });
@@ -406,6 +512,8 @@ export function sanearBacktests(crudo: unknown): Backtest[] {
       zonaHoraria:
         typeof b.zonaHoraria === "string" && b.zonaHoraria ? b.zonaHoraria : ZONA_BACKTEST,
       pararEnOro: b.pararEnOro === true,
+      mercado: b.mercado === "futuros" ? "futuros" : "spot",
+      futuros: sanearFuturos(b.futuros),
       historiaPrevia:
         Number.isFinite(b.historiaPrevia) && b.historiaPrevia > 0
           ? Math.min(3650, Math.round(b.historiaPrevia))

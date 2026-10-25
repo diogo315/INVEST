@@ -11,6 +11,11 @@ import {
   vencimientosDesde,
 } from "@/lib/backtest/cadena";
 import {
+  margenRequerido,
+  precioLiquidacion,
+  type ConfigFuturos,
+} from "@/lib/backtest/futuros";
+import {
   cantidadEfectiva,
   dolaresPorUnidades,
   nivelesPorPct,
@@ -48,6 +53,9 @@ interface Props {
   permiteOpciones: boolean;
   /** Símbolo sin el prefijo del mercado: «BTCUSDT», «AAPL». */
   simbolo: string;
+  /** Costos y apalancamiento. En spot llega con apalancamiento 1. */
+  futuros: ConfigFuturos;
+  esFuturos: boolean;
   onOperar: (op: Omit<Operacion, "id">) => void;
   /** El plan, controlado desde arriba porque el gráfico también lo mueve. */
   niveles: EstadoNiveles;
@@ -92,6 +100,8 @@ export function PanelOperar({
   efectivo,
   permiteOpciones,
   simbolo,
+  futuros,
+  esFuturos,
   onOperar,
   niveles,
   onNiveles,
@@ -122,12 +132,22 @@ export function PanelOperar({
     [precio, tiempo, vencimiento, vol, cuantos, paso],
   );
 
-  const maximo = cantidadEfectiva(null, efectivo, precio);
+  /**
+   * Con apalancamiento, el efectivo libre alcanza para MÁS nocional: lo
+   * que se retiene es el margen. Con 1.000 libres y 10x entran 10.000 de
+   * posición, no 1.000.
+   */
+  const lev = Math.max(1, futuros.apalancamiento || 1);
+  const poder = efectivo * lev;
+  const maximo = cantidadEfectiva(null, poder, precio);
   /** Nombre corto de una unidad: «BTC», «AAPL»… para no decir «cantidad». */
   const unidad = (simbolo || "ud.").replace(/USDT?$/, "") || "ud.";
-  const cantidad = cantidadEfectiva(niveles.cantidadManual, efectivo, precio);
-  const costoActivo = cantidad * precio;
-  const alcanza = costoActivo <= efectivo + 0.01;
+  const cantidad = cantidadEfectiva(niveles.cantidadManual, poder, precio);
+  const costoActivo = cantidad * precio;          // nocional
+  const margen = margenRequerido(costoActivo, lev);
+  // Lo que tiene que caber es el MARGEN, no el nocional.
+  const alcanza = margen <= efectivo + 0.01;
+  const comisionVuelta = (costoActivo * futuros.comision * 2) / 100;
 
   /**
    * Los niveles del plan viven ARRIBA, en la vista, no acá.
@@ -144,6 +164,13 @@ export function PanelOperar({
    * recalcularlos en cada vela y el nivel elegido se movería solo.
    */
   const { usarNiveles, stopLoss, takeProfit, ladoPlan } = niveles;
+  /**
+   * El precio al que te liquidan, para el lado que se está planificando.
+   * Es el número que vuelve entendible un «20×».
+   */
+  const liq = esFuturos
+    ? precioLiquidacion(ladoPlan, precio, { ...futuros, apalancamiento: lev })
+    : null;
   const nivelesActivos = usarNiveles
     ? {
         ...(stopLoss !== null ? { stopLoss } : {}),
@@ -348,6 +375,35 @@ export function PanelOperar({
             </div>
           </div>
 
+          {esFuturos && (
+            <div className="grid grid-cols-3 gap-2 rounded border border-tv-border bg-tv-bg/50 px-2 py-1.5 text-[10px]">
+              <div>
+                <div className="uppercase tracking-wider text-tv-text-dim">
+                  Margen
+                </div>
+                <div className="tabular-nums text-tv-text">
+                  {formatPrice(margen)}
+                </div>
+              </div>
+              <div>
+                <div className="uppercase tracking-wider text-tv-text-dim">
+                  Liquidación
+                </div>
+                <div className="tabular-nums text-tv-red">
+                  {liq === null ? "—" : formatPrice(liq)}
+                </div>
+              </div>
+              <div>
+                <div className="uppercase tracking-wider text-tv-text-dim">
+                  Comisión ida y vuelta
+                </div>
+                <div className="tabular-nums text-tv-yellow">
+                  −{formatPrice(comisionVuelta)}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* ── stop y objetivo ──────────────────────────────────── */}
           <div className="rounded border border-tv-border bg-tv-bg/50">
             <div className="flex items-center gap-2 px-2 py-1.5">
@@ -496,7 +552,9 @@ export function PanelOperar({
           {!alcanza && (
             <p className="text-[10px] text-tv-red">
               No te alcanza el efectivo libre para esa cantidad. Con $
-              {efectivo.toFixed(0)} entran {Number(maximo.toFixed(8))} {unidad} (
+              {efectivo.toFixed(0)}
+              {lev > 1 ? ` y ${lev}× de apalancamiento` : ""} entran{" "}
+              {Number(maximo.toFixed(8))} {unidad} (
               {formatPrice(dolaresPorUnidades(maximo, precio))}).
             </p>
           )}

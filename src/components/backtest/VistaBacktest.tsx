@@ -12,10 +12,20 @@ import {
 import { Columns2, Square } from "lucide-react";
 import { BarraPanel } from "./BarraPanel";
 import { NIVELES_INICIAL, PanelOperar, type EstadoNiveles } from "./PanelOperar";
+import { BarraMercado } from "./BarraMercado";
 import { Operaciones } from "./Operaciones";
 import { useVelas } from "./useVelas";
 import type { Cual, NivelDibujado } from "./CapaNiveles";
-import { cantidadEfectiva, primerToque, redondearNivel } from "@/lib/backtest/niveles";
+import {
+  cantidadEfectiva,
+  redondearNivel,
+  toqueEnVela,
+} from "@/lib/backtest/niveles";
+import {
+  precioLiquidacion,
+  sanearFuturos,
+  tocaLiquidacion,
+} from "@/lib/backtest/futuros";
 import {
   indiceHasta,
   precioContrato,
@@ -66,6 +76,10 @@ export function VistaBacktest() {
   const setPararEnOro = useBacktestStore((s) => s.setPararEnOro);
   const setNiveles = useBacktestStore((s) => s.setNiveles);
   const setConfigBT = useBacktestStore((s) => s.setConfigBT);
+  const conComisiones = useBacktestStore((s) => s.conComisiones);
+  const setConComisiones = useBacktestStore((s) => s.setConComisiones);
+  const setMercado = useBacktestStore((s) => s.setMercado);
+  const setFuturos = useBacktestStore((s) => s.setFuturos);
   const panelLateral = useBacktestStore((s) => s.panelLateral);
   const setPanelLateral = useBacktestStore((s) => s.setPanelLateral);
   const liquidarPorNivel = useBacktestStore((s) => s.liquidarPorNivel);
@@ -93,6 +107,12 @@ export function VistaBacktest() {
    * Los ajustes con los que se calculan los indicadores: los de fábrica
    * con lo que ESTE backtest haya cambiado encima.
    */
+  /** Spot o futuros, y con qué apalancamiento y costos. */
+  const esFuturos = bt?.mercado === "futuros";
+  const cfgFut = useMemo(
+    () => sanearFuturos(esFuturos ? bt?.futuros : { ...bt?.futuros, apalancamiento: 1 }),
+    [esFuturos, bt?.futuros],
+  );
   const configBT = useMemo(
     () => ({ ...DEFAULT_CONFIG, ...(bt?.config ?? {}) }),
     [bt?.config],
@@ -189,12 +209,16 @@ export function VistaBacktest() {
 
   const resumen = useMemo(() => {
     if (!bt) return null;
-    const curva = curvaDeCapital(bt, visiblesBase, () => vol);
+    const curva = curvaDeCapital(bt, visiblesBase, () => vol, cfgFut, conComisiones);
     return {
-      r: resumir(bt, precioAhora, curva.map((p) => p.value)),
+      r: resumir(
+        bt,
+        { valorar: precioAhora, ahora: tiempo, cfg: cfgFut, conComisiones },
+        curva.map((p) => p.value),
+      ),
       curva,
     };
-  }, [bt, visiblesBase, vol, precioAhora]);
+  }, [bt, visiblesBase, vol, precioAhora, tiempo, cfgFut, conComisiones]);
 
   // ── liquidar lo vencido al avanzar ──────────────────────────────────
   // Una opción vencida deja de existir: si no se liquidara, seguiría
@@ -241,29 +265,46 @@ export function VistaBacktest() {
     if (!bt || visiblesBase.length === 0) return;
     const desdeRevision = revisadoHasta.current;
     if (tiempo <= desdeRevision) return;
+    // Hay algo que revisar si alguna operación abierta tiene niveles, o
+    // si estamos en futuros (donde toda posición puede liquidarse).
     const hayNiveles = bt.operaciones.some(
       (o) =>
         o.precioSalida === undefined &&
         o.instrumento === "activo" &&
-        (o.stopLoss !== undefined || o.takeProfit !== undefined),
+        (esFuturos || o.stopLoss !== undefined || o.takeProfit !== undefined),
     );
     revisadoHasta.current = tiempo;
     if (!hayNiveles) return;
     liquidarPorNivel((o) => {
       if (o.instrumento !== "activo") return null;
-      if (o.stopLoss === undefined && o.takeProfit === undefined) return null;
       // Nunca antes de la entrada NI antes del último punto revisado: las
       // dos condiciones hacen falta, y por eso se toma la mayor.
       const desde = Math.max(o.tiempoEntrada, desdeRevision);
-      const t = primerToque(
-        o.lado,
-        visiblesBase.filter((k) => k.time <= tiempo),
-        { stopLoss: o.stopLoss, takeProfit: o.takeProfit },
-        desde,
-      );
-      return t ? { precio: t.precio, time: t.time, motivo: t.motivo } : null;
+      const tramo = visiblesBase.filter((k) => k.time <= tiempo && k.time > desde);
+
+      // La LIQUIDACIÓN se mira primero y gana a cualquier nivel: si el
+      // precio llegó ahí, el bróker ya cerró la posición y el stop que
+      // venía después nunca se ejecutó. Resolverlo al revés inventaría
+      // una salida mejor de la que hubo.
+      const liq = esFuturos ? precioLiquidacion(o.lado, o.precioEntrada, {
+        ...cfgFut, apalancamiento: o.apalancamiento ?? 1,
+      }) : null;
+
+      for (const k of tramo) {
+        if (liq !== null && tocaLiquidacion(o.lado, k, liq)) {
+          return { precio: liq, time: k.time, motivo: "liquidacion" as const };
+        }
+        if (o.stopLoss !== undefined || o.takeProfit !== undefined) {
+          const t = toqueEnVela(o.lado, k, {
+            stopLoss: o.stopLoss,
+            takeProfit: o.takeProfit,
+          });
+          if (t) return { precio: t.precio, time: t.time, motivo: t.motivo };
+        }
+      }
+      return null;
     });
-  }, [bt, tiempo, visiblesBase, liquidarPorNivel]);
+  }, [bt, tiempo, visiblesBase, liquidarPorNivel, esFuturos, cfgFut]);
 
   /** Lo que se dibuja y se puede arrastrar en la gráfica base. */
   const nivelesDibujados = useMemo<NivelDibujado[]>(() => {
@@ -552,6 +593,14 @@ export function VistaBacktest() {
                 <ChevronRight className="h-4 w-4" />
               </button>
             </div>
+            <BarraMercado
+              mercado={esFuturos ? "futuros" : "spot"}
+              futuros={cfgFut}
+              conComisiones={conComisiones}
+              onMercado={setMercado}
+              onFuturos={setFuturos}
+              onComisiones={setConComisiones}
+            />
             <PanelOperar
               precio={precio}
               tiempo={tiempo}
@@ -559,7 +608,15 @@ export function VistaBacktest() {
               efectivo={r?.efectivo ?? bt.capitalInicial}
               permiteOpciones={permiteOpciones}
               simbolo={symbol}
-              onOperar={operar}
+              futuros={cfgFut}
+              esFuturos={esFuturos}
+              onOperar={(op) =>
+              operar(
+                esFuturos && op.instrumento === "activo"
+                  ? { ...op, apalancamiento: cfgFut.apalancamiento }
+                  : op,
+              )
+            }
               niveles={niveles}
               onNiveles={parcharNiveles}
             />
@@ -570,6 +627,7 @@ export function VistaBacktest() {
                 capitalInicial={bt.capitalInicial}
                 precioDe={precioAhora}
                 zona={zonaReloj}
+                conComisiones={conComisiones}
                 onCerrar={(op) => cerrarOp(op.id, precioAhora(op), tiempo)}
               />
             )}

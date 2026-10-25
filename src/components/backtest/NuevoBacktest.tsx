@@ -8,6 +8,7 @@ import {
   BORRADOR_INICIAL,
 } from "@/lib/store/backtest-store";
 import { resumir, type Backtest } from "@/lib/backtest/tipos";
+import { FUTUROS_POR_DEFECTO } from "@/lib/backtest/futuros";
 import { TIMEFRAME_SECONDS, type Timeframe } from "@/lib/binance/types";
 import { parseSymbol } from "@/lib/exchanges";
 import { cn } from "@/lib/utils";
@@ -40,7 +41,12 @@ function Fila({ bt }: { bt: Backtest }) {
   const duplicar = useBacktestStore((s) => s.duplicar);
   // En la lista se muestra solo lo ya cerrado: valorar lo abierto exigiría
   // bajar las velas de cada backtest, y eso para una lista no compensa.
-  const r = resumir(bt, () => 0);
+  const r = resumir(bt, {
+    valorar: () => 0,
+    ahora: bt.tiempoActual,
+    cfg: bt.futuros ?? FUTUROS_POR_DEFECTO,
+    conComisiones: true,
+  });
   const cerradas = bt.operaciones.filter((o) => o.precioSalida !== undefined).length;
   const verde = r.realizado > 0;
 

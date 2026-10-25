@@ -10,6 +10,7 @@ import {
   type Operacion,
   type PanelGrafico,
 } from "@/lib/backtest/tipos";
+import { sanearFuturos, type ConfigFuturos } from "@/lib/backtest/futuros";
 import type { Timeframe } from "@/lib/binance/types";
 import { otraTemporalidad } from "@/lib/backtest/multi";
 import { ZONA_BACKTEST } from "@/lib/chart/timezone";
@@ -68,6 +69,15 @@ interface Estado {
    * dos gráficas anchas no quiere encontrárselo abierto en cada recarga.
    */
   panelLateral: boolean;
+  /**
+   * Si los resultados que se muestran descuentan comisiones y
+   * financiamiento.
+   *
+   * Es un conmutador de VISTA: no cambia las operaciones, solo cómo se
+   * suman. Así los dos modos salen de la misma corrida y la comparación
+   * es honesta, en vez de ser dos backtests distintos.
+   */
+  conComisiones: boolean;
 
   setBorrador: (parche: Partial<Borrador>) => void;
   crear: () => string | null;
@@ -95,6 +105,10 @@ interface Estado {
   reproducir: (v: boolean) => void;
   setVelocidad: (v: number) => void;
   setPanelLateral: (v: boolean) => void;
+  setConComisiones: (v: boolean) => void;
+  /** Spot o futuros, y la configuración de costos del backtest abierto. */
+  setMercado: (m: "spot" | "futuros") => void;
+  setFuturos: (parche: Partial<ConfigFuturos>) => void;
 
   operar: (op: Omit<Operacion, "id">) => void;
   cerrar: (
@@ -124,9 +138,16 @@ interface Estado {
     opId: string,
     niveles: { stopLoss?: number | null; takeProfit?: number | null },
   ) => void;
-  /** Cierra de golpe las que tocaron un nivel. `toqueDe` decide cuál. */
+  /**
+   * Cierra de golpe las que tocaron un nivel o se liquidaron.
+   * `toqueDe` decide cuál y por qué.
+   */
   liquidarPorNivel: (
-    toqueDe: (op: Operacion) => { precio: number; time: number; motivo: "stop" | "objetivo" } | null,
+    toqueDe: (op: Operacion) => {
+      precio: number;
+      time: number;
+      motivo: "stop" | "objetivo" | "liquidacion";
+    } | null,
   ) => void;
   /** Cierra de golpe lo que haya vencido. Devuelve cuántas cerró. */
   liquidarVencidas: (
@@ -187,6 +208,7 @@ export const useBacktestStore = create<Estado>()(
       borrador: BORRADOR_INICIAL,
       reproduciendo: false,
       panelLateral: true,
+      conComisiones: true,
       velocidad: 2,
 
       setBorrador: (parche) =>
@@ -338,6 +360,16 @@ export const useBacktestStore = create<Estado>()(
       reproducir: (reproduciendo) => set({ reproduciendo }),
       setVelocidad: (velocidad) => set({ velocidad }),
       setPanelLateral: (panelLateral) => set({ panelLateral }),
+      setConComisiones: (conComisiones) => set({ conComisiones }),
+      setMercado: (mercado) =>
+        set((s) => enActivo(s, (b) => ({ ...b, mercado }))),
+      setFuturos: (parche) =>
+        set((s) =>
+          enActivo(s, (b) => ({
+            ...b,
+            futuros: sanearFuturos({ ...(b.futuros ?? {}), ...parche }),
+          })),
+        ),
 
       operar: (op) =>
         set((s) =>
@@ -440,6 +472,7 @@ export const useBacktestStore = create<Estado>()(
         activoId: s.activoId,
         borrador: s.borrador,
         panelLateral: s.panelLateral,
+        conComisiones: s.conComisiones,
       }),
       merge: (persistido, actual) => {
         const p = (persistido ?? {}) as Partial<Estado>;
@@ -459,6 +492,9 @@ export const useBacktestStore = create<Estado>()(
           // Un valor viejo o corrupto no puede dejar el panel en un
           // estado que no sea ni plegado ni desplegado.
           panelLateral: p.panelLateral !== false,
+          // Con comisiones por defecto: es el número verdadero. Verlo
+          // sin ellas es una comparación, no el resultado.
+          conComisiones: p.conComisiones !== false,
         };
       },
     },
