@@ -578,8 +578,14 @@ export function VistaBacktest() {
             reojo mientras avanza el reproductor. Desplegarlo solo para
             leer dos números sería cambiar un problema por otro. */}
         {panelLateral ? (
-          <aside className="flex w-full shrink-0 flex-col border-t border-tv-border bg-tv-panel lg:w-96 lg:border-l lg:border-t-0">
-            <div className="flex items-center justify-between border-b border-tv-border px-2 py-1">
+          /* `overflow-y-auto` y `min-h-0`: sin esto, con futuros
+             desplegado la barra de mercado y el panel de operar empujan
+             la tabla de operaciones fuera de la vista y NO HAY FORMA DE
+             LLEGAR A ELLA. Que es peor que un problema de estética:
+             cerrar una posición es lo único que libera capital, y la
+             única manera de cerrarla es esa tabla. */
+          <aside className="flex min-h-0 w-full shrink-0 flex-col overflow-y-auto border-t border-tv-border bg-tv-panel lg:w-96 lg:border-l lg:border-t-0">
+            <div className="sticky top-0 z-10 flex shrink-0 items-center justify-between border-b border-tv-border bg-tv-panel px-2 py-1">
               <span className="text-[10px] uppercase tracking-wider text-tv-text-dim">
                 Operar
               </span>

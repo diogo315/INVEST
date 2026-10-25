@@ -112,9 +112,13 @@ console.log("2. EL MARGEN: a 10× inmoviliza la décima parte");
   ck("la operación guarda el apalancamiento", o?.apalancamiento === 10, String(o?.apalancamiento));
   const nocional = o.cantidad * o.precioEntrada;
   const libre = Number((await texto(pag, /^libre \$/)).replace(/[^\d.]/g, ""));
-  const esperado = 10000 - nocional / 10;
-  ck(`el efectivo libre baja solo el margen (${nocional.toFixed(0)}/10)`,
-    casi(libre, esperado, 2), `libre ${libre}, esperado ${esperado.toFixed(0)}`);
+  // Margen MÁS la comisión de entrada: esa comisión ya salió de la
+  // cuenta, y no descontarla era el error que dejaba el efectivo libre
+  // en negativo al cerrar las posiciones.
+  const comEntrada = nocional * 0.0004;
+  const esperado = 10000 - nocional / 10 - comEntrada;
+  ck(`el efectivo libre baja el margen (${nocional.toFixed(0)}/10) más la comisión`,
+    casi(libre, esperado, 2), `libre ${libre}, esperado ${esperado.toFixed(2)}`);
   ck("y NO el nocional completo", !casi(libre, 10000 - nocional, 2));
   await pag.close();
 }
@@ -228,9 +232,14 @@ console.log("4b. EL ERROR DE DIEGO: una compra no puede dejar el capital en cero
   ck(`el botón Máx sí usa casi todo (${antes.toFixed(0)} → ${despues.toFixed(0)})`,
     despues < antes * 0.05, `${antes} → ${despues}`);
   ck("y ahí el botón queda apagado", !(await habilitado()));
-  const aviso = await texto(pag, /No te alcanza/);
-  ck("con un aviso que dice cuánto entra",
-    /entran [\d.]+/.test(aviso), aviso.replace(/\s+/g, " ").slice(0, 110));
+  // Según cuánto quede, sale uno de los dos avisos: «no alcanza para esa
+  // cantidad» o, si no queda nada, «cerrá una posición». Los dos sirven;
+  // lo que no puede pasar es que el botón se apague sin decir nada.
+  const a1 = await texto(pag, /No te alcanza/);
+  const a2 = await texto(pag, /No te queda efectivo libre/);
+  ck("con un aviso que explica por qué no se puede operar",
+    /entran [\d.]+/.test(a1) || /Cerrá alguna/.test(a2),
+    `«${(a1 || a2).replace(/\s+/g, " ").slice(0, 110)}»`);
 
   // Y hay salida: cerrar una posición devuelve capital.
   const cerrar = pag.getByRole("button", { name: /Cerrar/i }).first();
@@ -252,8 +261,9 @@ console.log("5. En SPOT no hay apalancamiento ni liquidación");
   const o = (await ops(pag))[0];
   const nocional = o.cantidad * o.precioEntrada;
   const libre = Number((await texto(pag, /^libre \$/)).replace(/[^\d.]/g, ""));
-  ck("el efectivo libre baja el NOCIONAL COMPLETO",
-    casi(libre, 10000 - nocional, 2), `libre ${libre}, nocional ${nocional.toFixed(0)}`);
+  ck("el efectivo libre baja el NOCIONAL COMPLETO (más la comisión)",
+    casi(libre, 10000 - nocional - nocional * 0.0004, 2),
+    `libre ${libre}, nocional ${nocional.toFixed(0)}`);
   await pag.close();
 }
 

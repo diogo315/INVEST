@@ -195,6 +195,22 @@ console.log("EL ERROR DE DIEGO: una compra se llevaba todo el capital");
   ck("efectivo negativo no rompe", nocionalMaximo(-100, c) === 0);
 }
 
+console.log("LO YA PAGADO contra lo que falta pagar");
+{
+  const c = cfg({ comision: 0.1, financiamiento: 0.01 });
+  // 1 unidad de 1.000 a 1.100, 24 h abierta.
+  const cerrada = costosDe("compra", 1000, 1100, 1, 24 * 3600, c, true);
+  const abierta = costosDe("compra", 1000, 1100, 1, 24 * 3600, c, false);
+  ck("el total es el mismo en los dos casos", casi(cerrada.total, abierta.total));
+  ck("cerrada: ya se pagó TODO", casi(cerrada.pagado, cerrada.total));
+  // Entrada 0,1 % de 1.000 = 1; salida 0,1 % de 1.100 = 1,1; financ. 3 x 0,1 = 0,3
+  ck("abierta: solo la comisión de ENTRADA y el financiamiento",
+    casi(abierta.pagado, 1 + 0.3), String(abierta.pagado));
+  ck("o sea, falta por pagar la comisión de salida",
+    casi(abierta.total - abierta.pagado, 1.1), String(abierta.total - abierta.pagado));
+  ck("lo pagado nunca supera al total", abierta.pagado <= abierta.total);
+}
+
 console.log("Saneado");
 {
   ck("lo bueno pasa",

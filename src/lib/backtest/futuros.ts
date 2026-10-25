@@ -161,6 +161,21 @@ export interface CostosOperacion {
   financiamiento: number;
   /** Lo que se le resta al resultado bruto. */
   total: number;
+  /**
+   * De ese total, lo que YA SALIÓ DE LA CUENTA.
+   *
+   * En una posición cerrada es todo. En una abierta es la comisión de
+   * ENTRADA más el financiamiento corrido: la comisión de salida todavía
+   * no se pagó porque no se ha cerrado.
+   *
+   * La distinción no es un detalle contable: el efectivo libre tiene que
+   * descontar lo ya pagado. Sin esto, las comisiones de las posiciones
+   * abiertas se acumulan sin salir de la cuenta y el golpe llega entero
+   * al cerrarlas, dejando el efectivo libre en negativo. Medido: a 25x
+   * con veinte posiciones abiertas eran 27,90 dólares que la cuenta
+   * decía tener y no tenía.
+   */
+  pagado: number;
 }
 
 /** Todos los costos de una operación cerrada. */
@@ -171,12 +186,21 @@ export function costosDe(
   unidades: number,
   segundosAbierta: number,
   cfg: ConfigFuturos,
+  /** false si la posición sigue abierta: la comisión de salida no se pagó. */
+  cerrada = true,
 ): CostosOperacion {
   const nocEnt = precioEntrada * unidades;
   const nocSal = precioSalida * unidades;
-  const comision = comisionVuelta(nocEnt, nocSal, cfg);
+  const comEnt = comisionDe(nocEnt, cfg);
+  const comSal = comisionDe(nocSal, cfg);
   const fin = financiamientoPagado(nocEnt, segundosAbierta, lado, cfg);
-  return { comision, financiamiento: fin, total: comision + fin };
+  const total = comEnt + comSal + fin;
+  return {
+    comision: comEnt + comSal,
+    financiamiento: fin,
+    total,
+    pagado: cerrada ? total : comEnt + fin,
+  };
 }
 
 /**

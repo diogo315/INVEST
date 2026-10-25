@@ -90,7 +90,7 @@ export function Operaciones({
   });
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex shrink-0 flex-col">
       <div className="grid grid-cols-2 divide-x divide-tv-border border-b border-tv-border sm:grid-cols-4">
         <Dato
           nombre="Capital"
@@ -145,7 +145,11 @@ export function Operaciones({
         </div>
       )}
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      {/* `max-h` y no `flex-1`: dentro de un panel que ya hace scroll,
+          pelear por el alto disponible deja la tabla en cero píxeles
+          cuando lo de arriba crece. Con un tope, crece lo que necesita
+          y el panel entero se desplaza. */}
+      <div className="max-h-[60vh] shrink-0 overflow-y-auto">
         {ordenadas.length === 0 ? (
           <p className="px-3 py-6 text-center text-[11px] text-tv-text-dim">
             Todavía no abriste ninguna operación. Dale play y decidí cuando

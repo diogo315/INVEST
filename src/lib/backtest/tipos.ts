@@ -210,9 +210,9 @@ export function costosOperacion(
   cfg: ConfigFuturos,
   precioAhora: number,
   ahora: number,
-): { comision: number; financiamiento: number; total: number } {
+): { comision: number; financiamiento: number; total: number; pagado: number } {
   if (op.instrumento !== "activo") {
-    return { comision: 0, financiamiento: 0, total: 0 };
+    return { comision: 0, financiamiento: 0, total: 0, pagado: 0 };
   }
   const salida = op.precioSalida ?? precioAhora;
   const hasta = op.tiempoSalida ?? ahora;
@@ -223,6 +223,7 @@ export function costosOperacion(
     unidades(op),
     Math.max(0, hasta - op.tiempoEntrada),
     { ...cfg, apalancamiento: op.apalancamiento ?? 1 },
+    op.precioSalida !== undefined,
   );
 }
 
@@ -323,6 +324,8 @@ export function resumir(
   let comisiones = 0;
   let financiamiento = 0;
   let nocionalAbierto = 0;
+  /** Costos de las ABIERTAS que ya salieron de la cuenta. */
+  let pagadoAbiertas = 0;
 
   for (const op of bt.operaciones) {
     const precio = ctx.valorar(op);
@@ -338,6 +341,7 @@ export function resumir(
     if (fin === null) {
       abiertas++;
       expuesto += costoApertura(op);
+      if (ctx.conComisiones) pagadoAbiertas += c.pagado;
       nocionalAbierto += Math.abs(precio * unidades(op));
       abierto += resultadoA(op, precio) - resta;
     } else {
@@ -355,7 +359,10 @@ export function resumir(
   const capital = bt.capitalInicial + realizado + abierto;
   return {
     capital,
-    efectivo: bt.capitalInicial + realizado - expuesto,
+    // Lo ya pagado SALE del efectivo libre. Sin esto, las comisiones de
+    // las posiciones abiertas se acumulaban sin descontarse y la cuenta
+    // decía tener plata que no tenía.
+    efectivo: bt.capitalInicial + realizado - expuesto - pagadoAbiertas,
     expuesto,
     resultado: capital - bt.capitalInicial,
     pct:
