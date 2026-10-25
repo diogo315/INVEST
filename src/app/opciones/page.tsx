@@ -2,7 +2,7 @@
 
 import { useSyncExternalStore } from "react";
 import Link from "next/link";
-import { CandlestickChart, FlaskConical, History, Zap } from "lucide-react";
+import { CandlestickChart, History, Zap } from "lucide-react";
 import { Cadena } from "@/components/options/Cadena";
 import { Calculadora } from "@/components/options/Calculadora";
 import { Operacion } from "@/components/options/Operacion";
@@ -47,13 +47,6 @@ export default function OpcionesPage() {
             >
               <History className="h-3.5 w-3.5" />
               Backtesting
-            </Link>
-            <Link
-              href="/estrategias"
-              className="flex items-center gap-1.5 rounded px-2.5 py-1 text-xs text-tv-text-muted transition-colors hover:text-tv-text"
-            >
-              <FlaskConical className="h-3.5 w-3.5" />
-              Estrategias
             </Link>
           </nav>
         </div>

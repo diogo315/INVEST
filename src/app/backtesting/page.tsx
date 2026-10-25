@@ -2,7 +2,7 @@
 
 import { useSyncExternalStore } from "react";
 import Link from "next/link";
-import { CandlestickChart, FlaskConical, History, Sigma, Zap } from "lucide-react";
+import { CandlestickChart, History, Sigma, Zap } from "lucide-react";
 import { NuevoBacktest } from "@/components/backtest/NuevoBacktest";
 import { VistaBacktest } from "@/components/backtest/VistaBacktest";
 import { useBacktestStore } from "@/lib/store/backtest-store";
@@ -46,13 +46,6 @@ export default function BacktestingPage() {
               <History className="h-3.5 w-3.5" />
               Backtesting
             </span>
-            <Link
-              href="/estrategias"
-              className="flex items-center gap-1.5 rounded px-2.5 py-1 text-xs text-tv-text-muted transition-colors hover:text-tv-text"
-            >
-              <FlaskConical className="h-3.5 w-3.5" />
-              Estrategias
-            </Link>
           </nav>
         </div>
       </header>
