@@ -100,8 +100,8 @@ console.log("2. El panel ofrece stop y objetivo");
   ck("existe la casilla de stop y objetivo", await chk.count() > 0);
   await chk.check();
   await pag.waitForTimeout(600);
-  const sl = pag.locator('input[type=number]').nth(1);
-  const tp = pag.locator('input[type=number]').nth(2);
+  const sl = pag.getByLabel(/^Stop loss$/);
+  const tp = pag.getByLabel(/^Take profit$/);
   const vsl = Number(await sl.inputValue());
   const vtp = Number(await tp.inputValue());
   ck("propone un stop por debajo del precio", vsl > 0, String(vsl));
@@ -126,7 +126,7 @@ console.log("4. Arrastrar el stop lo mueve");
 {
   const stop = pag.locator('[data-clave="plan:stop"]');
   const caja = await stop.boundingBox();
-  const antes = Number(await pag.locator('input[type=number]').nth(1).inputValue());
+  const antes = Number(await pag.getByLabel(/^Stop loss$/).inputValue());
   ck("el stop tiene posición en pantalla", !!caja, JSON.stringify(caja));
   if (caja) {
     const et = stop.locator("div").last();
@@ -136,7 +136,7 @@ console.log("4. Arrastrar el stop lo mueve");
     await pag.mouse.move(ce.x + ce.width / 2, ce.y + ce.height / 2 + 60, { steps: 10 });
     await pag.mouse.up();
     await pag.waitForTimeout(600);
-    const despues = Number(await pag.locator('input[type=number]').nth(1).inputValue());
+    const despues = Number(await pag.getByLabel(/^Stop loss$/).inputValue());
     ck("al soltar, el campo del stop cambió", despues !== antes, `${antes} -> ${despues}`);
     ck("y bajó (se arrastró hacia abajo)", despues < antes, `${antes} -> ${despues}`);
   }

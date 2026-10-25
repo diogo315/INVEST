@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { TrendingDown, TrendingUp } from "lucide-react";
+import { CampoNumero } from "./CampoNumero";
 import {
   MULTIPLICADOR,
   PASOS_STRIKE,
@@ -272,24 +273,25 @@ export function PanelOperar({
               <span className="text-[10px] uppercase tracking-wider text-tv-text-muted">
                 {niveles.enDolares ? "Monto en dólares" : "Cantidad"}
               </span>
-              <input
-                type="number"
-                min={0}
-                step={niveles.enDolares ? 1 : pasoDeCantidad(precio)}
-                value={
+              <CampoNumero
+                aria-label={niveles.enDolares ? "Monto en dólares" : "Cantidad"}
+                valor={
                   niveles.enDolares
                     ? Number(costoActivo.toFixed(2))
                     : Number(cantidad.toFixed(8))
                 }
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  if (!Number.isFinite(v)) return;
+                min={0}
+                paso={niveles.enDolares ? 1 : pasoDeCantidad(precio)}
+                onCambiar={(v) =>
                   onNiveles({
-                    cantidadManual: niveles.enDolares
-                      ? unidadesPorDolares(v, precio)
-                      : redondearCantidad(v, precio),
-                  });
-                }}
+                    cantidadManual:
+                      v === null
+                        ? null
+                        : niveles.enDolares
+                          ? unidadesPorDolares(v, precio)
+                          : redondearCantidad(v, precio),
+                  })
+                }
                 className="w-full rounded border border-tv-border bg-tv-bg px-2 py-1.5 text-xs tabular-nums text-tv-text"
               />
             </label>
@@ -389,16 +391,10 @@ export function PanelOperar({
                     <span className="text-[10px] uppercase tracking-wider text-tv-red">
                       Stop loss
                     </span>
-                    <input
-                      type="number"
-                      step="any"
-                      value={stopLoss ?? ""}
-                      onChange={(e) => {
-                        const v = Number(e.target.value);
-                        onNiveles({
-                          stopLoss: e.target.value === "" || !Number.isFinite(v) ? null : v,
-                        });
-                      }}
+                    <CampoNumero
+                      valor={stopLoss}
+                      aria-label="Stop loss"
+                      onCambiar={(v) => onNiveles({ stopLoss: v })}
                       className="w-full rounded border border-tv-red/40 bg-tv-bg px-2 py-1 text-xs tabular-nums text-tv-text"
                     />
                   </label>
@@ -406,16 +402,10 @@ export function PanelOperar({
                     <span className="text-[10px] uppercase tracking-wider text-tv-green">
                       Take profit
                     </span>
-                    <input
-                      type="number"
-                      step="any"
-                      value={takeProfit ?? ""}
-                      onChange={(e) => {
-                        const v = Number(e.target.value);
-                        onNiveles({
-                          takeProfit: e.target.value === "" || !Number.isFinite(v) ? null : v,
-                        });
-                      }}
+                    <CampoNumero
+                      valor={takeProfit}
+                      aria-label="Take profit"
+                      onCambiar={(v) => onNiveles({ takeProfit: v })}
                       className="w-full rounded border border-tv-green/40 bg-tv-bg px-2 py-1 text-xs tabular-nums text-tv-text"
                     />
                   </label>

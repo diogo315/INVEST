@@ -1,6 +1,7 @@
 "use client";
 
 import { Settings2 } from "lucide-react";
+import { CampoNumero } from "./CampoNumero";
 import {
   Dialog,
   DialogContent,
@@ -133,16 +134,12 @@ export function EditorVwap({ config, onCambiar }: Props) {
                 />
                 Banda {n}
               </label>
-              <input
-                type="number"
-                step={pct ? 0.1 : 0.5}
+              <CampoNumero
+                valor={mult}
+                paso={pct ? 0.1 : 0.5}
                 min={0}
-                value={mult}
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  if (Number.isFinite(v) && v >= 0) {
-                    onCambiar({ [`vwapMult${n}`]: v });
-                  }
+                onCambiar={(v) => {
+                  if (v !== null) onCambiar({ [`vwapMult${n}`]: v });
                 }}
                 aria-label={`Multiplicador de la banda ${n}`}
                 className="w-20 rounded border border-tv-border bg-tv-bg px-2 py-1 text-xs tabular-nums text-tv-text"

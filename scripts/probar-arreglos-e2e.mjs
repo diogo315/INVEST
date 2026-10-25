@@ -86,7 +86,7 @@ const base = (extra = {}) => ({
 console.log("1. Con 5.000 de capital y bitcoin caro, SE PUEDE comprar");
 {
   const pag = await abrir(base());
-  const precio = await pag.locator("input[type=number]").first().inputValue();
+  const precio = await pag.getByLabel(/^(Cantidad|Monto en dólares)$/).inputValue();
   ck("la cantidad propuesta es fraccionada", Number(precio) < 1 && Number(precio) > 0, precio);
   const comprar = pag.getByRole("button", { name: /^Comprar$/ });
   ck("el botón de comprar está habilitado", await comprar.isEnabled());
@@ -105,8 +105,14 @@ console.log("2. Escribir el tamaño en DÓLARES y que convierta");
   const pag = await abrir(base());
   await pag.getByRole("button", { name: /^USD$/ }).click();
   await pag.waitForTimeout(400);
-  const campo = pag.locator("input[type=number]").first();
-  await campo.fill("500");
+  const campo = pag.getByLabel(/^(Cantidad|Monto en dólares)$/);
+  await campo.click();
+  await pag.keyboard.press("Control+a");
+  await pag.keyboard.press("Delete");
+  // Tecla por tecla a propósito: `fill` escribe de golpe y no habría
+  // detectado el bug del campo que se repintaba en cada pulsación.
+  await campo.pressSequentially("500", { delay: 80 });
+  await pag.keyboard.press("Enter");
   await pag.waitForTimeout(500);
   await pag.getByRole("button", { name: /^Comprar$/ }).click();
   await pag.waitForTimeout(600);
