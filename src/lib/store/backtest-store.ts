@@ -5,6 +5,7 @@ import { persist } from "zustand/middleware";
 import {
   nombreLibre,
   sanearBacktests,
+  sanearConfig,
   type Backtest,
   type Operacion,
   type PanelGrafico,
@@ -104,6 +105,13 @@ interface Estado {
    * No toca las cerradas a propósito: cambiarle el stop a una operación
    * que ya terminó reescribiría su historia.
    */
+  /**
+   * Cambia los ajustes de los indicadores de ESTE backtest.
+   *
+   * Van con la corrida, como las medias: al reabrir una vieja tiene que
+   * verse igual que cuando se hizo.
+   */
+  setConfigBT: (parche: Record<string, unknown>) => void;
   setNiveles: (
     opId: string,
     niveles: { stopLoss?: number | null; takeProfit?: number | null },
@@ -338,6 +346,14 @@ export const useBacktestStore = create<Estado>()(
                 ? { ...o, precioSalida: precio, tiempoSalida: tiempo, motivo }
                 : o,
             ),
+          })),
+        ),
+
+      setConfigBT: (parche) =>
+        set((s) =>
+          enActivo(s, (b) => ({
+            ...b,
+            config: sanearConfig({ ...(b.config ?? {}), ...parche }),
           })),
         ),
 

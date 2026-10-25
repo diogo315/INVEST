@@ -29,7 +29,18 @@ export interface ExchangeAdapter {
   name: string;
   /** Whether this exchange supports the given Binance-style timeframe. */
   supportsTimeframe(tf: Timeframe): boolean;
-  fetchKlines(symbol: string, tf: Timeframe, limit?: number): Promise<Candle[]>;
+  /**
+   * `hastaMs` termina la ventana en un momento dado en vez de en ahora.
+   * Hace falta para el backtesting: en 15m, 10.000 velas desde hoy
+   * cubren 104 días y un backtest que arrancó hace nueve meses queda
+   * fuera de todas ellas. Sin esto, ese panel se dibuja vacío.
+   */
+  fetchKlines(
+    symbol: string,
+    tf: Timeframe,
+    limit?: number,
+    hastaMs?: number,
+  ): Promise<Candle[]>;
   fetchTickers24h(symbols: string[]): Promise<Ticker24h[]>;
   fetchSymbols(): Promise<SymbolInfo[]>;
   subscribeKline(sub: KlineSubscription): () => void;

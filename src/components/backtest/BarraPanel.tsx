@@ -3,6 +3,8 @@
 import { GraficoBacktest } from "./GraficoBacktest";
 import { IndicadoresMenu } from "./IndicadoresMenu";
 import { EditorMedias } from "./EditorMedias";
+import { EditorVwap } from "./EditorVwap";
+import type { IndicatorConfig } from "@/lib/store/chart-store";
 import { TEMPORALIDADES_BT } from "@/lib/backtest/multi";
 import type { Panel } from "@/lib/store/backtest-store";
 import type { MediaMovil } from "@/lib/chart/medias";
@@ -35,6 +37,8 @@ interface Props {
   /** Niveles arrastrables: solo llegan a la gráfica base. */
   niveles?: NivelDibujado[];
   onMoverNivel?: (opId: string, cual: Cual, precio: number) => void;
+  config: IndicatorConfig;
+  onConfig: (parche: Record<string, unknown>) => void;
 }
 
 /** Una de las gráficas del backtest, con sus propios controles arriba. */
@@ -58,6 +62,8 @@ export function BarraPanel({
   onBase,
   niveles,
   onMoverNivel,
+  config,
+  onConfig,
 }: Props) {
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -105,6 +111,12 @@ export function BarraPanel({
           onAlternar={(clave) => onAlternar(clave, panel)}
         />
         <EditorMedias medias={medias} onCambiar={(m) => onMedias(m, panel)} />
+        {/* El ajuste del VWAP aparece solo cuando el VWAP está puesto:
+            una barra con los ajustes de todos los indicadores apagados
+            no deja ver los que sí importan. */}
+        {indicadores.includes("vwap") && (
+          <EditorVwap config={config} onCambiar={onConfig} />
+        )}
       </div>
       <div className="relative min-h-[280px] flex-1 lg:min-h-0">
         {cargando && (
@@ -122,6 +134,7 @@ export function BarraPanel({
           vencimientos={vencimientos}
           zona={zona}
           temporalidad={temporalidad}
+          config={config}
           niveles={niveles}
           onMoverNivel={onMoverNivel}
         />

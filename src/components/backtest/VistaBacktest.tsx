@@ -36,6 +36,7 @@ import {
 import { velasDelPanel } from "@/lib/backtest/multi";
 import { senalesCipher, tiemposDe } from "@/lib/backtest/senales";
 import { CONFIG_BT } from "@/lib/backtest/indicadores";
+import { DEFAULT_CONFIG } from "@/lib/store/chart-store";
 import { TimezoneSelector } from "@/components/chart/TimezoneSelector";
 import { ZONA_BACKTEST, fechaHoraEn, zonaDelEje } from "@/lib/chart/timezone";
 import { parseSymbol } from "@/lib/exchanges";
@@ -64,6 +65,7 @@ export function VistaBacktest() {
   const setZona = useBacktestStore((s) => s.setZona);
   const setPararEnOro = useBacktestStore((s) => s.setPararEnOro);
   const setNiveles = useBacktestStore((s) => s.setNiveles);
+  const setConfigBT = useBacktestStore((s) => s.setConfigBT);
   const liquidarPorNivel = useBacktestStore((s) => s.liquidarPorNivel);
 
   /**
@@ -85,6 +87,14 @@ export function VistaBacktest() {
   const historia = bt?.historiaPrevia ?? 365;
   const zona = bt?.zonaHoraria ?? ZONA_BACKTEST;
   const pararEnOro = bt?.pararEnOro === true;
+  /**
+   * Los ajustes con los que se calculan los indicadores: los de fábrica
+   * con lo que ESTE backtest haya cambiado encima.
+   */
+  const configBT = useMemo(
+    () => ({ ...DEFAULT_CONFIG, ...(bt?.config ?? {}) }),
+    [bt?.config],
+  );
 
   // ── las dos gráficas ────────────────────────────────────────────────
   //
@@ -96,8 +106,13 @@ export function VistaBacktest() {
   const tfA = (bt?.temporalidad ?? "1d") as Timeframe;
   const tfB = (panelB?.temporalidad ?? "1d") as Timeframe;
 
-  const a = useVelas(simbolo, tfA, desde, historia);
-  const b = useVelas(simbolo, panelB ? tfB : null, desde, historia);
+  // El reloj se lee acá arriba porque la ventana de velas se ancla a él:
+  // en temporalidades cortas el período entero no entra en una petición
+  // y hay que pedir el tramo donde está parado el reproductor.
+  const tiempo = bt?.tiempoActual ?? 0;
+
+  const a = useVelas(simbolo, tfA, desde, historia, tiempo);
+  const b = useVelas(simbolo, panelB ? tfB : null, desde, historia, tiempo);
 
   const tfBase = base === "a" ? tfA : tfB;
   const velas = base === "a" ? a.velas : b.velas;
@@ -110,7 +125,6 @@ export function VistaBacktest() {
   const error = a.error ?? b.error;
 
   // ── el momento actual ───────────────────────────────────────────────
-  const tiempo = bt?.tiempoActual ?? 0;
   const idx = useMemo(() => indiceHasta(velas, tiempo), [velas, tiempo]);
   const segBase = TIMEFRAME_SECONDS[tfBase];
   /**
@@ -480,6 +494,8 @@ export function VistaBacktest() {
             onAlternar={alternarIndicador}
             onMedias={setMedias}
             onBase={setBase}
+            config={configBT}
+            onConfig={setConfigBT}
             niveles={base === "a" ? nivelesDibujados : undefined}
             onMoverNivel={base === "a" ? moverNivel : undefined}
           />
@@ -505,7 +521,9 @@ export function VistaBacktest() {
               onAlternar={alternarIndicador}
               onMedias={setMedias}
               onBase={setBase}
-              niveles={base === "b" ? nivelesDibujados : undefined}
+              config={configBT}
+            onConfig={setConfigBT}
+            niveles={base === "b" ? nivelesDibujados : undefined}
               onMoverNivel={base === "b" ? moverNivel : undefined}
             />
           )}
@@ -518,6 +536,7 @@ export function VistaBacktest() {
             vol={vol}
             efectivo={r?.efectivo ?? bt.capitalInicial}
             permiteOpciones={permiteOpciones}
+            simbolo={symbol}
             onOperar={operar}
             niveles={niveles}
             onNiveles={parcharNiveles}

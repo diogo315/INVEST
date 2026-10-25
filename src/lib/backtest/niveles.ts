@@ -191,11 +191,44 @@ export function nivelesPorPct(
 }
 
 /**
+ * El salto mínimo de cantidad de un instrumento.
+ *
+ * Un bitcoin a 88.000 no se compra entero con 5.000 de capital, y
+ * obligar a una cantidad entera dejaba el botón de comprar apagado para
+ * siempre: ese era el problema. Las cripto se fraccionan de verdad (en
+ * Binance, BTC hasta 0,00001), así que el paso sale del PRECIO, que es
+ * lo que determina si una unidad es mucha plata o poca.
+ *
+ * Las acciones también se fraccionan hoy (Alpaca las opera así), pero
+ * ahí el salto natural sigue siendo 1 a menos que el papel sea caro.
+ */
+export function pasoDeCantidad(precio: number): number {
+  if (!Number.isFinite(precio) || precio <= 0) return 1;
+  if (precio >= 10000) return 0.00001;
+  if (precio >= 1000) return 0.0001;
+  if (precio >= 100) return 0.001;
+  if (precio >= 10) return 0.01;
+  return 1;
+}
+
+/** Redondea una cantidad al salto que le corresponde a ese precio. */
+export function redondearCantidad(cantidad: number, precio: number): number {
+  const paso = pasoDeCantidad(precio);
+  if (!Number.isFinite(cantidad) || cantidad <= 0) return paso;
+  const n = Math.round(cantidad / paso) * paso;
+  // El redondeo en coma flotante deja colas (0,1+0,2); se corta a los
+  // decimales que el paso permite.
+  const dec = Math.max(0, Math.round(-Math.log10(paso)));
+  return Math.max(paso, Number(n.toFixed(dec)));
+}
+
+/**
  * Cuántas unidades se van a operar.
  *
- * `null` quiere decir «las que entren»: con 1.000 de capital y un papel a
- * 300, una cantidad fija de 10 no se puede comprar nunca y el botón
- * aparecería siempre apagado.
+ * `null` —o un 0 escrito a mano— quiere decir «las que entren con el
+ * efectivo libre». Las dos cosas significan lo mismo a propósito:
+ * devolver el salto mínimo porque el usuario borró el número lo dejaría
+ * con 0,00001 de bitcoin sin haberlo pedido.
  *
  * Vive acá, y no dentro del panel, porque el gráfico también la necesita:
  * las etiquetas de las líneas dicen cuántos dólares hay en juego, y si
@@ -207,9 +240,35 @@ export function cantidadEfectiva(
   efectivo: number,
   precio: number,
 ): number {
-  if (manual !== null && Number.isFinite(manual)) return Math.max(1, Math.round(manual));
-  if (!Number.isFinite(precio) || precio <= 0) return 1;
-  return Math.max(1, Math.floor(efectivo / precio));
+  if (manual !== null && Number.isFinite(manual) && manual > 0) {
+    return redondearCantidad(manual, precio);
+  }
+  if (!Number.isFinite(precio) || precio <= 0) return pasoDeCantidad(precio);
+  const paso = pasoDeCantidad(precio);
+  // Hacia ABAJO: proponer más de lo que entra deja el botón apagado, que
+  // es exactamente el problema que esto viene a resolver.
+  const cruda = efectivo / precio;
+  const dec = Math.max(0, Math.round(-Math.log10(paso)));
+  const n = Number((Math.floor(cruda / paso) * paso).toFixed(dec));
+  return Math.max(paso, n);
+}
+
+/**
+ * De dólares a unidades del activo.
+ *
+ * Es la otra forma de decir lo mismo, y para cripto es la natural: uno
+ * piensa «meto 500 dólares», no «compro 0,00563 bitcoin».
+ */
+export function unidadesPorDolares(dolares: number, precio: number): number {
+  if (!Number.isFinite(dolares) || dolares <= 0) return 0;
+  if (!Number.isFinite(precio) || precio <= 0) return 0;
+  return redondearCantidad(dolares / precio, precio);
+}
+
+/** Cuántos dólares cuesta una cantidad. */
+export function dolaresPorUnidades(cantidad: number, precio: number): number {
+  if (!Number.isFinite(cantidad) || !Number.isFinite(precio)) return 0;
+  return cantidad * precio;
 }
 
 /** Redondea un nivel a un paso de precio razonable para el instrumento. */

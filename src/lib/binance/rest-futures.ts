@@ -37,11 +37,14 @@ export async function fetchFuturesKlines(
   symbol: string,
   interval: Timeframe,
   limit = 1000,
+  hastaMs?: number,
 ): Promise<Candle[]> {
   return traerPaginado(
-    (finMs, n) => unaPaginaDeFuturos(symbol, interval, n, finMs),
+    (finMs, n) => unaPaginaDeFuturos(symbol, interval, n, finMs ?? hastaMs),
     TIMEFRAME_SECONDS[interval],
     limit,
+    1000,
+    hastaMs ?? Date.now(),
   );
 }
 

@@ -15,6 +15,7 @@ import {
   type VelaMin,
 } from "@/lib/backtest/cadena";
 import { sanearIndicadores } from "@/lib/backtest/indicadores";
+import { DEFAULT_CONFIG, type IndicatorConfig } from "@/lib/store/chart-store";
 import { sanearNiveles } from "@/lib/backtest/niveles";
 import {
   mediasPorDefecto,
@@ -82,6 +83,14 @@ export interface Backtest {
   historiaPrevia: number;
   /** Las medias móviles de este backtest: tipo, período, color y grosor. */
   medias: MediaMovil[];
+  /**
+   * Ajustes de los indicadores de ESTE backtest.
+   *
+   * Van con la corrida, como las medias: al reabrir una vieja tiene que
+   * verse igual que cuando se hizo. Solo se guardan las claves tocadas;
+   * el resto sale de la configuración de fábrica.
+   */
+  config?: Partial<IndicatorConfig>;
   /** Indicadores encendidos, por clave. Se guardan con la corrida: parte
    * de lo que se quiere recordar es QUÉ estabas mirando al decidir. */
   indicadores: string[];
@@ -340,6 +349,26 @@ export function sanearPanel(crudo: unknown): PanelGrafico | null {
   };
 }
 
+/**
+ * Saca la basura de los ajustes guardados.
+ *
+ * Solo pasan las claves que EXISTEN en la configuración de fábrica y con
+ * el mismo tipo. Un valor cualquiera metido a mano en el almacenamiento
+ * no puede cambiar el comportamiento de un indicador.
+ */
+export function sanearConfig(crudo: unknown): Partial<IndicatorConfig> {
+  if (!crudo || typeof crudo !== "object") return {};
+  const out: Record<string, unknown> = {};
+  const base = DEFAULT_CONFIG as unknown as Record<string, unknown>;
+  for (const [k, v] of Object.entries(crudo as Record<string, unknown>)) {
+    if (!(k in base)) continue;
+    if (typeof v !== typeof base[k]) continue;
+    if (typeof v === "number" && !Number.isFinite(v)) continue;
+    out[k] = v;
+  }
+  return out as Partial<IndicatorConfig>;
+}
+
 /** Saca la basura de lo guardado. */
 export function sanearBacktests(crudo: unknown): Backtest[] {
   if (!Array.isArray(crudo)) return [];
@@ -365,6 +394,9 @@ export function sanearBacktests(crudo: unknown): Backtest[] {
           : 10000,
       tiempoActual: Number.isFinite(b.tiempoActual) ? b.tiempoActual : b.desde,
       indicadores: sanearIndicadores(b.indicadores),
+      ...(Object.keys(sanearConfig(b.config)).length
+        ? { config: sanearConfig(b.config) }
+        : {}),
       medias: sanearMedias(b.medias) ?? mediasPorDefecto(),
       // La segunda gráfica es opcional y nueva: lo guardado antes no la
       // tiene, y sin ella `base` no puede valer "b" o el reproductor se

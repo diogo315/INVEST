@@ -11,7 +11,11 @@ import {
 } from "@/lib/backtest/cadena";
 import {
   cantidadEfectiva,
+  dolaresPorUnidades,
   nivelesPorPct,
+  pasoDeCantidad,
+  redondearCantidad,
+  unidadesPorDolares,
   premioPorUnidad,
   problemaDeNiveles,
   redondearNivel,
@@ -41,6 +45,8 @@ interface Props {
   efectivo: number;
   /** Las opciones solo existen sobre acciones y ETFs. */
   permiteOpciones: boolean;
+  /** Símbolo sin el prefijo del mercado: «BTCUSDT», «AAPL». */
+  simbolo: string;
   onOperar: (op: Omit<Operacion, "id">) => void;
   /** El plan, controlado desde arriba porque el gráfico también lo mueve. */
   niveles: EstadoNiveles;
@@ -55,6 +61,15 @@ export interface EstadoNiveles {
   takeProfit: number | null;
   /** null = «la que entre con el efectivo libre». */
   cantidadManual: number | null;
+  /**
+   * Se escribe el tamaño en dólares en vez de en unidades del activo.
+   *
+   * Para cripto es la forma natural de pensarlo: uno decide «meto 500
+   * dólares», no «compro 0,00563 bitcoin». La cantidad real sale de
+   * dividir por el precio, así que lo que se guarda sigue siendo una
+   * cantidad y la contabilidad no cambia en nada.
+   */
+  enDolares: boolean;
 }
 
 export const NIVELES_INICIAL: EstadoNiveles = {
@@ -63,6 +78,7 @@ export const NIVELES_INICIAL: EstadoNiveles = {
   stopLoss: null,
   takeProfit: null,
   cantidadManual: null,
+  enDolares: false,
 };
 
 type Modo = "activo" | "opciones";
@@ -74,6 +90,7 @@ export function PanelOperar({
   vol,
   efectivo,
   permiteOpciones,
+  simbolo,
   onOperar,
   niveles,
   onNiveles,
@@ -105,6 +122,8 @@ export function PanelOperar({
   );
 
   const maximo = cantidadEfectiva(null, efectivo, precio);
+  /** Nombre corto de una unidad: «BTC», «AAPL»… para no decir «cantidad». */
+  const unidad = (simbolo || "ud.").replace(/USDT?$/, "") || "ud.";
   const cantidad = cantidadEfectiva(niveles.cantidadManual, efectivo, precio);
   const costoActivo = cantidad * precio;
   const alcanza = costoActivo <= efectivo + 0.01;
@@ -251,35 +270,82 @@ export function PanelOperar({
           <div className="flex items-end gap-2">
             <label className="flex flex-1 flex-col gap-1">
               <span className="text-[10px] uppercase tracking-wider text-tv-text-muted">
-                Cantidad
+                {niveles.enDolares ? "Monto en dólares" : "Cantidad"}
               </span>
               <input
                 type="number"
-                min={1}
-                value={cantidad}
-                onChange={(e) =>
-                  onNiveles({
-                    cantidadManual: Math.max(1, Math.round(Number(e.target.value) || 1)),
-                  })
+                min={0}
+                step={niveles.enDolares ? 1 : pasoDeCantidad(precio)}
+                value={
+                  niveles.enDolares
+                    ? Number(costoActivo.toFixed(2))
+                    : Number(cantidad.toFixed(8))
                 }
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  if (!Number.isFinite(v)) return;
+                  onNiveles({
+                    cantidadManual: niveles.enDolares
+                      ? unidadesPorDolares(v, precio)
+                      : redondearCantidad(v, precio),
+                  });
+                }}
                 className="w-full rounded border border-tv-border bg-tv-bg px-2 py-1.5 text-xs tabular-nums text-tv-text"
               />
             </label>
             <div className="flex-1 pb-1.5 text-[11px] text-tv-text-muted">
-              <div className="tabular-nums">{formatPrice(costoActivo)}</div>
+              {/* Siempre se enseñan las DOS caras: cuánta plata y cuánto
+                  activo. Es lo que evita abrir 1 bitcoin creyendo que se
+                  abría uno de mil dólares. */}
+              <div className="tabular-nums">
+                {niveles.enDolares
+                  ? `${Number(cantidad.toFixed(8))} ${unidad}`
+                  : formatPrice(costoActivo)}
+              </div>
               <div className="text-[10px] text-tv-text-dim">
-                {cantidad} × {formatPrice(precio)}
+                {Number(cantidad.toFixed(8))} × {formatPrice(precio)}
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() => onNiveles({ cantidadManual: null })}
-              title={`Lo máximo que entra con el efectivo libre: ${maximo}`}
-              className="mb-1.5 shrink-0 rounded border border-tv-border px-2 py-1 text-[10px] text-tv-text-muted hover:bg-tv-panel-hover hover:text-tv-text"
-            >
-              Máx {maximo}
-            </button>
+            <div className="mb-1.5 flex shrink-0 flex-col gap-1">
+              <div className="flex gap-0.5 rounded bg-tv-bg p-0.5">
+                <button
+                  type="button"
+                  onClick={() => onNiveles({ enDolares: false })}
+                  title="Escribir el tamaño en unidades del activo"
+                  className={cn(
+                    "rounded px-1.5 py-0.5 text-[10px] transition-colors",
+                    !niveles.enDolares
+                      ? "bg-tv-panel-hover text-tv-text"
+                      : "text-tv-text-muted hover:text-tv-text",
+                  )}
+                >
+                  {unidad}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onNiveles({ enDolares: true })}
+                  title="Escribir el tamaño en dólares; se convierte al activo solo"
+                  className={cn(
+                    "rounded px-1.5 py-0.5 text-[10px] transition-colors",
+                    niveles.enDolares
+                      ? "bg-tv-panel-hover text-tv-text"
+                      : "text-tv-text-muted hover:text-tv-text",
+                  )}
+                >
+                  USD
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => onNiveles({ cantidadManual: null })}
+                title={`Lo máximo que entra con el efectivo libre: ${maximo}`}
+                className="rounded border border-tv-border px-2 py-0.5 text-[10px] text-tv-text-muted hover:bg-tv-panel-hover hover:text-tv-text"
+              >
+                Máx
+              </button>
+            </div>
           </div>
+
           {/* ── stop y objetivo ──────────────────────────────────── */}
           <div className="rounded border border-tv-border bg-tv-bg/50">
             <div className="flex items-center gap-2 px-2 py-1.5">
@@ -440,7 +506,8 @@ export function PanelOperar({
           {!alcanza && (
             <p className="text-[10px] text-tv-red">
               No te alcanza el efectivo libre para esa cantidad. Con $
-              {efectivo.toFixed(0)} entran {maximo}.
+              {efectivo.toFixed(0)} entran {Number(maximo.toFixed(8))} {unidad} (
+              {formatPrice(dolaresPorUnidades(maximo, precio))}).
             </p>
           )}
         </>

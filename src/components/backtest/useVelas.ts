@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { getAdapter } from "@/lib/exchanges";
+import { coberturaDeVentana, ventanaDeVelas } from "@/lib/backtest/ventana";
 import { TIMEFRAME_SECONDS, type Candle, type Timeframe } from "@/lib/binance/types";
 
 /** Tope de velas que se le piden al proveedor de una sola vez. */
@@ -32,6 +33,14 @@ export function useVelas(
   tf: Timeframe | null,
   desde: number,
   historia: number,
+  /**
+   * Dónde está parado el reloj del backtest.
+   *
+   * Solo se usa cuando el rango completo NO entra en una petición: ahí
+   * la ventana se ancla al reloj en vez de a la hora actual. Ver
+   * `ventana.ts`, donde está el porqué con los números.
+   */
+  reloj = 0,
 ): Velas {
   const arranque = desde - historia * 86400;
   /**
@@ -41,7 +50,22 @@ export function useVelas(
    * ponerlos con setState al entrar al efecto: eso dispara un render en
    * cascada y React lo marca como error.
    */
-  const clave = tf ? `${simbolo}|${tf}|${desde}|${historia}` : "";
+  const segundos = tf ? TIMEFRAME_SECONDS[tf] : 0;
+  /**
+   * «Ahora», fijado una sola vez al montar.
+   *
+   * Leerlo en cada render sería impuro y haría que la ventana cambiara
+   * de identidad sola, provocando peticiones que nadie pidió. Y no hace
+   * falta al segundo: solo sirve para saber si el período entero entra
+   * en una petición y para no pedir velas del futuro.
+   */
+  const [ahora] = useState(() => Math.floor(Date.now() / 1000));
+  const ventana = tf
+    ? ventanaDeVelas(segundos, arranque, reloj || desde, TOPE_VELAS, ahora)
+    : null;
+  // La clave incluye la ventana: mientras el reloj no cambie de bloque,
+  // es la misma y no se vuelve a pedir nada.
+  const clave = tf ? `${simbolo}|${tf}|${desde}|${historia}|${ventana?.clave}` : "";
   const [datos, setDatos] = useState<{
     clave: string;
     velas: Candle[];
@@ -50,31 +74,33 @@ export function useVelas(
 
   useEffect(() => {
     if (!simbolo || !desde || !tf) return;
+    if (!ventana) return;
     let vivo = true;
-    const segundos = TIMEFRAME_SECONDS[tf];
-    // Se piden las velas de la historia previa MÁS las del backtest. La
-    // historia previa es lo que da de comer a los indicadores: sin 200
-    // velas antes del arranque, una EMA 200 no existe el primer día.
-    const necesarias = Math.ceil((Date.now() / 1000 - arranque) / segundos) + 10;
-    const limite = Math.min(TOPE_VELAS, Math.max(100, necesarias));
     const { adapter, symbol } = getAdapter(simbolo);
     adapter
-      .fetchKlines(symbol, tf, limite)
+      .fetchKlines(symbol, tf, ventana.limite, ventana.hastaMs)
       .then((k) => {
         if (!vivo) return;
         const primera = k[0]?.time ?? 0;
+        const dias = Math.round(coberturaDeVentana(segundos, TOPE_VELAS) / 86400);
         const aviso =
           k.length === 0
             ? `El proveedor no devolvió velas en ${tf}.`
-            : primera > desde
-              ? `En ${tf} solo hay historia desde el ${new Date(primera * 1000)
-                  .toISOString()
-                  .slice(0, 10)}: el backtest no puede arrancar antes.`
-              : primera > arranque + segundos * 2
-                ? `En ${tf} la historia previa llega hasta el ${new Date(primera * 1000)
+            : ventana.deslizante
+              ? // No es un error: en temporalidades cortas el período
+                // entero no entra en una petición, así que la ventana
+                // acompaña al reloj. Se dice para que no sorprenda que
+                // el gráfico no muestre todo el backtest de una vez.
+                `En ${tf} se cargan ${dias} días alrededor de donde está el reproductor: el período completo no entra en una sola petición.`
+              : primera > desde
+                ? `En ${tf} solo hay historia desde el ${new Date(primera * 1000)
                     .toISOString()
-                    .slice(0, 10)}, no al período completo: no entran más velas en el tope de ${TOPE_VELAS.toLocaleString("es")}.`
-                : null;
+                    .slice(0, 10)}: el backtest no puede arrancar antes.`
+                : primera > arranque + segundos * 2
+                  ? `En ${tf} la historia previa llega hasta el ${new Date(primera * 1000)
+                      .toISOString()
+                      .slice(0, 10)}, no al período completo: no entran más velas en el tope de ${TOPE_VELAS.toLocaleString("es")}.`
+                  : null;
         setDatos({ clave, velas: k, error: aviso });
       })
       .catch(() => {
@@ -84,6 +110,9 @@ export function useVelas(
     return () => {
       vivo = false;
     };
+    // `ventana` se recalcula en cada render pero solo cambia de verdad
+    // cuando cambia `clave`, que es lo que manda acá.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [simbolo, tf, desde, arranque, clave]);
 
   if (!tf) return VACIO;

@@ -31,6 +31,9 @@ import {
   rsi,
   stochRsi,
   vwapAnchored,
+  type VwapAnchor,
+  type VwapBandsMode,
+  type VwapSource,
   wavetrend,
   type MaType,
 } from "@/lib/indicators";
@@ -69,6 +72,15 @@ const MAPA_MA: Record<TipoMedia, MaType> = {
   WMA: "WMA",
   VWMA: "VWMA",
   SMMA: "SMMA (RMA)",
+};
+
+/** Cómo se llama cada anclaje en castellano, para el rótulo. */
+export const ANCLAJE: Record<string, string> = {
+  session: "Sesión",
+  week: "Semana",
+  month: "Mes",
+  quarter: "Trimestre",
+  year: "Año",
 };
 
 const AMARILLO = "#ffb74d";
@@ -192,27 +204,50 @@ const CLASICOS: IndicadorBT[] = [
   {
     clave: "vwap",
     etiqueta: "VWAP",
-    nombre: () => "VWAP (sesión)",
+    nombre: (c) =>
+      `VWAP ${ANCLAJE[c.vwapAnchor] ?? c.vwapAnchor}`,
     conPanel: false,
+    editable: true,
+    // Las SIETE series se declaran siempre: la línea y los tres pares de
+    // bandas. Las bandas apagadas se alimentan con datos vacíos en vez
+    // de quitarse de la lista, porque cambiar la lista obliga a
+    // desmontar y volver a montar todo el indicador en cada clic. Una
+    // serie sin datos no dibuja nada.
     series: [
       { clave: "vwap", forma: "linea", color: AZUL, grosor: 2 },
-      { clave: "sup1", forma: "linea", color: `${AZUL}70`, estilo: 2 },
-      { clave: "inf1", forma: "linea", color: `${AZUL}70`, estilo: 2 },
+      { clave: "sup1", forma: "linea", color: `${VERDE}90` },
+      { clave: "inf1", forma: "linea", color: `${VERDE}90` },
+      { clave: "sup2", forma: "linea", color: `${AMARILLO}90` },
+      { clave: "inf2", forma: "linea", color: `${AMARILLO}90` },
+      { clave: "sup3", forma: "linea", color: `${ROJO}90` },
+      { clave: "inf3", forma: "linea", color: `${ROJO}90` },
     ],
-    relleno: { arriba: "sup1", abajo: "inf1", color: "#2962ff10" },
-    calcular: (velas) => {
-      // Anclado a la sesión (día UTC) y con la banda de 1σ, que es el
-      // ajuste por defecto del VWAP de TradingView. El cálculo es el
-      // mismo que usa el gráfico principal: si acá se calculara aparte,
-      // el mismo indicador daría dos líneas distintas según la pestaña.
-      const p = vwapAnchored(velas, "session", "hlc3", "stdev", [1, 2, 3]);
+    calcular: (velas, c) => {
+      // El mismo cálculo que el gráfico principal, con los MISMOS
+      // ajustes: si acá se usaran otros, el indicador se vería distinto
+      // según la pestaña y no habría forma de saber cuál creer.
+      const p = vwapAnchored(
+        velas,
+        (c.vwapAnchor as VwapAnchor) ?? "session",
+        (c.vwapSource as VwapSource) ?? "hlc3",
+        (c.vwapBandsMode as VwapBandsMode) ?? "stdev",
+        [c.vwapMult1 ?? 1, c.vwapMult2 ?? 2, c.vwapMult3 ?? 3],
+      );
+      const banda = (i: 0 | 1 | 2, lado: "upper" | "lower", on: boolean) =>
+        on ? p.map((x) => ({ time: x.time, value: x[lado][i] })) : [];
       return {
         vwap: p.map((x) => ({ time: x.time, value: x.vwap })),
-        sup1: p.map((x) => ({ time: x.time, value: x.upper[0] })),
-        inf1: p.map((x) => ({ time: x.time, value: x.lower[0] })),
+        sup1: banda(0, "upper", c.vwapShowBand1), inf1: banda(0, "lower", c.vwapShowBand1),
+        sup2: banda(1, "upper", c.vwapShowBand2), inf2: banda(1, "lower", c.vwapShowBand2),
+        sup3: banda(2, "upper", c.vwapShowBand3), inf3: banda(2, "lower", c.vwapShowBand3),
       };
     },
-    valor: (u, fmt) => (u.vwap === undefined ? undefined : fmt(u.vwap)),
+    valor: (u, fmt) => {
+      if (u.vwap === undefined) return undefined;
+      const par = (a?: number, b?: number) =>
+        a === undefined || b === undefined ? "" : ` · ${fmt(a)}/${fmt(b)}`;
+      return `${fmt(u.vwap)}${par(u.sup1, u.inf1)}${par(u.sup2, u.inf2)}${par(u.sup3, u.inf3)}`;
+    },
   },
   {
     clave: "volumen",

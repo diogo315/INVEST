@@ -33,11 +33,14 @@ export async function fetchKlines(
   symbol: string,
   interval: Timeframe,
   limit = 1000,
+  hastaMs?: number,
 ): Promise<Candle[]> {
   return traerPaginado(
-    (finMs, n) => unaPaginaDeKlines(symbol, interval, n, finMs),
+    (finMs, n) => unaPaginaDeKlines(symbol, interval, n, finMs ?? hastaMs),
     TIMEFRAME_SECONDS[interval],
     limit,
+    1000,
+    hastaMs ?? Date.now(),
   );
 }
 

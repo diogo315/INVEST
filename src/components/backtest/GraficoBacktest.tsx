@@ -22,7 +22,8 @@ import { opcionesDeChart, opcionesDeVelas } from "@/lib/chart/apariencia";
 import { tickMarkFormatter, timeFormatter, zonaDelEje } from "@/lib/chart/timezone";
 import { BandFill } from "@/lib/chart/band-fill";
 import { useChartStore } from "@/lib/store/chart-store";
-import { CONFIG_BT, indicadorPorClave } from "@/lib/backtest/indicadores";
+import { indicadorPorClave } from "@/lib/backtest/indicadores";
+import type { IndicatorConfig } from "@/lib/store/chart-store";
 import type { MediaMovil } from "@/lib/chart/medias";
 import type { SerieSpec } from "@/lib/chart/indicadores-nuevos";
 import { indiceDeTiempo } from "@/lib/dibujos/coordenadas";
@@ -57,6 +58,8 @@ interface Props {
    */
   niveles?: NivelDibujado[];
   onMoverNivel?: (opId: string, cual: Cual, precio: number) => void;
+  /** Ajustes de los indicadores de este backtest. */
+  config: IndicatorConfig;
 }
 
 /** Lo que hay montado de un indicador, para poder quitarlo después. */
@@ -156,6 +159,7 @@ export function GraficoBacktest({
   temporalidad,
   niveles,
   onMoverNivel,
+  config,
 }: Props) {
   const zonaEje = zonaDelEje(zona, temporalidad);
   const cajaRef = useRef<HTMLDivElement>(null);
@@ -601,7 +605,7 @@ export function GraficoBacktest({
         repartirAlto();
       }
 
-      const datos = def.calcular(visibles, CONFIG_BT, medias);
+      const datos = def.calcular(visibles, config, medias);
       for (const [key, s] of m.series) {
         const pts = datos[key] ?? [];
         s.setData(
@@ -630,7 +634,7 @@ export function GraficoBacktest({
         );
       }
     }
-  }, [indicadores, visibles, medias, repartirAlto]);
+  }, [indicadores, visibles, medias, config, repartirAlto]);
 
   return (
     <div className="relative h-full w-full">

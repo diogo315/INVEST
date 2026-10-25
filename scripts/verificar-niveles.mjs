@@ -18,6 +18,10 @@
  */
 import {
   cantidadEfectiva,
+  dolaresPorUnidades,
+  pasoDeCantidad,
+  redondearCantidad,
+  unidadesPorDolares,
   ladoValido,
   nivelesPorPct,
   premioPorUnidad,
@@ -195,15 +199,60 @@ console.log("Redondeo y saneado");
   ck("saneado de basura da objeto vacío", JSON.stringify(sanearNiveles(null)) === "{}");
 }
 
+console.log("El salto de cantidad depende del precio del instrumento");
+{
+  ck("bitcoin a 88.000 se fracciona hasta 0,00001", pasoDeCantidad(88000) === 0.00001);
+  ck("un papel a 1.500, hasta 0,0001", pasoDeCantidad(1500) === 0.0001);
+  ck("uno a 300, hasta 0,001", pasoDeCantidad(300) === 0.001);
+  ck("uno a 50, hasta 0,01", pasoDeCantidad(50) === 0.01);
+  ck("uno barato sigue siendo entero", pasoDeCantidad(5) === 1);
+  ck("un precio inválido da paso 1", pasoDeCantidad(NaN) === 1);
+  ck("redondea al salto", redondearCantidad(0.0567891, 88000) === 0.05679,
+    String(redondearCantidad(0.0567891, 88000)));
+  ck("sin colas de coma flotante", redondearCantidad(0.1 + 0.2, 300) === 0.3,
+    String(redondearCantidad(0.1 + 0.2, 300)));
+  ck("nunca menos que un salto", redondearCantidad(0, 88000) === 0.00001);
+}
+
+console.log("EL PROBLEMA DE DIEGO: 5.000 de capital y bitcoin a 88.839");
+{
+  const c = cantidadEfectiva(null, 5000, 88839.04);
+  ck("propone una fracción, no 1", c < 1 && c > 0, String(c));
+  ck("y esa fracción SÍ se puede pagar", c * 88839.04 <= 5000.0001,
+    `${c} x 88839.04 = ${(c * 88839.04).toFixed(2)}`);
+  ck("aprovecha casi todo el efectivo", c * 88839.04 > 4999,
+    String((c * 88839.04).toFixed(2)));
+  ck("una cantidad manual fraccionada se respeta",
+    cantidadEfectiva(0.001, 5000, 88839.04) === 0.001,
+    String(cantidadEfectiva(0.001, 5000, 88839.04)));
+}
+
 console.log("La cantidad: una sola fórmula para el panel y para el gráfico");
 {
-  ck("sin cantidad manual, lo máximo que entra", cantidadEfectiva(null, 1000, 300) === 3);
+  ck("sin cantidad manual, lo máximo que entra", cantidadEfectiva(null, 1000, 300) === 3.333);
   ck("con cantidad manual, la que dijo el usuario", cantidadEfectiva(7, 1000, 300) === 7);
-  ck("nunca menos de 1 aunque no alcance", cantidadEfectiva(null, 10, 300) === 1);
-  ck("una manual de 0 igual da 1", cantidadEfectiva(0, 1000, 300) === 1);
-  ck("redondea la manual", cantidadEfectiva(2.7, 1000, 300) === 3);
+  ck("nunca más de lo que entra", cantidadEfectiva(null, 1000, 300) * 300 <= 1000);
+  // Un 0 escrito a mano se trata igual que el campo vacío: «la que
+  // entre». Devolver el salto mínimo dejaría al usuario con 0,001 de
+  // bitcoin sin haberlo pedido, solo por haber borrado el número.
+  ck("una manual de 0 se trata como «automática»",
+    cantidadEfectiva(0, 1000, 300) === cantidadEfectiva(null, 1000, 300),
+    String(cantidadEfectiva(0, 1000, 300)));
   ck("precio cero no rompe", cantidadEfectiva(null, 1000, 0) === 1);
   ck("precio inválido no rompe", cantidadEfectiva(null, 1000, NaN) === 1);
+}
+
+console.log("Dólares y unidades son la misma cosa dicha de dos formas");
+{
+  const u = unidadesPorDolares(500, 88839.04);
+  ck("500 dólares de bitcoin son una fracción", u > 0 && u < 1, String(u));
+  ck("y valen ~500 dólares", Math.abs(dolaresPorUnidades(u, 88839.04) - 500) < 1,
+    String(dolaresPorUnidades(u, 88839.04)));
+  ck("ida y vuelta se conserva",
+    Math.abs(unidadesPorDolares(dolaresPorUnidades(0.05, 88839.04), 88839.04) - 0.05) < 1e-9);
+  ck("cero dólares son cero unidades", unidadesPorDolares(0, 88839.04) === 0);
+  ck("dólares negativos dan cero", unidadesPorDolares(-5, 88839.04) === 0);
+  ck("precio cero da cero", unidadesPorDolares(500, 0) === 0);
 }
 
 console.log("\nCaso completo: una operación de punta a punta");
