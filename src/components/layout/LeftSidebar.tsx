@@ -8,6 +8,7 @@ import {
   Ruler,
   Square,
   Trash2,
+  TrendingDown,
   TrendingUp,
   Type,
   Waves,
@@ -47,6 +48,18 @@ const DIBUJO: Herramienta[] = [
   { key: "rectangulo", icon: Square, label: NOMBRES_DIBUJO.rectangulo, hint: "Dos clics: esquinas opuestas" },
   { key: "flecha", icon: ArrowUpRight, label: NOMBRES_DIBUJO.flecha, hint: "Dos clics: de dónde a dónde" },
   { key: "fibonacci", icon: Waves, label: NOMBRES_DIBUJO.fibonacci, hint: "Dos clics: del 0 % al 100 %" },
+  {
+    key: "posicionLarga",
+    icon: TrendingUp,
+    label: NOMBRES_DIBUJO.posicionLarga,
+    hint: "Dos clics: entrada y objetivo. El stop nace a 1:1 y se arrastra",
+  },
+  {
+    key: "posicionCorta",
+    icon: TrendingDown,
+    label: NOMBRES_DIBUJO.posicionCorta,
+    hint: "Dos clics: entrada y objetivo abajo. El stop nace arriba",
+  },
   { key: "texto", icon: Type, label: NOMBRES_DIBUJO.texto, hint: "Un clic y se escribe" },
 ];
 

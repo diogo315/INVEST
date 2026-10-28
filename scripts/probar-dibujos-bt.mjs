@@ -165,6 +165,49 @@ console.log("6. Borrar todo");
   ck("quedan cero", (await dibujos()).length === 0, String((await dibujos()).length));
 }
 
+console.log("7. CON DOS GRÁFICAS, CADA UNA TIENE SU CAJA Y SU PROPIA CLAVE");
+{
+  // Esto es lo que se escapó la primera vez: la prueba abría UNA gráfica,
+  // así que nunca miró si la segunda recibía su clave de dibujos. Con una
+  // sola gráfica, un panel B sin caja de herramientas pasa invisible.
+  await pag.getByRole("button", { name: /Dos gráficas/ }).click();
+  await pag.waitForTimeout(2500);
+
+  ck("ahora hay DOS cajas de herramientas",
+    await pag.getByRole("button", { name: /^Rectángulo$/ }).count() === 2,
+    String(await pag.getByRole("button", { name: /^Rectángulo$/ }).count()));
+  ck("y dos botones de borrar, uno por gráfica",
+    await pag.getByRole("button", { name: /Borrar todos los dibujos/i }).count() === 2);
+
+  // El lienzo de la gráfica B es el que está más a la derecha.
+  const cajas = [];
+  const n = await pag.locator("canvas").count();
+  for (let i = 0; i < n; i++) {
+    const c = await pag.locator("canvas").nth(i).boundingBox();
+    if (c && c.width > 300 && c.height > 200) cajas.push(c);
+  }
+  cajas.sort((p, q) => p.x - q.x);
+  const der = cajas[cajas.length - 1];
+  const izq = cajas[0];
+  ck("las dos gráficas están separadas en pantalla", der.x > izq.x + izq.width - 20,
+    `izq ${izq.x.toFixed(0)}+${izq.width.toFixed(0)}, der ${der.x.toFixed(0)}`);
+
+  await pag.getByRole("button", { name: /^Rectángulo$/ }).first().click();
+  await pag.waitForTimeout(300);
+  await pag.mouse.click(der.x + 150, der.y + 150);
+  await pag.waitForTimeout(250);
+  await pag.mouse.click(der.x + 320, der.y + 300);
+  await pag.waitForTimeout(700);
+
+  const enB = await dibujos("bt:p1:b");
+  ck("DIBUJAR EN LA SEGUNDA GRÁFICA GUARDA EN bt:p1:b", enB.length === 1,
+    `b=${enB.length}, claves=${(await todas()).join(",")}`);
+  ck("y no se coló en la primera", (await dibujos("bt:p1:a")).length === 0,
+    String((await dibujos("bt:p1:a")).length));
+
+  await pag.screenshot({ path: "shots/dibujos-bt-dos.png" });
+}
+
 await nav.close();
 console.log(`\n${fallos.length === 0 ? "TODO BIEN" : `FALLARON ${fallos.length}:\n - ${fallos.join("\n - ")}`}`);
 process.exit(fallos.length === 0 ? 0 : 1);

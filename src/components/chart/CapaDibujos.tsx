@@ -10,6 +10,10 @@ import {
   type Dibujo,
   type PuntoDibujo,
   type TipoDibujo,
+  esPosicion,
+  nivelesDePosicion,
+  puntosIniciales,
+  relacionDePosicion,
 } from "@/lib/dibujos/tipos";
 import { useChartStore, type DrawingTool } from "@/lib/store/chart-store";
 import { formatPrice } from "@/lib/format";
@@ -217,7 +221,7 @@ export function CapaDibujos({
       setPrimerPunto({ tool: herramienta, punto });
       return;
     }
-    agregar(simbolo, tipo, [aMedias, punto], graficoId);
+    agregar(simbolo, tipo, puntosIniciales(tipo, aMedias, punto), graficoId);
     setPrimerPunto(null);
     setTool("cursor");
   }
@@ -494,6 +498,95 @@ function FiguraDibujo({
     );
   }
 
+  if (esPosicion(d.tipo)) {
+    const c = pantalla[2];
+    const n = nivelesDePosicion(d);
+    if (!c || !n || !Number.isFinite(c.y)) return null;
+    const x = Math.min(a.x, b.x, c.x);
+    const ancho2 = Math.max(Math.abs(b.x - a.x), Math.abs(c.x - a.x), 1);
+    const rb = relacionDePosicion(d);
+    const pct = (p: number) =>
+      n.entrada > 0 ? ((p - n.entrada) / n.entrada) * 100 : 0;
+    // La caja del objetivo es verde y la del stop roja SIEMPRE, sea
+    // larga o corta: el color dice «esto es lo que gano» y «esto es lo
+    // que pierdo», no hacia dónde apunta el precio. Pintarlas por la
+    // dirección obligaría a pensar dos veces para leer un dibujo.
+    const caja = (desde: number, hasta: number, color: string) => (
+      <rect
+        x={x}
+        y={Math.min(desde, hasta)}
+        width={ancho2}
+        height={Math.max(1, Math.abs(hasta - desde))}
+        fill={color}
+        fillOpacity={0.16}
+        stroke={color}
+        strokeOpacity={0.5}
+        strokeWidth={1}
+      />
+    );
+    const rotulo = (y: number, texto: string, color: string, arriba: boolean) => (
+      <text
+        x={x + 4}
+        y={arriba ? y - 4 : y + 11}
+        fill={color}
+        fontSize={10}
+        className="tabular-nums"
+      >
+        {texto}
+      </text>
+    );
+    return (
+      <g>
+        {caja(a.y, b.y, "#26a69a")}
+        {caja(a.y, c.y, "#ef5350")}
+        {/* La línea de entrada va encima de las dos cajas. */}
+        <line x1={x} y1={a.y} x2={x + ancho2} y2={a.y} stroke={d.color} strokeWidth={d.grosor} />
+        <line
+          x1={x}
+          y1={a.y}
+          x2={x + ancho2}
+          y2={a.y}
+          {...agarre}
+        />
+        {seleccionada && (
+          <rect
+            x={x}
+            y={Math.min(b.y, c.y)}
+            width={ancho2}
+            height={Math.max(1, Math.abs(c.y - b.y))}
+            fill="none"
+            stroke={d.color}
+            strokeWidth={2}
+            strokeOpacity={0.5}
+          />
+        )}
+        {rotulo(
+          b.y,
+          `Objetivo ${formatPrice(n.objetivo)}  ${pct(n.objetivo) >= 0 ? "+" : ""}${pct(n.objetivo).toFixed(2)} %`,
+          "#26a69a",
+          b.y > a.y,
+        )}
+        {rotulo(
+          a.y,
+          `${d.tipo === "posicionLarga" ? "Largo" : "Corto"} ${formatPrice(n.entrada)}${rb === null ? "" : `   B/R ${rb.toFixed(2)} : 1`}`,
+          d.color,
+          true,
+        )}
+        {rotulo(
+          c.y,
+          `Stop ${formatPrice(n.stop)}  ${pct(n.stop) >= 0 ? "+" : ""}${pct(n.stop).toFixed(2)} %`,
+          "#ef5350",
+          c.y > a.y,
+        )}
+        {d.texto && (
+          <text x={x + 4} y={Math.min(a.y, b.y, c.y) - 16} fill={d.color} fontSize={d.tamanoTexto}>
+            {d.texto}
+          </text>
+        )}
+      </g>
+    );
+  }
+
   if (d.tipo === "rectangulo") {
     const x = Math.min(a.x, b.x);
     const y = Math.min(a.y, b.y);
@@ -615,7 +708,7 @@ function VistaPrevia({
     strokeDasharray: "4 4",
     fill: "none" as const,
   };
-  if (tipo === "rectangulo" || tipo === "fibonacci") {
+  if (tipo === "rectangulo" || tipo === "fibonacci" || esPosicion(tipo)) {
     return (
       <rect
         x={Math.min(desde.x, hasta.x)}

@@ -4,6 +4,7 @@ import { GraficoBacktest } from "./GraficoBacktest";
 import { IndicadoresMenu } from "./IndicadoresMenu";
 import { EditorMedias } from "./EditorMedias";
 import { EditorVwap } from "./EditorVwap";
+import { BarraDibujo } from "./BarraDibujo";
 import type { IndicatorConfig } from "@/lib/store/chart-store";
 import { TEMPORALIDADES_BT } from "@/lib/backtest/multi";
 import type { Panel } from "@/lib/store/backtest-store";
@@ -39,6 +40,8 @@ interface Props {
   onMoverNivel?: (opId: string, cual: Cual, precio: number) => void;
   config: IndicatorConfig;
   onConfig: (parche: Record<string, unknown>) => void;
+  /** Clave de los dibujos de este backtest; sin ella no hay caja de herramientas. */
+  claveDibujos?: string;
 }
 
 /** Una de las gráficas del backtest, con sus propios controles arriba. */
@@ -64,6 +67,7 @@ export function BarraPanel({
   onMoverNivel,
   config,
   onConfig,
+  claveDibujos,
 }: Props) {
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -118,7 +122,17 @@ export function BarraPanel({
           <EditorVwap config={config} onCambiar={onConfig} />
         )}
       </div>
-      <div className="relative min-h-[280px] flex-1 lg:min-h-0">
+      <div className="flex min-h-[280px] flex-1 lg:min-h-0">
+      {/* La caja de herramientas va PEGADA a su gráfica, no en una barra
+          global: con dos gráficas abiertas, una sola barra no diría
+          sobre cuál de las dos se está dibujando. */}
+      {claveDibujos && <BarraDibujo clave={claveDibujos} />}
+      {/* `min-w-0` no es decorativo: dentro de una fila flex, un hijo
+          `flex-1` no puede encogerse por debajo del ancho de su
+          contenido, y el lienzo del gráfico conserva el ancho que tuvo.
+          Medido: al plegar y desplegar el panel lateral, la gráfica se
+          quedaba en 1.446 px en vez de volver a 1.106. */}
+      <div className="relative min-h-0 min-w-0 flex-1">
         {cargando && (
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-tv-bg/70 text-xs text-tv-text-muted">
             Bajando velas…
@@ -135,9 +149,11 @@ export function BarraPanel({
           zona={zona}
           temporalidad={temporalidad}
           config={config}
+          claveDibujos={claveDibujos}
           niveles={niveles}
           onMoverNivel={onMoverNivel}
         />
+      </div>
       </div>
     </div>
   );

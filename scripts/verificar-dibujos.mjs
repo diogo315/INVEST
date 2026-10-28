@@ -8,6 +8,10 @@
 import {
   NIVELES_FIB,
   PUNTOS_DE,
+  esPosicion,
+  nivelesDePosicion,
+  puntosIniciales,
+  relacionDePosicion,
   TOLERANCIA,
   correrDibujo,
   dentroDeRectangulo,
@@ -181,6 +185,56 @@ ok(
     JSON.stringify(acotado[0]),
   );
   ok("lo que no es una lista devuelve vacío", sanearDibujos("nada").length === 0);
+}
+
+console.log("Herramienta de posición larga y corta");
+{
+  const pt = (time, price) => ({ time, price });
+  ok("se reconocen las dos de posición",
+    esPosicion("posicionLarga") && esPosicion("posicionCorta"));
+  ok("y el rectángulo no lo es", !esPosicion("rectangulo"));
+  ok("los demás dibujos nacen con los dos puntos marcados",
+    puntosIniciales("rectangulo", pt(1, 100), pt(2, 110)).length === 2);
+
+  // LARGA: entrada 100, objetivo 110 → el stop nace en 90 (1:1).
+  const larga = puntosIniciales("posicionLarga", pt(1, 100), pt(5, 110));
+  ok("la posición nace con TRES puntos", larga.length === 3);
+  ok("el stop nace al otro lado de la entrada", larga[2].price === 90,
+    String(larga[2].price));
+  ok("y a la misma distancia que el objetivo (1:1)",
+    Math.abs(larga[1].price - larga[0].price) === Math.abs(larga[0].price - larga[2].price));
+
+  const d = { tipo: "posicionLarga", puntos: larga };
+  const n = nivelesDePosicion(d);
+  ok("los niveles salen bien", n.entrada === 100 && n.objetivo === 110 && n.stop === 90);
+  ok("y el tramo de tiempo va del primero al último", n.desde === 1 && n.hasta === 5);
+  ok("la relación inicial es 1", relacionDePosicion(d) === 1);
+
+  // Arrastrar el objetivo a 120 deja 2:1.
+  const movido = { tipo: "posicionLarga", puntos: [pt(1, 100), pt(5, 120), pt(5, 90)] };
+  ok("mover el objetivo cambia la relación a 2", relacionDePosicion(movido) === 2);
+  // Y acercar el stop a 95 la lleva a 4:1.
+  const stopCerca = { tipo: "posicionLarga", puntos: [pt(1, 100), pt(5, 120), pt(5, 95)] };
+  ok("acercar el stop la lleva a 4", relacionDePosicion(stopCerca) === 4);
+
+  // CORTA: el objetivo va abajo, así que el stop nace arriba.
+  const corta = puntosIniciales("posicionCorta", pt(1, 100), pt(5, 90));
+  ok("en la corta el stop nace ARRIBA", corta[2].price === 110, String(corta[2].price));
+
+  // Marcar el objetivo del lado equivocado se respeta, no se corrige solo.
+  const alReves = puntosIniciales("posicionLarga", pt(1, 100), pt(5, 90));
+  ok("un objetivo del lado equivocado se dibuja igual", alReves[1].price === 90);
+  ok("y el stop queda del otro lado, coherente", alReves[2].price === 110);
+
+  // Lo que no se puede calcular, no se inventa.
+  ok("sin el tercer punto no hay niveles",
+    nivelesDePosicion({ tipo: "posicionLarga", puntos: [pt(1, 100), pt(5, 110)] }) === null);
+  ok("un rectángulo no tiene niveles de posición",
+    nivelesDePosicion({ tipo: "rectangulo", puntos: [pt(1, 100), pt(5, 110)] }) === null);
+  ok("con riesgo cero la relación es null, no infinito",
+    relacionDePosicion({ tipo: "posicionLarga", puntos: [pt(1, 100), pt(5, 110), pt(5, 100)] }) === null);
+  ok("PUNTOS_DE dice 2 clics para la posición",
+    PUNTOS_DE.posicionLarga === 2 && PUNTOS_DE.posicionCorta === 2);
 }
 
 console.log(fallos === 0 ? "\n✓ dibujos: la geometría responde bien" : `\n✗ ${fallos} fallos`);

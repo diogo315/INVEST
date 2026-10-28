@@ -26,7 +26,8 @@ import { indicadorPorClave } from "@/lib/backtest/indicadores";
 import type { IndicatorConfig } from "@/lib/store/chart-store";
 import type { MediaMovil } from "@/lib/chart/medias";
 import type { SerieSpec } from "@/lib/chart/indicadores-nuevos";
-import { indiceDeTiempo } from "@/lib/dibujos/coordenadas";
+import { indiceDeTiempo, tiempoDeIndice } from "@/lib/dibujos/coordenadas";
+import { CapaDibujos } from "@/components/chart/CapaDibujos";
 import { CapaNiveles, type Cual, type NivelDibujado } from "./CapaNiveles";
 import type { Operacion } from "@/lib/backtest/tipos";
 import type { Candle } from "@/lib/binance/types";
@@ -60,6 +61,14 @@ interface Props {
   onMoverNivel?: (opId: string, cual: Cual, precio: number) => void;
   /** Ajustes de los indicadores de este backtest. */
   config: IndicatorConfig;
+  /**
+   * Clave con la que se guardan los dibujos de ESTE backtest.
+   *
+   * No es el símbolo real a propósito: si lo fuera, los dibujos del
+   * backtest aparecerían en la pestaña Gráfico y al revés. Anotar una
+   * repetición es una cosa y anotar el mercado en vivo es otra.
+   */
+  claveDibujos?: string;
 }
 
 /** Lo que hay montado de un indicador, para poder quitarlo después. */
@@ -160,6 +169,7 @@ export function GraficoBacktest({
   niveles,
   onMoverNivel,
   config,
+  claveDibujos,
 }: Props) {
   const zonaEje = zonaDelEje(zona, temporalidad);
   const cajaRef = useRef<HTMLDivElement>(null);
@@ -200,6 +210,32 @@ export function GraficoBacktest({
     chart: IChartApi;
     serie: ISeriesApi<"Candlestick">;
   } | null>(null);
+  /**
+   * Medidas de la capa de dibujos y un contador que la obliga a
+   * repintar. El contador sube cuando el gráfico se mueve o entra una
+   * vela: los dibujos están en coordenadas del mercado, así que hay que
+   * volver a convertirlas a píxeles cada vez que la escala cambia.
+   */
+  const [medidas, setMedidas] = useState({ ancho: 0, alto: 0, altoPrecios: 0 });
+  const [tick, setTick] = useState(0);
+
+  /** Pregunta al gráfico cuánto mide cada cosa. Nunca lo supone. */
+  const medir = useCallback(() => {
+    const chart = chartRef.current;
+    const caja = cajaRef.current;
+    if (!chart || !caja) return;
+    let altoPrecios = caja.clientHeight;
+    try {
+      altoPrecios = chart.panes()[0]?.getHeight() ?? caja.clientHeight;
+    } catch {}
+    setMedidas((p) =>
+      p.ancho === caja.clientWidth &&
+      p.alto === caja.clientHeight &&
+      p.altoPrecios === altoPrecios
+        ? p
+        : { ancho: caja.clientWidth, alto: caja.clientHeight, altoPrecios },
+    );
+  }, []);
 
   /**
    * Reparte el alto entre los paneles.
@@ -308,9 +344,21 @@ export function GraficoBacktest({
     // Las líneas de vencimiento se dibujan en HTML encima del lienzo, así
     // que hay que recolocarlas cada vez que el gráfico se mueve o se
     // acerca. No es setState dentro del efecto: es una suscripción.
-    const alMover = () => colocarVenc();
+    const alMover = () => {
+      colocarVenc();
+      // El contador sube con el movimiento: es lo que hace que los
+      // dibujos sigan pegados a las velas al desplazar o hacer zoom.
+      setTick((t) => t + 1);
+      medir();
+    };
     chart.timeScale().subscribeVisibleLogicalRangeChange(alMover);
+    const observador = new ResizeObserver(() => {
+      medir();
+      setTick((t) => t + 1);
+    });
+    observador.observe(cajaRef.current);
     return () => {
+      observador.disconnect();
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(alMover);
       chart.remove();
       setListo(null);
@@ -321,7 +369,7 @@ export function GraficoBacktest({
       montados.current.clear();
       encuadrado.current = false;
     };
-  }, [colocarVenc]);
+  }, [colocarVenc, medir]);
 
   // Zona horaria: solo reformatea etiquetas. NO toca ni un dato, que es
   // lo que hay que cuidar: mover los timestamps correría las velas y los
@@ -390,7 +438,9 @@ export function GraficoBacktest({
     ts.setVisibleLogicalRange({ from: borde - ventanaRef.current, to: borde });
     visiblesRef.current = visibles;
     colocarVenc();
-  }, [visibles, vencimientos, colocarVenc]);
+    medir();
+    setTick((t) => t + 1);
+  }, [visibles, vencimientos, colocarVenc, medir]);
 
   // Marcas de las operaciones.
   useEffect(() => {
@@ -639,6 +689,41 @@ export function GraficoBacktest({
   return (
     <div className="relative h-full w-full">
       <div ref={cajaRef} className="h-full w-full" />
+      {/* Los dibujos van DEBAJO de la capa de niveles (z-20) para que
+          arrastrar un stop no se coma el clic de dibujar, y encima del
+          lienzo para poder recibir el mouse. */}
+      {claveDibujos && listo && medidas.ancho > 0 && (
+        <div
+          className="pointer-events-none absolute left-0 top-0 z-10"
+          style={{ width: medidas.ancho, height: medidas.alto }}
+        >
+          <CapaDibujos
+            graficoId={claveDibujos}
+            simbolo={claveDibujos}
+            ancho={medidas.ancho}
+            alto={medidas.alto}
+            altoPrecios={medidas.altoPrecios}
+            // De fecha a píxel por la posición CONTINUA en la escala, no
+            // con `timeToCoordinate`: esa solo ubica fechas que existan
+            // como vela exacta y devuelve null para el aire de la derecha.
+            aX={(t) =>
+              listo.chart
+                .timeScale()
+                .logicalToCoordinate(
+                  indiceDeTiempo(visiblesRef.current, t) as Logical,
+                )
+            }
+            aY={(precio) => listo.serie.priceToCoordinate(precio)}
+            aTiempo={(x) => {
+              const l = listo.chart.timeScale().coordinateToLogical(x);
+              if (l === null) return null;
+              return tiempoDeIndice(visiblesRef.current, Number(l));
+            }}
+            aPrecio={(y) => listo.serie.coordinateToPrice(y)}
+            tick={tick}
+          />
+        </div>
+      )}
       {niveles && niveles.length > 0 && onMoverNivel && (
         <CapaNiveles
           chart={listo?.chart ?? null}

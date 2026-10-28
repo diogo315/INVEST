@@ -17,7 +17,9 @@ export type TipoDibujo =
   | "rectangulo"
   | "flecha"
   | "texto"
-  | "fibonacci";
+  | "fibonacci"
+  | "posicionLarga"
+  | "posicionCorta";
 
 export type EstiloLinea = "solida" | "rayada" | "punteada";
 
@@ -53,6 +55,12 @@ export const PUNTOS_DE: Record<TipoDibujo, 1 | 2> = {
   flecha: 2,
   texto: 1,
   fibonacci: 2,
+  // Dos CLICS: entrada y objetivo. El stop se agrega solo, a la misma
+  // distancia que el objetivo (relación 1:1), y después se arrastra.
+  // Pedir tres clics para empezar a dibujar es pedir demasiado antes de
+  // ver nada en pantalla.
+  posicionLarga: 2,
+  posicionCorta: 2,
 };
 
 export const NOMBRES_DIBUJO: Record<TipoDibujo, string> = {
@@ -63,7 +71,77 @@ export const NOMBRES_DIBUJO: Record<TipoDibujo, string> = {
   flecha: "Flecha",
   texto: "Texto",
   fibonacci: "Fibonacci",
+  posicionLarga: "Posición larga",
+  posicionCorta: "Posición corta",
 };
+
+/** Las dos herramientas de posición, que llevan un punto más. */
+export function esPosicion(t: TipoDibujo): boolean {
+  return t === "posicionLarga" || t === "posicionCorta";
+}
+
+/**
+ * Los puntos con los que NACE un dibujo.
+ *
+ * Para casi todos son los que marcó el usuario. Las herramientas de
+ * posición llevan tres —entrada, objetivo y stop— pero se dibujan con
+ * dos clics, así que el tercero se calcula acá: el stop va al otro lado
+ * de la entrada, a la misma distancia que el objetivo, o sea una
+ * relación beneficio/riesgo de 1:1 para empezar. No es una
+ * recomendación: es un punto de partida que se arrastra.
+ *
+ * Si el usuario marca el objetivo del lado equivocado —abajo en una
+ * larga— se respeta igual: se dibuja al revés y los números lo dicen.
+ * Corregirlo en silencio escondería que se marcó mal.
+ */
+export function puntosIniciales(
+  tipo: TipoDibujo,
+  a: PuntoDibujo,
+  b: PuntoDibujo,
+): PuntoDibujo[] {
+  if (!esPosicion(tipo)) return [a, b];
+  const distancia = b.price - a.price;
+  return [a, b, { time: b.time, price: a.price - distancia }];
+}
+
+/**
+ * Entrada, objetivo y stop de una posición dibujada.
+ *
+ * Devuelve null si no es una herramienta de posición o le faltan puntos,
+ * en vez de inventar un tercer nivel: media posición dibujada no es una
+ * posición con el stop en cero.
+ */
+export function nivelesDePosicion(d: {
+  tipo: TipoDibujo;
+  puntos: PuntoDibujo[];
+}): { entrada: number; objetivo: number; stop: number; desde: number; hasta: number } | null {
+  if (!esPosicion(d.tipo) || d.puntos.length < 3) return null;
+  const [a, b, c] = d.puntos;
+  return {
+    entrada: a.price,
+    objetivo: b.price,
+    stop: c.price,
+    desde: Math.min(a.time, b.time, c.time),
+    hasta: Math.max(a.time, b.time, c.time),
+  };
+}
+
+/**
+ * La relación beneficio/riesgo de una posición dibujada.
+ *
+ * null cuando el riesgo es cero: un número ahí se leería como si
+ * significara algo, y no significa nada.
+ */
+export function relacionDePosicion(d: {
+  tipo: TipoDibujo;
+  puntos: PuntoDibujo[];
+}): number | null {
+  const n = nivelesDePosicion(d);
+  if (!n) return null;
+  const riesgo = Math.abs(n.entrada - n.stop);
+  if (riesgo <= 1e-12) return null;
+  return Math.abs(n.objetivo - n.entrada) / riesgo;
+}
 
 /** Niveles del retroceso de Fibonacci, de arriba hacia abajo. */
 export const NIVELES_FIB = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
@@ -205,6 +283,19 @@ export function leDiAlDibujo(
     case "tendencia":
     case "flecha":
       return !!b && distanciaASegmento(px, py, a.x, a.y, b.x, b.y) <= TOLERANCIA;
+    case "posicionLarga":
+    case "posicionCorta": {
+      // Todo el bloque —de la caja del objetivo a la del stop— es
+      // agarrable. Es una figura que se mira y se mueve entera; exigir
+      // acertarle a la línea de entrada la volvería incómoda.
+      const c = pantalla[2];
+      if (!b || !c) return false;
+      const arriba = Math.min(a.y, b.y, c.y);
+      const abajo = Math.max(a.y, b.y, c.y);
+      const iz = Math.min(a.x, b.x, c.x);
+      const de = Math.max(a.x, b.x, c.x);
+      return dentroDeRectangulo(px, py, iz, arriba, de, abajo);
+    }
     case "rectangulo":
       if (!b) return false;
       // Con relleno, todo el interior es agarrable; sin relleno, solo el

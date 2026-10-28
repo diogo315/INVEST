@@ -539,6 +539,7 @@ export function VistaBacktest() {
             onBase={setBase}
             config={configBT}
             onConfig={setConfigBT}
+            claveDibujos={`bt:${bt.id}:a`}
             niveles={base === "a" ? nivelesDibujados : undefined}
             onMoverNivel={base === "a" ? moverNivel : undefined}
           />
@@ -565,8 +566,9 @@ export function VistaBacktest() {
               onMedias={setMedias}
               onBase={setBase}
               config={configBT}
-            onConfig={setConfigBT}
-            niveles={base === "b" ? nivelesDibujados : undefined}
+              onConfig={setConfigBT}
+              claveDibujos={`bt:${bt.id}:b`}
+              niveles={base === "b" ? nivelesDibujados : undefined}
               onMoverNivel={base === "b" ? moverNivel : undefined}
             />
           )}
