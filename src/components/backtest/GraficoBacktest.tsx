@@ -69,6 +69,15 @@ interface Props {
    * repetición es una cosa y anotar el mercado en vivo es otra.
    */
   claveDibujos?: string;
+  /**
+   * Cuál de las dos gráficas es esta.
+   *
+   * Va aparte de `claveDibujos` porque las dos gráficas COMPARTEN los
+   * dibujos pero no la selección: sin esto, seleccionar un rectángulo
+   * sacaría los tiradores y la barrita de colores en las dos a la vez,
+   * y arrastrar uno movería el de la otra.
+   */
+  idGrafico?: string;
 }
 
 /** Lo que hay montado de un indicador, para poder quitarlo después. */
@@ -170,6 +179,7 @@ export function GraficoBacktest({
   onMoverNivel,
   config,
   claveDibujos,
+  idGrafico,
 }: Props) {
   const zonaEje = zonaDelEje(zona, temporalidad);
   const cajaRef = useRef<HTMLDivElement>(null);
@@ -698,7 +708,7 @@ export function GraficoBacktest({
           style={{ width: medidas.ancho, height: medidas.alto }}
         >
           <CapaDibujos
-            graficoId={claveDibujos}
+            graficoId={idGrafico ?? claveDibujos}
             simbolo={claveDibujos}
             ancho={medidas.ancho}
             alto={medidas.alto}

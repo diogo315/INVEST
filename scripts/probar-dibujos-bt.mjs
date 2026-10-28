@@ -57,7 +57,7 @@ await pag.addInitScript((v) => {
 await pag.goto(`${BASE}/backtesting`, { waitUntil: "networkidle" });
 await pag.waitForTimeout(2800);
 
-const dibujos = (clave = "bt:p1:a") => pag.evaluate((k) => {
+const dibujos = (clave = "bt:p1") => pag.evaluate((k) => {
   const g = JSON.parse(localStorage.getItem("tv-gratis-chart-state") || "{}");
   return g?.state?.dibujos?.[k] ?? [];
 }, clave);
@@ -100,7 +100,7 @@ console.log("2. Dibujar un rectángulo");
 console.log("3. LOS DIBUJOS SON DEL BACKTEST, no del símbolo");
 {
   const claves = await todas();
-  ck("se guardan bajo la clave del backtest", claves.includes("bt:p1:a"), claves.join(","));
+  ck("se guardan bajo la clave del backtest", claves.includes("bt:p1"), claves.join(","));
   ck("y NO bajo el símbolo (no ensucian el gráfico en vivo)",
     !claves.includes("BTCUSDT"), claves.join(","));
 }
@@ -165,47 +165,206 @@ console.log("6. Borrar todo");
   ck("quedan cero", (await dibujos()).length === 0, String((await dibujos()).length));
 }
 
-console.log("7. CON DOS GRÁFICAS, CADA UNA TIENE SU CAJA Y SU PROPIA CLAVE");
+console.log("7. CON DOS GRÁFICAS: CADA UNA SU CAJA, Y LOS DIBUJOS COMPARTIDOS");
 {
   // Esto es lo que se escapó la primera vez: la prueba abría UNA gráfica,
-  // así que nunca miró si la segunda recibía su clave de dibujos. Con una
-  // sola gráfica, un panel B sin caja de herramientas pasa invisible.
+  // así que nunca miró si la segunda recibía su caja de herramientas.
   await pag.getByRole("button", { name: /Dos gráficas/ }).click();
-  await pag.waitForTimeout(2500);
+  await pag.waitForTimeout(2800);
 
-  ck("ahora hay DOS cajas de herramientas",
+  ck("hay DOS cajas de herramientas",
     await pag.getByRole("button", { name: /^Rectángulo$/ }).count() === 2,
     String(await pag.getByRole("button", { name: /^Rectángulo$/ }).count()));
   ck("y dos botones de borrar, uno por gráfica",
     await pag.getByRole("button", { name: /Borrar todos los dibujos/i }).count() === 2);
 
-  // El lienzo de la gráfica B es el que está más a la derecha.
-  const cajas = [];
+  // Qué dibujos muestra cada capa, por su data-dibujo.
+  const porCapa = () => pag.evaluate(() =>
+    [...document.querySelectorAll("svg")]
+      .filter((s) => s.querySelector("[data-dibujo]") || s.closest(".z-10"))
+      .map((s) => [...s.querySelectorAll("[data-dibujo]")].map((g) => g.dataset.dibujo))
+      .filter((l) => l.length > 0));
+
+  const lienzos = [];
   const n = await pag.locator("canvas").count();
   for (let i = 0; i < n; i++) {
     const c = await pag.locator("canvas").nth(i).boundingBox();
-    if (c && c.width > 300 && c.height > 200) cajas.push(c);
+    if (c && c.width > 300 && c.height > 200) lienzos.push(c);
   }
-  cajas.sort((p, q) => p.x - q.x);
-  const der = cajas[cajas.length - 1];
-  const izq = cajas[0];
+  lienzos.sort((p, q) => p.x - q.x);
+  const izq = lienzos[0], der = lienzos[lienzos.length - 1];
   ck("las dos gráficas están separadas en pantalla", der.x > izq.x + izq.width - 20,
     `izq ${izq.x.toFixed(0)}+${izq.width.toFixed(0)}, der ${der.x.toFixed(0)}`);
 
+  // Dibujar en la de la IZQUIERDA.
   await pag.getByRole("button", { name: /^Rectángulo$/ }).first().click();
   await pag.waitForTimeout(300);
-  await pag.mouse.click(der.x + 150, der.y + 150);
+  await pag.mouse.click(izq.x + 150, izq.y + 150);
   await pag.waitForTimeout(250);
-  await pag.mouse.click(der.x + 320, der.y + 300);
-  await pag.waitForTimeout(700);
+  await pag.mouse.click(izq.x + 350, izq.y + 300);
+  await pag.waitForTimeout(800);
 
-  const enB = await dibujos("bt:p1:b");
-  ck("DIBUJAR EN LA SEGUNDA GRÁFICA GUARDA EN bt:p1:b", enB.length === 1,
-    `b=${enB.length}, claves=${(await todas()).join(",")}`);
-  ck("y no se coló en la primera", (await dibujos("bt:p1:a")).length === 0,
-    String((await dibujos("bt:p1:a")).length));
+  const guardados = await dibujos("bt:p1");
+  ck("se guarda bajo la clave compartida bt:p1", guardados.length === 1,
+    `${guardados.length}, claves=${(await todas()).join(",")}`);
+  ck("y NO quedan claves por gráfica (:a / :b)",
+    !(await todas()).some((k) => /^bt:p1:(a|b)$/.test(k)), (await todas()).join(","));
+
+  const capas = await porCapa();
+  ck("LO DIBUJADO EN UNA APARECE EN LAS DOS GRÁFICAS",
+    capas.length === 2 && capas.every((l) => l.includes(guardados[0].id)),
+    JSON.stringify(capas));
+
+  // Y al revés: dibujar en la de la DERECHA también se ve en la izquierda.
+  await pag.getByRole("button", { name: /^Rectángulo$/ }).last().click();
+  await pag.waitForTimeout(300);
+  await pag.mouse.click(der.x + 120, der.y + 180);
+  await pag.waitForTimeout(250);
+  await pag.mouse.click(der.x + 300, der.y + 320);
+  await pag.waitForTimeout(800);
+  const dos = await dibujos("bt:p1");
+  ck("ahora son dos dibujos, en la misma clave", dos.length === 2, String(dos.length));
+  const capas2 = await porCapa();
+  ck("Y AL REVÉS: lo de la derecha se ve en la izquierda",
+    capas2.length === 2 && capas2.every((l) => l.length === 2), JSON.stringify(capas2));
 
   await pag.screenshot({ path: "shots/dibujos-bt-dos.png" });
+}
+
+console.log("8. ESTIRAR EL RECTÁNGULO DE UN LADO, SIN CAMBIARLE LA ALTURA");
+{
+  // Dejar un solo rectángulo para no pelear con la selección.
+  pag.once("dialog", (d) => d.accept());
+  await pag.getByRole("button", { name: /Borrar todos los dibujos/i }).first().click();
+  await pag.waitForTimeout(500);
+
+  const lienzos = [];
+  const n = await pag.locator("canvas").count();
+  for (let i = 0; i < n; i++) {
+    const c = await pag.locator("canvas").nth(i).boundingBox();
+    if (c && c.width > 300 && c.height > 200) lienzos.push(c);
+  }
+  lienzos.sort((p, q) => p.x - q.x);
+  const c = lienzos[0];
+
+  await pag.getByRole("button", { name: /^Rectángulo$/ }).first().click();
+  await pag.waitForTimeout(300);
+  await pag.mouse.click(c.x + 150, c.y + 200);
+  await pag.waitForTimeout(250);
+  await pag.mouse.click(c.x + 320, c.y + 340);
+  await pag.waitForTimeout(800);
+
+  const antes = (await dibujos("bt:p1"))[0];
+  ck("hay un rectángulo para estirar", antes?.tipo === "rectangulo", String(antes?.tipo));
+
+  // Seleccionarlo: clic encima con el cursor.
+  await pag.mouse.click(c.x + 240, c.y + 270);
+  await pag.waitForTimeout(500);
+
+  const lado = pag.getByRole("button", { name: "Lado derecho" }).first();
+  ck("aparece el tirador del lado derecho", await lado.count() > 0);
+  const t = await lado.boundingBox();
+  ck("el tirador es una barrita VERTICAL, no un cuadradito",
+    !!t && t.height > t.width, t ? `${t.width}x${t.height}` : "sin caja");
+
+  const altoAntes = Math.abs(antes.puntos[0].price - antes.puntos[1].price);
+  const anchoAntes = Math.abs(antes.puntos[0].time - antes.puntos[1].time);
+
+  // Arrastrarlo 180 px a la derecha y 90 px hacia ARRIBA a la vez: si el
+  // tirador respetara el eje Y, la altura cambiaría.
+  await pag.mouse.move(t.x + t.width / 2, t.y + t.height / 2);
+  await pag.mouse.down();
+  await pag.mouse.move(t.x + t.width / 2 + 90, t.y + t.height / 2 - 45, { steps: 6 });
+  await pag.mouse.move(t.x + t.width / 2 + 180, t.y + t.height / 2 - 90, { steps: 6 });
+  await pag.mouse.up();
+  await pag.waitForTimeout(600);
+
+  const despues = (await dibujos("bt:p1"))[0];
+  const altoDespues = Math.abs(despues.puntos[0].price - despues.puntos[1].price);
+  const anchoDespues = Math.abs(despues.puntos[0].time - despues.puntos[1].time);
+  ck("LA ALTURA NO CAMBIÓ", Math.abs(altoDespues - altoAntes) < 1e-6,
+    `${altoAntes.toFixed(2)} -> ${altoDespues.toFixed(2)}`);
+  ck("Y EL ANCHO SÍ CRECIÓ", anchoDespues > anchoAntes * 1.1,
+    `${anchoAntes} -> ${anchoDespues}`);
+
+  // El espejo: el lado de arriba mueve el precio y deja el ancho.
+  const arriba = pag.getByRole("button", { name: "Lado superior" }).first();
+  ck("también está el tirador de arriba", await arriba.count() > 0);
+  const ta = await arriba.boundingBox();
+  ck("y ese es una barrita HORIZONTAL", !!ta && ta.width > ta.height,
+    ta ? `${ta.width}x${ta.height}` : "sin caja");
+  await pag.mouse.move(ta.x + ta.width / 2, ta.y + ta.height / 2);
+  await pag.mouse.down();
+  await pag.mouse.move(ta.x + ta.width / 2 + 120, ta.y + ta.height / 2 - 60, { steps: 8 });
+  await pag.mouse.up();
+  await pag.waitForTimeout(600);
+
+  const final = (await dibujos("bt:p1"))[0];
+  const anchoFinal = Math.abs(final.puntos[0].time - final.puntos[1].time);
+  const altoFinal = Math.abs(final.puntos[0].price - final.puntos[1].price);
+  ck("EL ANCHO NO CAMBIÓ al estirar por arriba",
+    Math.abs(anchoFinal - anchoDespues) < 1e-6, `${anchoDespues} -> ${anchoFinal}`);
+  ck("y la altura sí creció", altoFinal > altoDespues * 1.05,
+    `${altoDespues.toFixed(2)} -> ${altoFinal.toFixed(2)}`);
+
+  await pag.screenshot({ path: "shots/dibujos-bt-lados.png" });
+}
+
+console.log("9. LOS DIBUJOS VIEJOS (guardados por gráfica) NO SE PIERDEN");
+{
+  // Quien ya venía usando la versión anterior tiene sus dibujos bajo
+  // `bt:<id>:a` y `bt:<id>:b`. Al recargar tienen que VERSE, en las dos
+  // gráficas. Se comprueba en la pantalla y no en localStorage: la
+  // mudanza pasa al rehidratar el store, y lo guardado en disco recién
+  // se reescribe en el siguiente guardado. Mirar el disco daría un falso
+  // negativo —y de hecho lo dio.
+  const linea = (id, price, color) => ({
+    id, tipo: "horizontal", puntos: [{ time: 0, price }],
+    color, grosor: 2, estilo: "solida", relleno: true,
+    texto: "", tamanoTexto: 14, bloqueado: false, creado: 1,
+  });
+  await pag.evaluate((ls) => {
+    const g = JSON.parse(localStorage.getItem("tv-gratis-chart-state") || "{}");
+    g.state = g.state || {};
+    g.state.dibujos = {
+      "bt:p1:a": [ls[0]],
+      "bt:p1:b": [ls[1]],
+      "BTCUSDT": [ls[2]],
+    };
+    localStorage.setItem("tv-gratis-chart-state", JSON.stringify(g));
+  }, [linea("viejo-a", 50200, "#2962ff"), linea("viejo-b", 49800, "#26a69a"),
+      linea("del-mercado", 60000, "#ffffff")]);
+
+  await pag.reload({ waitUntil: "networkidle" });
+  await pag.waitForTimeout(3000);
+
+  const porCapa = () => pag.evaluate(() =>
+    [...document.querySelectorAll("svg")]
+      .map((s) => [...s.querySelectorAll("[data-dibujo]")].map((g) => g.dataset.dibujo))
+      .filter((l) => l.length > 0));
+
+  const capas = await porCapa();
+  ck("LOS DOS DIBUJOS VIEJOS SE VEN, en las dos gráficas",
+    capas.length === 2 &&
+      capas.every((l) => l.includes("viejo-a") && l.includes("viejo-b")),
+    JSON.stringify(capas));
+  ck("y el del MERCADO no se coló en el backtest",
+    capas.every((l) => !l.includes("del-mercado")), JSON.stringify(capas));
+  ck("el dibujo del mercado sigue guardado aparte",
+    (await dibujos("BTCUSDT")).length === 1, (await todas()).join(","));
+
+  // Al dibujar algo nuevo, lo guardado en disco queda ya en la clave nueva.
+  await pag.getByRole("button", { name: /^Línea horizontal$/ }).first().click();
+  await pag.waitForTimeout(300);
+  const c = await pag.locator("canvas").first().boundingBox();
+  await pag.mouse.click(c.x + 200, c.y + 220);
+  await pag.waitForTimeout(800);
+  const claves = await todas();
+  ck("y el disco se ordena solo en el siguiente guardado",
+    claves.includes("bt:p1") && !claves.some((k) => /^bt:p1:(a|b)$/.test(k)),
+    claves.join(","));
+  ck("sin perder ninguno de los tres",
+    (await dibujos("bt:p1")).length === 3, String((await dibujos("bt:p1")).length));
 }
 
 await nav.close();

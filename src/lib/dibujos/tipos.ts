@@ -338,6 +338,107 @@ export function dibujoBajoElClic<
   return null;
 }
 
+// ───────────────────── los lados del rectángulo ───────────────────────
+
+/**
+ * Los cuatro lados de un rectángulo, por si hay que estirarlo de uno solo.
+ *
+ * Un rectángulo se guarda con dos esquinas opuestas, así que arrastrar
+ * una esquina mueve el ancho Y la altura a la vez. Marcar una zona de
+ * precio y después querer alargarla hacia la derecha —porque el precio
+ * siguió— es lo normal, y con esquinas nada más eso obliga a reacomodar
+ * la altura a ojo cada vez.
+ */
+export type LadoRect = "izquierda" | "derecha" | "arriba" | "abajo";
+
+export const LADOS_RECT: LadoRect[] = ["izquierda", "derecha", "arriba", "abajo"];
+
+export const NOMBRES_LADO: Record<LadoRect, string> = {
+  izquierda: "Lado izquierdo",
+  derecha: "Lado derecho",
+  arriba: "Lado superior",
+  abajo: "Lado inferior",
+};
+
+/** Los lados verticales mueven la fecha; los horizontales, el precio. */
+export function ejeDelLado(lado: LadoRect): "tiempo" | "precio" {
+  return lado === "izquierda" || lado === "derecha" ? "tiempo" : "precio";
+}
+
+/**
+ * Cuál de las dos esquinas manda en ese lado.
+ *
+ * Se resuelve UNA vez, al agarrar, y no en cada movimiento: si se
+ * recalculara mientras se arrastra, al pasarse de largo el lado derecho
+ * se convertiría en el izquierdo a mitad de camino y el rectángulo se
+ * quedaría trabado contra sí mismo.
+ */
+export function indiceDelLado(puntos: PuntoDibujo[], lado: LadoRect): number {
+  const [a, b] = puntos;
+  if (!a || !b) return 0;
+  switch (lado) {
+    case "izquierda":
+      return a.time <= b.time ? 0 : 1;
+    case "derecha":
+      return a.time >= b.time ? 0 : 1;
+    // En pantalla "arriba" es el precio MAYOR, aunque en píxeles sea la Y
+    // menor. Acá se razona en precios, que es lo que se guarda.
+    case "arriba":
+      return a.price >= b.price ? 0 : 1;
+    case "abajo":
+      return a.price <= b.price ? 0 : 1;
+  }
+}
+
+/**
+ * Estira el rectángulo por un lado.
+ *
+ * Cambia SOLO la coordenada de ese eje, en esa esquina: estirar por la
+ * derecha mueve la fecha y deja el precio como estaba, así la altura no
+ * se toca. La otra esquina no se mira siquiera.
+ */
+export function moverLado(
+  puntos: PuntoDibujo[],
+  indice: number,
+  eje: "tiempo" | "precio",
+  destino: PuntoDibujo,
+): PuntoDibujo[] {
+  return puntos.map((p, i) => {
+    if (i !== indice) return p;
+    return eje === "tiempo"
+      ? { time: destino.time, price: p.price }
+      : { time: p.time, price: destino.price };
+  });
+}
+
+/**
+ * Junta los dibujos que antes se guardaban por gráfica del backtest.
+ *
+ * Hasta ahora cada panel guardaba aparte (`bt:X:a` y `bt:X:b`). Al pasar
+ * a una clave compartida (`bt:X`), lo ya guardado tiene que mudarse solo
+ * o desaparecería de la pantalla sin aviso. Se descartan los repetidos
+ * por id, que es lo que pasa con un dibujo duplicado entre paneles.
+ *
+ * Devuelve un objeto nuevo; no toca el que recibe.
+ */
+export function juntarDibujosDeBacktest<T extends { id: string }>(
+  dibujos: Record<string, T[]>,
+): Record<string, T[]> {
+  const out: Record<string, T[]> = { ...dibujos };
+  for (const clave of Object.keys(out)) {
+    const m = /^(bt:.+):(a|b)$/.exec(clave);
+    if (!m) continue;
+    const destino = m[1];
+    const yaEstan = out[destino] ?? [];
+    const vienen = (out[clave] ?? []).filter(
+      (d) => !yaEstan.some((x) => x.id === d.id),
+    );
+    out[destino] = [...yaEstan, ...vienen];
+    delete out[clave];
+  }
+  return out;
+}
+
 /** Mueve todos los puntos de un dibujo por un delta de fecha y precio. */
 export function correrDibujo(
   puntos: PuntoDibujo[],
@@ -368,7 +469,10 @@ export function sanearDibujos(crudo: unknown): Dibujo[] {
     .map((d) => ({
       id: d.id,
       tipo: d.tipo,
-      puntos: d.puntos.slice(0, 2),
+      // Las de posición llevan TRES niveles (entrada, objetivo y stop).
+      // Acotarlas a dos, como al resto, les borraba el stop al recargar
+      // la página: el dibujo volvía a medias y sin decir por qué.
+      puntos: d.puntos.slice(0, esPosicion(d.tipo) ? 3 : 2),
       color: typeof d.color === "string" && d.color ? d.color : COLOR_POR_DEFECTO,
       grosor: Math.min(6, Math.max(1, Number(d.grosor) || 2)),
       estilo:

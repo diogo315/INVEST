@@ -150,6 +150,8 @@ export function BarraPanel({
           temporalidad={temporalidad}
           config={config}
           claveDibujos={claveDibujos}
+          // Las dos gráficas comparten los dibujos pero no la selección.
+          idGrafico={claveDibujos ? `${claveDibujos}:${panel}` : undefined}
           niveles={niveles}
           onMoverNivel={onMoverNivel}
         />

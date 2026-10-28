@@ -3,11 +3,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   COLORES_DIBUJO,
+  LADOS_RECT,
   NIVELES_FIB,
+  NOMBRES_LADO,
   PUNTOS_DE,
   dibujoBajoElClic,
+  ejeDelLado,
   guionesDe,
+  indiceDelLado,
+  moverLado,
   type Dibujo,
+  type LadoRect,
   type PuntoDibujo,
   type TipoDibujo,
   esPosicion,
@@ -59,6 +65,9 @@ interface EnPantalla {
 /** Lo que se está arrastrando. */
 type Arrastre =
   | { tipo: "punto"; id: string; indice: number }
+  // Un LADO del rectángulo: mueve una sola coordenada de una sola
+  // esquina. El índice se fija al agarrar y no se vuelve a calcular.
+  | { tipo: "lado"; id: string; indice: number; eje: "tiempo" | "precio" }
   | { tipo: "todo"; id: string; desde: PuntoDibujo }
   | null;
 
@@ -242,6 +251,10 @@ export function CapaDibujos({
     if (arr.tipo === "punto") {
       const puntos = d.puntos.map((p, i) => (i === arr.indice ? punto : p));
       editar(simbolo, d.id, { puntos });
+    } else if (arr.tipo === "lado") {
+      editar(simbolo, d.id, {
+        puntos: moverLado(d.puntos, arr.indice, arr.eje, punto),
+      });
     } else {
       // Mover entero: se corre por la diferencia contra donde se agarró.
       const dT = punto.time - arr.desde.time;
@@ -290,8 +303,11 @@ export function CapaDibujos({
         )}
       >
         {lista.map((d) => (
+          // El `data-dibujo` es lo que deja comprobar desde afuera QUÉ
+          // dibujos está mostrando cada gráfica, que es justo lo que no
+          // se puede deducir contando rectángulos sueltos.
+          <g key={d.id} data-dibujo={d.id}>
           <FiguraDibujo
-            key={d.id}
             d={d}
             pantalla={puntosDe(d)}
             ancho={ancho}
@@ -308,6 +324,7 @@ export function CapaDibujos({
               }
             }}
           />
+          </g>
         ))}
 
         {/* Vista previa: del primer punto al mouse */}
@@ -343,9 +360,93 @@ export function CapaDibujos({
               }}
             />
           ))}
+
+        {/* Tiradores de LADO del rectángulo.
+            Las esquinas mueven ancho y altura a la vez; estos mueven un
+            lado solo. Se distinguen a la vista: son barritas alargadas
+            en el sentido del lado, no cuadraditos. */}
+        {sel && !sel.bloqueado && sel.tipo === "rectangulo" && (
+          <TiradoresDeLado
+            d={sel}
+            pantalla={puntosDe(sel)}
+            alAgarrar={(lado) =>
+              setArrastre({
+                tipo: "lado",
+                id: sel.id,
+                indice: indiceDelLado(sel.puntos, lado),
+                eje: ejeDelLado(lado),
+              })
+            }
+          />
+        )}
       </svg>
 
       {sel && <BarraDeDibujo simbolo={simbolo} d={sel} pantalla={puntosDe(sel)} ancho={ancho} />}
+    </>
+  );
+}
+
+/**
+ * Las cuatro barritas para estirar el rectángulo por un lado.
+ *
+ * Van en el medio de cada lado y alargadas EN EL SENTIDO del lado, para
+ * que se vean distintas de las esquinas sin tener que probarlas: una
+ * barrita vertical a la derecha se lee como «esto mueve el borde
+ * derecho», un cuadradito en la esquina no dice nada.
+ */
+function TiradoresDeLado({
+  d,
+  pantalla,
+  alAgarrar,
+}: {
+  d: Dibujo;
+  pantalla: EnPantalla[];
+  alAgarrar: (lado: LadoRect) => void;
+}) {
+  const [a, b] = pantalla;
+  if (!a || !b) return null;
+  if (![a.x, a.y, b.x, b.y].every(Number.isFinite)) return null;
+
+  const iz = Math.min(a.x, b.x);
+  const de = Math.max(a.x, b.x);
+  const ar = Math.min(a.y, b.y);
+  const ab = Math.max(a.y, b.y);
+  const sitio: Record<LadoRect, EnPantalla> = {
+    izquierda: { x: iz, y: (ar + ab) / 2 },
+    derecha: { x: de, y: (ar + ab) / 2 },
+    arriba: { x: (iz + de) / 2, y: ar },
+    abajo: { x: (iz + de) / 2, y: ab },
+  };
+
+  return (
+    <>
+      {LADOS_RECT.map((lado) => {
+        const mueveElTiempo = ejeDelLado(lado) === "tiempo";
+        const p = sitio[lado];
+        return (
+          <rect
+            key={lado}
+            x={p.x - (mueveElTiempo ? 3 : 8)}
+            y={p.y - (mueveElTiempo ? 8 : 3)}
+            width={mueveElTiempo ? 6 : 16}
+            height={mueveElTiempo ? 16 : 6}
+            rx={1}
+            role="button"
+            aria-label={NOMBRES_LADO[lado]}
+            className={cn(
+              "pointer-events-auto",
+              mueveElTiempo ? "cursor-ew-resize" : "cursor-ns-resize",
+            )}
+            fill={d.color}
+            stroke="#ffffff"
+            strokeWidth={1.5}
+            onMouseDown={(e) => {
+              e.stopPropagation();
+              alAgarrar(lado);
+            }}
+          />
+        );
+      })}
     </>
   );
 }

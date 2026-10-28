@@ -539,7 +539,12 @@ export function VistaBacktest() {
             onBase={setBase}
             config={configBT}
             onConfig={setConfigBT}
-            claveDibujos={`bt:${bt.id}:a`}
+            // LA MISMA clave en las dos gráficas: lo que se dibuja en una
+            // aparece en la otra. Son el mismo mercado en dos
+            // temporalidades, y una zona marcada en 4h sigue siendo esa
+            // zona en 15m. Tenerlas separadas obligaba a dibujar dos
+            // veces lo mismo y a mantener dos versiones de la misma idea.
+            claveDibujos={`bt:${bt.id}`}
             niveles={base === "a" ? nivelesDibujados : undefined}
             onMoverNivel={base === "a" ? moverNivel : undefined}
           />
@@ -567,7 +572,7 @@ export function VistaBacktest() {
               onBase={setBase}
               config={configBT}
               onConfig={setConfigBT}
-              claveDibujos={`bt:${bt.id}:b`}
+              claveDibujos={`bt:${bt.id}`}
               niveles={base === "b" ? nivelesDibujados : undefined}
               onMoverNivel={base === "b" ? moverNivel : undefined}
             />

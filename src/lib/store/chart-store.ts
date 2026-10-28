@@ -24,6 +24,7 @@ export type { Seccion } from "@/lib/watchlist/orden";
 export const MAX_SECCIONES = 20;
 import {
   dibujoNuevo,
+  juntarDibujosDeBacktest,
   sanearDibujos,
   type Dibujo,
   type PuntoDibujo,
@@ -1710,6 +1711,13 @@ export const useChartStore = create<ChartState>()(
         for (const [simbolo, lista] of Object.entries(guardadosDibujos)) {
           dibujos[migrateSymbol(simbolo)] = sanearDibujos(lista);
         }
+        // Los dibujos del backtest se guardaban por gráfica (`bt:X:a` y
+        // `bt:X:b`). Ahora las dos comparten `bt:X`, así que lo ya
+        // guardado se junta en vez de desaparecer de la pantalla: perder
+        // dibujos en silencio por un cambio interno es inaceptable.
+        const dibujosJuntos = juntarDibujosDeBacktest(dibujos);
+        for (const k of Object.keys(dibujos)) delete dibujos[k];
+        Object.assign(dibujos, dibujosJuntos);
         const lineasViejas = (p as { priceLines?: unknown }).priceLines;
         if (Array.isArray(lineasViejas)) {
           for (const l of lineasViejas as Array<{ symbol?: string; price?: number }>) {

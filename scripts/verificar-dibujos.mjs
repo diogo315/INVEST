@@ -22,6 +22,11 @@ import {
   guionesDe,
   leDiAlDibujo,
   sanearDibujos,
+  LADOS_RECT,
+  ejeDelLado,
+  indiceDelLado,
+  moverLado,
+  juntarDibujosDeBacktest,
 } from "../src/lib/dibujos/tipos.ts";
 
 let fallos = 0;
@@ -235,6 +240,99 @@ console.log("Herramienta de posición larga y corta");
     relacionDePosicion({ tipo: "posicionLarga", puntos: [pt(1, 100), pt(5, 110), pt(5, 100)] }) === null);
   ok("PUNTOS_DE dice 2 clics para la posición",
     PUNTOS_DE.posicionLarga === 2 && PUNTOS_DE.posicionCorta === 2);
+}
+
+
+console.log("Estirar el rectángulo por un lado");
+{
+  const pt = (time, price) => ({ time, price });
+  // Esquinas EN DESORDEN a propósito: se guardan como las marcó el
+  // usuario, y empezar por abajo-derecha es tan normal como por
+  // arriba-izquierda.
+  const r = [pt(100, 50), pt(20, 90)];   // 0 = derecha-abajo, 1 = izquierda-arriba
+
+  ok("el lado derecho es el punto con la fecha mayor", indiceDelLado(r, "derecha") === 0);
+  ok("el izquierdo, el de la fecha menor", indiceDelLado(r, "izquierda") === 1);
+  ok("el de arriba es el PRECIO mayor", indiceDelLado(r, "arriba") === 1);
+  ok("el de abajo, el precio menor", indiceDelLado(r, "abajo") === 0);
+
+  ok("los lados verticales mueven el tiempo",
+    ejeDelLado("izquierda") === "tiempo" && ejeDelLado("derecha") === "tiempo");
+  ok("y los horizontales, el precio",
+    ejeDelLado("arriba") === "precio" && ejeDelLado("abajo") === "precio");
+  ok("son cuatro lados", LADOS_RECT.length === 4);
+
+  // EL PUNTO DE TODO ESTO: estirar de un lado NO cambia la altura.
+  const estirado = moverLado(r, indiceDelLado(r, "derecha"), "tiempo", pt(300, 999));
+  const altoAntes = Math.abs(r[0].price - r[1].price);
+  const altoDespues = Math.abs(estirado[0].price - estirado[1].price);
+  ok("ESTIRAR POR LA DERECHA NO TOCA LA ALTURA", altoAntes === altoDespues,
+    `${altoAntes} -> ${altoDespues}`);
+  ok("el precio de esa esquina queda igual, aunque el mouse esté en otro",
+    estirado[0].price === 50, String(estirado[0].price));
+  ok("y la fecha sí se mueve", estirado[0].time === 300, String(estirado[0].time));
+  ok("la otra esquina no se toca",
+    estirado[1].time === 20 && estirado[1].price === 90, JSON.stringify(estirado[1]));
+
+  // Y el espejo: por arriba no cambia el ancho.
+  const subido = moverLado(r, indiceDelLado(r, "arriba"), "precio", pt(777, 130));
+  const anchoAntes = Math.abs(r[0].time - r[1].time);
+  const anchoDespues = Math.abs(subido[0].time - subido[1].time);
+  ok("ESTIRAR POR ARRIBA NO TOCA EL ANCHO", anchoAntes === anchoDespues,
+    `${anchoAntes} -> ${anchoDespues}`);
+  ok("sube el precio de la esquina de arriba", subido[1].price === 130);
+  ok("y le deja la fecha", subido[1].time === 20, String(subido[1].time));
+
+  // Pasarse de largo está permitido: el rectángulo se da vuelta, no se traba.
+  const dadoVuelta = moverLado(r, indiceDelLado(r, "derecha"), "tiempo", pt(5, 0));
+  ok("se puede pasar el lado derecho al otro lado del izquierdo",
+    dadoVuelta[0].time === 5 && dadoVuelta[0].price === 50);
+
+  ok("con un solo punto no revienta", indiceDelLado([pt(1, 1)], "derecha") === 0);
+}
+
+console.log("Los dibujos de las dos gráficas se juntan");
+{
+  const d = (id) => ({ id });
+  const juntos = juntarDibujosDeBacktest({
+    "bt:7:a": [d("uno"), d("dos")],
+    "bt:7:b": [d("tres")],
+    "BTCUSDT": [d("delMercado")],
+  });
+  ok("los dos paneles caen en la misma clave",
+    juntos["bt:7"]?.map((x) => x.id).join(",") === "uno,dos,tres",
+    JSON.stringify(juntos["bt:7"]?.map((x) => x.id)));
+  ok("y las claves viejas desaparecen",
+    !("bt:7:a" in juntos) && !("bt:7:b" in juntos), Object.keys(juntos).join(","));
+  ok("EL SÍMBOLO DEL MERCADO NO SE TOCA",
+    juntos["BTCUSDT"]?.length === 1, Object.keys(juntos).join(","));
+
+  const repetido = juntarDibujosDeBacktest({ "bt:9": [d("x")], "bt:9:a": [d("x"), d("y")] });
+  ok("un id repetido no entra dos veces",
+    repetido["bt:9"].map((v) => v.id).join(",") === "x,y",
+    JSON.stringify(repetido["bt:9"].map((v) => v.id)));
+
+  const vacio = juntarDibujosDeBacktest({});
+  ok("sin nada guardado no inventa claves", Object.keys(vacio).length === 0);
+}
+
+console.log("Al recargar, la posición conserva su stop");
+{
+  const pt = (time, price) => ({ time, price });
+  const guardada = sanearDibujos([{
+    id: "p", tipo: "posicionLarga",
+    puntos: [pt(1, 100), pt(5, 110), pt(5, 90)],
+  }]);
+  ok("LOS TRES NIVELES SOBREVIVEN A sanearDibujos",
+    guardada[0]?.puntos.length === 3, String(guardada[0]?.puntos.length));
+  ok("y siguen siendo entrada, objetivo y stop",
+    nivelesDePosicion(guardada[0])?.stop === 90,
+    JSON.stringify(nivelesDePosicion(guardada[0])));
+  const rect = sanearDibujos([{
+    id: "r", tipo: "rectangulo",
+    puntos: [pt(1, 1), pt(2, 2), pt(3, 3)],
+  }]);
+  ok("el rectángulo sigue acotado a dos esquinas", rect[0].puntos.length === 2);
 }
 
 console.log(fallos === 0 ? "\n✓ dibujos: la geometría responde bien" : `\n✗ ${fallos} fallos`);
