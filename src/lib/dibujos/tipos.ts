@@ -403,12 +403,78 @@ export function moverLado(
   eje: "tiempo" | "precio",
   destino: PuntoDibujo,
 ): PuntoDibujo[] {
+  return moverEje(puntos, [indice], eje, destino);
+}
+
+/**
+ * Lo mismo, pero para VARIOS puntos a la vez.
+ *
+ * Hace falta en la posición: el borde derecho de la caja lo marcan el
+ * objetivo y el stop juntos, así que alargarla tiene que mover la fecha
+ * de los dos o la figura se rompe en dos mitades de distinto largo.
+ */
+export function moverEje(
+  puntos: PuntoDibujo[],
+  indices: number[],
+  eje: "tiempo" | "precio",
+  destino: PuntoDibujo,
+): PuntoDibujo[] {
   return puntos.map((p, i) => {
-    if (i !== indice) return p;
+    if (!indices.includes(i)) return p;
     return eje === "tiempo"
       ? { time: destino.time, price: p.price }
       : { time: p.time, price: destino.price };
   });
+}
+
+// ──────────────── los tiradores de la posición ────────────────────────
+
+export type ClaveTirador =
+  | "entrada"
+  | "objetivo"
+  | "stop"
+  | "izquierda"
+  | "derecha";
+
+export interface TiradorPosicion {
+  clave: ClaveTirador;
+  /** Qué puntos mueve. */
+  indices: number[];
+  eje: "tiempo" | "precio";
+}
+
+export const NOMBRES_TIRADOR: Record<ClaveTirador, string> = {
+  entrada: "Nivel de entrada",
+  objetivo: "Nivel del objetivo",
+  stop: "Nivel del stop",
+  izquierda: "Inicio de la posición",
+  derecha: "Fin de la posición",
+};
+
+/**
+ * Los cinco tiradores de una posición dibujada.
+ *
+ * Cada nivel se mueve SOLO en precio y los bordes SOLO en fecha. Un
+ * tirador de esquina, que mueve las dos cosas a la vez, acá no sirve:
+ * subir el objetivo no debería acortarle la duración a la operación, y
+ * alargarla no debería correr el precio del objetivo.
+ *
+ * null si no es una posición o le faltan puntos: media figura no tiene
+ * niveles que mover.
+ */
+export function tiradoresDePosicion(d: {
+  tipo: TipoDibujo;
+  puntos: PuntoDibujo[];
+}): TiradorPosicion[] | null {
+  if (!esPosicion(d.tipo) || d.puntos.length < 3) return null;
+  return [
+    { clave: "entrada", indices: [0], eje: "precio" },
+    { clave: "objetivo", indices: [1], eje: "precio" },
+    { clave: "stop", indices: [2], eje: "precio" },
+    // El borde izquierdo es la entrada; el derecho, objetivo y stop.
+    { clave: "izquierda", indices: [0], eje: "tiempo" },
+    { clave: "derecha", indices: [1, 2], eje: "tiempo" },
+  ];
 }
 
 /**

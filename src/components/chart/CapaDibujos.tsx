@@ -11,9 +11,13 @@ import {
   ejeDelLado,
   guionesDe,
   indiceDelLado,
+  moverEje,
   moverLado,
+  tiradoresDePosicion,
+  NOMBRES_TIRADOR,
   type Dibujo,
   type LadoRect,
+  type TiradorPosicion,
   type PuntoDibujo,
   type TipoDibujo,
   esPosicion,
@@ -65,9 +69,9 @@ interface EnPantalla {
 /** Lo que se está arrastrando. */
 type Arrastre =
   | { tipo: "punto"; id: string; indice: number }
-  // Un LADO del rectángulo: mueve una sola coordenada de una sola
-  // esquina. El índice se fija al agarrar y no se vuelve a calcular.
-  | { tipo: "lado"; id: string; indice: number; eje: "tiempo" | "precio" }
+  // Un LADO: mueve una sola coordenada (fecha o precio) de uno o más
+  // puntos. Los índices se fijan al agarrar y no se vuelven a calcular.
+  | { tipo: "lado"; id: string; indices: number[]; eje: "tiempo" | "precio" }
   | { tipo: "todo"; id: string; desde: PuntoDibujo }
   | null;
 
@@ -253,7 +257,7 @@ export function CapaDibujos({
       editar(simbolo, d.id, { puntos });
     } else if (arr.tipo === "lado") {
       editar(simbolo, d.id, {
-        puntos: moverLado(d.puntos, arr.indice, arr.eje, punto),
+        puntos: moverEje(d.puntos, arr.indices, arr.eje, punto),
       });
     } else {
       // Mover entero: se corre por la diferencia contra donde se agarró.
@@ -336,9 +340,13 @@ export function CapaDibujos({
           />
         )}
 
-        {/* Tiradores del dibujo seleccionado */}
+        {/* Tiradores del dibujo seleccionado.
+            La posición NO los usa: tiene los suyos, uno por nivel, que
+            mueven solo el precio. Un tirador de esquina ahí haría que
+            subir el objetivo le acortara la duración a la operación. */}
         {sel &&
           !sel.bloqueado &&
+          !esPosicion(sel.tipo) &&
           puntosDe(sel).map((p, i) => (
             <rect
               key={i}
@@ -373,8 +381,24 @@ export function CapaDibujos({
               setArrastre({
                 tipo: "lado",
                 id: sel.id,
-                indice: indiceDelLado(sel.puntos, lado),
+                indices: [indiceDelLado(sel.puntos, lado)],
                 eje: ejeDelLado(lado),
+              })
+            }
+          />
+        )}
+
+        {/* Tiradores de la POSICIÓN: tres niveles y los dos bordes. */}
+        {sel && !sel.bloqueado && esPosicion(sel.tipo) && (
+          <TiradoresDePosicion
+            d={sel}
+            pantalla={puntosDe(sel)}
+            alAgarrar={(t) =>
+              setArrastre({
+                tipo: "lado",
+                id: sel.id,
+                indices: t.indices,
+                eje: t.eje,
               })
             }
           />
@@ -443,6 +467,82 @@ function TiradoresDeLado({
             onMouseDown={(e) => {
               e.stopPropagation();
               alAgarrar(lado);
+            }}
+          />
+        );
+      })}
+    </>
+  );
+}
+
+/**
+ * Los tiradores de una posición: tres niveles y los dos bordes.
+ *
+ * Los de nivel van al final de cada línea, alargados en horizontal:
+ * mueven el precio. Los de borde van en el medio de cada lado vertical,
+ * alargados en vertical: mueven la fecha, o sea cuánto dura la
+ * operación dibujada. La forma de cada barrita dice en qué sentido se
+ * arrastra, sin que haya que probarla.
+ */
+function TiradoresDePosicion({
+  d,
+  pantalla,
+  alAgarrar,
+}: {
+  d: Dibujo;
+  pantalla: EnPantalla[];
+  alAgarrar: (t: TiradorPosicion) => void;
+}) {
+  const tiradores = tiradoresDePosicion(d);
+  const [a, b, c] = pantalla;
+  if (!tiradores || !a || !b || !c) return null;
+  if (![a.x, a.y, b.x, b.y, c.x, c.y].every(Number.isFinite)) return null;
+
+  const iz = Math.min(a.x, b.x, c.x);
+  const de = iz + Math.max(Math.abs(b.x - a.x), Math.abs(c.x - a.x), 1);
+  const yDe: Record<string, number> = { entrada: a.y, objetivo: b.y, stop: c.y };
+  const colorDe: Record<string, string> = {
+    entrada: d.color,
+    objetivo: "#26a69a",
+    stop: "#ef5350",
+    izquierda: d.color,
+    derecha: d.color,
+  };
+
+  return (
+    <>
+      {tiradores.map((t) => {
+        const mueveElTiempo = t.eje === "tiempo";
+        // Los niveles: al borde derecho, a la altura de su línea.
+        // Los bordes: a media altura del bloque, sobre su lado.
+        const cx = mueveElTiempo
+          ? t.clave === "izquierda"
+            ? iz
+            : de
+          : de - 10;
+        const cy = mueveElTiempo
+          ? (Math.min(a.y, b.y, c.y) + Math.max(a.y, b.y, c.y)) / 2
+          : yDe[t.clave];
+        return (
+          <rect
+            key={t.clave}
+            x={cx - (mueveElTiempo ? 3 : 8)}
+            y={cy - (mueveElTiempo ? 9 : 3)}
+            width={mueveElTiempo ? 6 : 16}
+            height={mueveElTiempo ? 18 : 6}
+            rx={1}
+            role="button"
+            aria-label={NOMBRES_TIRADOR[t.clave]}
+            className={cn(
+              "pointer-events-auto",
+              mueveElTiempo ? "cursor-ew-resize" : "cursor-ns-resize",
+            )}
+            fill={colorDe[t.clave]}
+            stroke="#ffffff"
+            strokeWidth={1.5}
+            onMouseDown={(e) => {
+              e.stopPropagation();
+              alAgarrar(t);
             }}
           />
         );
@@ -642,6 +742,22 @@ function FiguraDibujo({
         {caja(a.y, c.y, "#ef5350")}
         {/* La línea de entrada va encima de las dos cajas. */}
         <line x1={x} y1={a.y} x2={x + ancho2} y2={a.y} stroke={d.color} strokeWidth={d.grosor} />
+        {/* TODO EL BLOQUE recibe el mouse, no solo la línea de entrada.
+            `leDiAlDibujo` ya decía que la figura entera es agarrable,
+            pero en pantalla solo la línea tenía eventos: una franja de
+            12 px en una figura de doscientos de alto. Era imposible
+            agarrarla, y el código mentía sobre su propio comportamiento. */}
+        <rect
+          x={x}
+          y={Math.min(a.y, b.y, c.y)}
+          width={ancho2}
+          height={Math.max(1, Math.max(a.y, b.y, c.y) - Math.min(a.y, b.y, c.y))}
+          fill="transparent"
+          className={
+            interactiva ? "pointer-events-auto cursor-move" : undefined
+          }
+          onMouseDown={alAgarrar}
+        />
         <line
           x1={x}
           y1={a.y}

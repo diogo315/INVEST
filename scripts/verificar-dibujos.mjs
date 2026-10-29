@@ -26,6 +26,8 @@ import {
   ejeDelLado,
   indiceDelLado,
   moverLado,
+  moverEje,
+  tiradoresDePosicion,
   juntarDibujosDeBacktest,
 } from "../src/lib/dibujos/tipos.ts";
 
@@ -333,6 +335,49 @@ console.log("Al recargar, la posición conserva su stop");
     puntos: [pt(1, 1), pt(2, 2), pt(3, 3)],
   }]);
   ok("el rectángulo sigue acotado a dos esquinas", rect[0].puntos.length === 2);
+}
+
+
+console.log("Los tiradores de la posición");
+{
+  const pt = (time, price) => ({ time, price });
+  const pos = { tipo: "posicionLarga", puntos: [pt(10, 100), pt(40, 120), pt(40, 90)] };
+  const ts = tiradoresDePosicion(pos);
+  ok("son cinco: tres niveles y dos bordes", ts?.length === 5, String(ts?.length));
+  const de = (k) => ts.find((t) => t.clave === k);
+  ok("los tres niveles mueven el PRECIO",
+    ["entrada", "objetivo", "stop"].every((k) => de(k).eje === "precio"));
+  ok("y los dos bordes, la FECHA",
+    de("izquierda").eje === "tiempo" && de("derecha").eje === "tiempo");
+  ok("EL BORDE DERECHO MUEVE OBJETIVO Y STOP JUNTOS",
+    de("derecha").indices.join(",") === "1,2", de("derecha").indices.join(","));
+  ok("y el izquierdo, solo la entrada", de("izquierda").indices.join(",") === "0");
+
+  // Subir el objetivo no le toca la duración a la operación.
+  const subido = moverEje(pos.puntos, de("objetivo").indices, "precio", pt(999, 140));
+  ok("SUBIR EL OBJETIVO NO LE CAMBIA LA FECHA", subido[1].time === 40, String(subido[1].time));
+  ok("el objetivo sí sube", subido[1].price === 140);
+  ok("la entrada y el stop quedan intactos",
+    subido[0].price === 100 && subido[2].price === 90);
+
+  // Alargarla mueve el borde de las DOS cajas, no de una.
+  const largo = moverEje(pos.puntos, de("derecha").indices, "tiempo", pt(90, 777));
+  ok("ALARGARLA MUEVE EL BORDE DE LAS DOS CAJAS",
+    largo[1].time === 90 && largo[2].time === 90,
+    `${largo[1].time} / ${largo[2].time}`);
+  ok("sin tocar ninguno de los tres precios",
+    largo[0].price === 100 && largo[1].price === 120 && largo[2].price === 90);
+  ok("y sin mover el inicio", largo[0].time === 10);
+
+  // La relación beneficio/riesgo sigue los niveles, no la duración.
+  ok("alargarla no cambia la relación B/R",
+    relacionDePosicion({ tipo: "posicionLarga", puntos: largo }) ===
+      relacionDePosicion(pos));
+
+  ok("un rectángulo no tiene tiradores de posición",
+    tiradoresDePosicion({ tipo: "rectangulo", puntos: [pt(1, 1), pt(2, 2)] }) === null);
+  ok("media posición tampoco",
+    tiradoresDePosicion({ tipo: "posicionLarga", puntos: [pt(1, 1), pt(2, 2)] }) === null);
 }
 
 console.log(fallos === 0 ? "\n✓ dibujos: la geometría responde bien" : `\n✗ ${fallos} fallos`);

@@ -367,6 +367,121 @@ console.log("9. LOS DIBUJOS VIEJOS (guardados por gráfica) NO SE PIERDEN");
     (await dibujos("bt:p1")).length === 3, String((await dibujos("bt:p1")).length));
 }
 
+console.log("10. LA POSICIÓN SE AGARRA DE CUALQUIER PARTE, Y SE ESTIRA");
+{
+  // La queja: «no puedo seleccionar esa figura de entrada». En pantalla
+  // solo la línea de entrada recibía el mouse —una franja de 12 px en
+  // una figura de doscientos de alto—, aunque el código decía que la
+  // figura entera era agarrable.
+  pag.once("dialog", (d) => d.accept());
+  await pag.getByRole("button", { name: /Borrar todos los dibujos/i }).first().click();
+  await pag.waitForTimeout(500);
+
+  const lienzos = [];
+  const n = await pag.locator("canvas").count();
+  for (let i = 0; i < n; i++) {
+    const c = await pag.locator("canvas").nth(i).boundingBox();
+    if (c && c.width > 300 && c.height > 200) lienzos.push(c);
+  }
+  lienzos.sort((p, q) => p.x - q.x);
+  const c = lienzos[0];
+
+  await pag.getByRole("button", { name: /^Posición larga$/ }).first().click();
+  await pag.waitForTimeout(300);
+  await pag.mouse.click(c.x + 250, c.y + 400);        // entrada
+  await pag.waitForTimeout(250);
+  await pag.mouse.click(c.x + 480, c.y + 260);        // objetivo arriba
+  await pag.waitForTimeout(800);
+
+  const puesta = (await dibujos("bt:p1"))[0];
+  ck("se dibujó la posición", puesta?.tipo === "posicionLarga", String(puesta?.tipo));
+  // Nace seleccionada a propósito: recién dibujada es justo cuando se la
+  // quiere ajustar. Se la deselecciona para probar lo que falla de verdad.
+  ck("al dibujarla queda seleccionada, lista para ajustar",
+    await pag.getByRole("button", { name: "Nivel del objetivo" }).count() > 0);
+  await pag.keyboard.press("Escape");
+  await pag.waitForTimeout(400);
+  ck("Escape la deselecciona",
+    await pag.getByRole("button", { name: "Nivel del objetivo" }).count() === 0);
+
+  // CLIC EN EL MEDIO DE LA CAJA DEL STOP, lejos de la línea de entrada.
+  await pag.mouse.click(c.x + 360, c.y + 470);
+  await pag.waitForTimeout(500);
+  ck("CLIC EN LA CAJA DEL STOP: queda seleccionada",
+    await pag.getByRole("button", { name: "Nivel del objetivo" }).count() > 0);
+  for (const t of ["Nivel de entrada", "Nivel del objetivo", "Nivel del stop",
+                   "Inicio de la posición", "Fin de la posición"]) {
+    ck(`está el tirador «${t}»`, await pag.getByRole("button", { name: t }).count() > 0);
+  }
+
+  // ARRASTRAR DESDE EL MEDIO DE LA CAJA DEL OBJETIVO: se mueve entera.
+  const antes = (await dibujos("bt:p1"))[0];
+  await pag.mouse.move(c.x + 360, c.y + 320);
+  await pag.mouse.down();
+  await pag.mouse.move(c.x + 360, c.y + 290, { steps: 5 });
+  await pag.mouse.move(c.x + 360, c.y + 260, { steps: 5 });
+  await pag.mouse.up();
+  await pag.waitForTimeout(600);
+  const movida = (await dibujos("bt:p1"))[0];
+  const subioTodo = movida.puntos.every((p, i) => p.price > antes.puntos[i].price);
+  ck("SE MUEVE ENTERA AGARRÁNDOLA DE LA CAJA, no solo de la línea",
+    subioTodo, JSON.stringify(movida.puntos.map((p) => p.price.toFixed(0))));
+  const altoAntes = Math.abs(antes.puntos[1].price - antes.puntos[2].price);
+  const altoAhora = Math.abs(movida.puntos[1].price - movida.puntos[2].price);
+  ck("y al moverla no se deforma", Math.abs(altoAhora - altoAntes) < 1e-6,
+    `${altoAntes.toFixed(2)} -> ${altoAhora.toFixed(2)}`);
+
+  // ESTIRARLA POR EL BORDE DERECHO: dura más, los precios no se mueven.
+  const fin = pag.getByRole("button", { name: "Fin de la posición" }).first();
+  const tf = await fin.boundingBox();
+  ck("el tirador del final es una barrita VERTICAL",
+    !!tf && tf.height > tf.width, tf ? `${tf.width}x${tf.height}` : "sin caja");
+  const prev = (await dibujos("bt:p1"))[0];
+  await pag.mouse.move(tf.x + tf.width / 2, tf.y + tf.height / 2);
+  await pag.mouse.down();
+  await pag.mouse.move(tf.x + tf.width / 2 + 80, tf.y + tf.height / 2 - 50, { steps: 6 });
+  await pag.mouse.move(tf.x + tf.width / 2 + 160, tf.y + tf.height / 2 - 100, { steps: 6 });
+  await pag.mouse.up();
+  await pag.waitForTimeout(600);
+  const larga = (await dibujos("bt:p1"))[0];
+  ck("ESTIRARLA ALARGA LAS DOS CAJAS A LA VEZ",
+    larga.puntos[1].time > prev.puntos[1].time &&
+      larga.puntos[1].time === larga.puntos[2].time,
+    `${larga.puntos[1].time} / ${larga.puntos[2].time}`);
+  ck("Y NO LE TOCA NINGÚN PRECIO",
+    larga.puntos.every((p, i) => Math.abs(p.price - prev.puntos[i].price) < 1e-6),
+    JSON.stringify(larga.puntos.map((p) => p.price.toFixed(2))));
+  ck("ni mueve el inicio", larga.puntos[0].time === prev.puntos[0].time);
+
+  // SUBIR EL OBJETIVO: cambia el precio y la relación B/R, no la duración.
+  const obj = pag.getByRole("button", { name: "Nivel del objetivo" }).first();
+  const to = await obj.boundingBox();
+  ck("el tirador del objetivo es una barrita HORIZONTAL",
+    !!to && to.width > to.height, to ? `${to.width}x${to.height}` : "sin caja");
+  const p2 = (await dibujos("bt:p1"))[0];
+  await pag.mouse.move(to.x + to.width / 2, to.y + to.height / 2);
+  await pag.mouse.down();
+  await pag.mouse.move(to.x + to.width / 2 - 120, to.y + to.height / 2 - 70, { steps: 8 });
+  await pag.mouse.up();
+  await pag.waitForTimeout(600);
+  const alta = (await dibujos("bt:p1"))[0];
+  ck("SUBIR EL OBJETIVO NO LE CAMBIA LA DURACIÓN",
+    alta.puntos[1].time === p2.puntos[1].time,
+    `${p2.puntos[1].time} -> ${alta.puntos[1].time}`);
+  ck("el objetivo sí sube", alta.puntos[1].price > p2.puntos[1].price,
+    `${p2.puntos[1].price.toFixed(2)} -> ${alta.puntos[1].price.toFixed(2)}`);
+  ck("y la entrada y el stop no se mueven",
+    Math.abs(alta.puntos[0].price - p2.puntos[0].price) < 1e-6 &&
+      Math.abs(alta.puntos[2].price - p2.puntos[2].price) < 1e-6);
+
+  const txt = await pag.locator("svg text").allTextContents();
+  ck("el rótulo B/R se actualizó con el objetivo nuevo",
+    txt.some((t) => /B\/R/.test(t) && !/B\/R 1\.00 : 1/.test(t)),
+    txt.filter((t) => /B\/R/.test(t)).join(" | "));
+
+  await pag.screenshot({ path: "shots/dibujos-bt-posicion.png" });
+}
+
 await nav.close();
 console.log(`\n${fallos.length === 0 ? "TODO BIEN" : `FALLARON ${fallos.length}:\n - ${fallos.join("\n - ")}`}`);
 process.exit(fallos.length === 0 ? 0 : 1);
