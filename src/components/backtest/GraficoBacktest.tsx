@@ -26,6 +26,7 @@ import { indicadorPorClave } from "@/lib/backtest/indicadores";
 import type { IndicatorConfig } from "@/lib/store/chart-store";
 import type { MediaMovil } from "@/lib/chart/medias";
 import type { SerieSpec } from "@/lib/chart/indicadores-nuevos";
+import { encuadreSiguiente } from "@/lib/backtest/encuadre";
 import { indiceDeTiempo, tiempoDeIndice } from "@/lib/dibujos/coordenadas";
 import { CapaDibujos } from "@/components/chart/CapaDibujos";
 import { CapaSMC } from "@/components/chart/CapaSMC";
@@ -411,6 +412,15 @@ export function GraficoBacktest({
   useEffect(() => {
     const s = velasRef.current;
     if (!s) return;
+    // El rango se lee ANTES de cargar las velas. `setData` mueve la
+    // vista por su cuenta —el gráfico se mantiene pegado al borde
+    // derecho— así que leerlo después devolvía el rango YA desplazado y
+    // conservarlo era conservar el desplazamiento. Medido: con la
+    // lectura después, un momento fijo seguía corriéndose 10 px por
+    // vela aunque la cuenta estuviera bien.
+    const tsPrevio = chartRef.current?.timeScale();
+    const previo =
+      encuadrado.current && tsPrevio ? tsPrevio.getVisibleLogicalRange() : null;
     s.setData(
       visibles.map((k) => ({
         time: k.time as UTCTimestamp,
@@ -420,23 +430,19 @@ export function GraficoBacktest({
         close: k.close,
       })),
     );
-    // La vista sigue al reloj: se conserva el zoom que tenga puesto el
-    // usuario (el ancho de la ventana visible) y se desliza para que la
-    // última vela quede pegada al borde derecho. Sin esto, al avanzar el
-    // backtest las velas nuevas se dibujan fuera de la pantalla.
+    // Lo ya dibujado NO se mueve: la vela nueva se agrega en el aire que
+    // hay a la derecha, y el gráfico recién se desplaza cuando esa vela
+    // se está por salir. Antes se reencuadraba en cada paso con la
+    // última vela pegada al borde, y medido eso corría toda la historia
+    // 10 px por vela: imposible mirar un tramo quieto.
+    //
+    // El rango se lee del gráfico (así el zoom y el arrastre del usuario
+    // mandan) y se traduce por TIEMPO, no por número de vela: en 15m la
+    // ventana del backtest trae historia nueva por la izquierda y todos
+    // los índices se corren. La decisión vive en `encuadre.ts`, probada
+    // aparte.
     const ts = chartRef.current?.timeScale();
     if (!ts || visibles.length === 0) return;
-    const rango = ts.getVisibleLogicalRange();
-    // Si el usuario cambió el zoom, se adopta su ancho; si el rango es el
-    // que pusimos nosotros, se conserva el guardado. El borde derecho se
-    // calcula desde el mismo punto que el izquierdo para que el ancho no
-    // se vaya agrandando solo en cada avance.
-    if (encuadrado.current && rango && rango.to > rango.from) {
-      const ancho = rango.to - rango.from;
-      if (Math.abs(ancho - ventanaRef.current) > 1) {
-        ventanaRef.current = Math.max(10, ancho);
-      }
-    }
     encuadrado.current = true;
     // Si hay una opción abierta, la vista llega hasta su vencimiento aunque
     // todavía no existan esas velas: el hueco a la derecha es justamente
@@ -445,11 +451,17 @@ export function GraficoBacktest({
       (max, v) => Math.max(max, indiceDeTiempo(visibles, v.time)),
       -Infinity,
     );
-    const borde = Math.max(
-      visibles.length + 4,
-      Number.isFinite(masLejos) ? masLejos + 3 : 0,
+    const siguiente = encuadreSiguiente(
+      previo,
+      visiblesRef.current.map((k) => k.time),
+      visibles.map((k) => k.time),
+      {
+        anchoInicial: ventanaRef.current,
+        margenDerecho: 6,
+        hastaIndice: Number.isFinite(masLejos) ? masLejos + 3 : undefined,
+      },
     );
-    ts.setVisibleLogicalRange({ from: borde - ventanaRef.current, to: borde });
+    if (siguiente) ts.setVisibleLogicalRange(siguiente);
     visiblesRef.current = visibles;
     colocarVenc();
     medir();
