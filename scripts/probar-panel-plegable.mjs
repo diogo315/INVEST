@@ -73,6 +73,34 @@ const anchoGrafica = (p) => p.evaluate(() => {
   return c.length ? Math.max(...c.map((r) => r.width)) : 0;
 });
 
+console.log("El reproductor arranca en 1x");
+{
+  const pag = await abrir();
+  const puesta = async () => {
+    for (const v of [0.5, 1, 2, 5, 10, 25]) {
+      const b = pag.getByRole("button", { name: `Velocidad ${v}x` });
+      if ((await b.count()) > 0 && (await b.getAttribute("aria-pressed")) === "true") return v;
+    }
+    return null;
+  };
+  ck("están los seis botones de velocidad",
+    (await pag.getByRole("button", { name: /^Velocidad / }).count()) === 6,
+    String(await pag.getByRole("button", { name: /^Velocidad / }).count()));
+  ck("UN BACKTEST NUEVO ARRANCA EN 1x, una vela por segundo",
+    (await puesta()) === 1, String(await puesta()));
+
+  await pag.getByRole("button", { name: "Velocidad 5x" }).click();
+  await pag.waitForTimeout(300);
+  ck("y se puede cambiar", (await puesta()) === 5, String(await puesta()));
+
+  await pag.reload({ waitUntil: "networkidle" });
+  await pag.waitForTimeout(2500);
+  ck("AL RECARGAR VUELVE A 1x: la velocidad no se guarda a propósito, " +
+    "volver y encontrarse el reproductor a 25x es una sorpresa fea",
+    (await puesta()) === 1, String(await puesta()));
+  await pag.close();
+}
+
 console.log("Plegar y desplegar");
 {
   const pag = await abrir();

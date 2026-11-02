@@ -809,6 +809,10 @@ export function VistaBacktest() {
             <button
               key={v}
               onClick={() => setVelocidad(v)}
+              // Etiqueta propia: «10×» a secas choca con el botón de
+              // apalancamiento de la barra de mercado, que dice lo mismo.
+              aria-label={`Velocidad ${v}x`}
+              aria-pressed={v === velocidad}
               className={cn(
                 "rounded px-1.5 py-0.5 text-[10px] tabular-nums transition-colors",
                 v === velocidad

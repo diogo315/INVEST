@@ -209,7 +209,10 @@ export const useBacktestStore = create<Estado>()(
       reproduciendo: false,
       panelLateral: true,
       conComisiones: true,
-      velocidad: 2,
+      // 1x por defecto: una vela por segundo. A 2x el reproductor pasa
+      // dos velas por segundo y no se alcanza a leer lo que hizo el
+      // precio, que es justamente para lo que uno repite un tramo.
+      velocidad: 1,
 
       setBorrador: (parche) =>
         set((s) => ({ borrador: { ...s.borrador, ...parche } })),
