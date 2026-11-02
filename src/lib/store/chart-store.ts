@@ -30,6 +30,8 @@ import {
   type PuntoDibujo,
   type TipoDibujo,
 } from "@/lib/dibujos/tipos";
+import { CONFIG_SMC, type ConfigSMC } from "@/lib/smc/motor";
+import { VISTA_SMC, type VistaSMC } from "@/lib/smc/vista";
 export type { Dibujo, PuntoDibujo, TipoDibujo } from "@/lib/dibujos/tipos";
 import {
   MAX_ALERTAS,
@@ -651,6 +653,17 @@ export interface ChartState {
   graficoDeLaSeleccion: string | null;
   /** Activo cuyo dibujo seleccionado tiene abierto el diálogo de edición. */
   dibujoEnDialogo: string | null;
+  /**
+   * El indicador SMC: si está puesto, qué se ve y con qué parámetros.
+   *
+   * Vive en el store GLOBAL y no en cada pestaña a propósito: es el
+   * mismo indicador en el Gráfico y en el backtest, y si cada uno
+   * tuviera sus ajustes se vería distinto según dónde se mire sin que
+   * nadie sepa a cuál creerle.
+   */
+  smcActivo: boolean;
+  smcVista: VistaSMC;
+  smcCfg: ConfigSMC;
   /** Alertas de precio e indicador. */
   alertas: Alerta[];
   /** Las últimas veces que saltó alguna, de la más nueva a la más vieja. */
@@ -729,6 +742,9 @@ export interface ChartState {
   toggleWatchlistCollapsed: () => void;
   toggleMostrarNombres: () => void;
   setTimezone: (tz: ChartTimezone) => void;
+  setSmcActivo: (v: boolean) => void;
+  setSmcVista: (parche: Partial<VistaSMC>) => void;
+  setSmcCfg: (parche: Partial<ConfigSMC>) => void;
   setVelasHistoria: (n: number) => void;
   /** Cambia uno o varios ajustes visuales sueltos. */
   setApariencia: (parche: Partial<Apariencia>) => void;
@@ -953,6 +969,9 @@ export const useChartStore = create<ChartState>()(
       futuresSeeded: true,
       bolsaSeeded: true,
       timezone: ZONA_POR_DEFECTO,
+      smcActivo: false,
+      smcVista: VISTA_SMC,
+      smcCfg: CONFIG_SMC,
       apariencia: APARIENCIA_POR_DEFECTO,
       velasHistoria: HISTORIA_POR_DEFECTO,
       plantillas: [],
@@ -1305,6 +1324,19 @@ export const useChartStore = create<ChartState>()(
       toggleMostrarNombres: () =>
         set((s) => ({ mostrarNombres: !s.mostrarNombres })),
       setTimezone: (timezone) => set({ timezone }),
+      setSmcActivo: (smcActivo) => set({ smcActivo }),
+      setSmcVista: (parche) =>
+        set((st) => ({ smcVista: { ...st.smcVista, ...parche } })),
+      setSmcCfg: (parche) =>
+        set((st) => ({
+          smcCfg: {
+            ...st.smcCfg,
+            ...parche,
+            // Los ajustes de las señales llegan de a uno; sin esto, tocar
+            // la tolerancia borraría todo lo demás de ese grupo.
+            senales: { ...st.smcCfg.senales, ...(parche.senales ?? {}) },
+          },
+        })),
       // Tocar un color a mano desmarca el preset: ya no es "Claro", es
       // "Claro con el verde cambiado", y el menú no debe mentir sobre eso.
       // Los interruptores no son del tema, así que no lo desmarcan.
@@ -1570,6 +1602,9 @@ export const useChartStore = create<ChartState>()(
         alertas: s.alertas,
         disparos: s.disparos,
         dibujos: s.dibujos,
+        smcActivo: s.smcActivo,
+        smcVista: s.smcVista,
+        smcCfg: s.smcCfg,
       }),
       // Deep-merge so config/indicators/hidden keys added in newer versions
       // get their defaults instead of staying undefined from older persisted state.
@@ -1772,6 +1807,19 @@ export const useChartStore = create<ChartState>()(
                 !!d && typeof d.id === "string" && typeof d.texto === "string",
             )
             .slice(0, MAX_DISPAROS),
+          // Lo guardado puede ser de antes de que existiera el SMC, o de
+          // una versión con menos ajustes: se completa con los de fábrica
+          // en vez de quedar en undefined y reventar al dibujar.
+          smcActivo: p.smcActivo === true,
+          smcVista: { ...current.smcVista, ...stripNullish(p.smcVista) },
+          smcCfg: {
+            ...current.smcCfg,
+            ...stripNullish(p.smcCfg),
+            senales: {
+              ...current.smcCfg.senales,
+              ...stripNullish(p.smcCfg?.senales),
+            },
+          },
         };
       },
     },

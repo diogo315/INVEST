@@ -5,6 +5,7 @@ import Link from "next/link";
 import { SymbolSelector } from "@/components/chart/SymbolSelector";
 import { TimeframeSelector } from "@/components/chart/TimeframeSelector";
 import { IndicatorMenu } from "@/components/chart/IndicatorMenu";
+import { MenuSMC } from "@/components/chart/MenuSMC";
 import { DistribucionMenu } from "@/components/chart/DistribucionMenu";
 import { AparienciaMenu } from "@/components/chart/AparienciaMenu";
 import { BotonChapas } from "@/components/chart/BotonChapas";
@@ -56,6 +57,8 @@ export function Header() {
         <TimeframeSelector />
         <Separator orientation="vertical" className="mx-1 h-6 bg-tv-border" />
         <IndicatorMenu />
+        <Separator orientation="vertical" className="mx-1 h-6 bg-tv-border" />
+        <MenuSMC />
         <Separator orientation="vertical" className="mx-1 h-6 bg-tv-border" />
         <DistribucionMenu />
         <Separator orientation="vertical" className="mx-1 h-6 bg-tv-border" />

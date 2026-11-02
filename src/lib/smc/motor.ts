@@ -194,6 +194,14 @@ export interface ExtremosSMC {
   /** El máximo es "fuerte" cuando la tendencia de swing es bajista. */
   topFuerte: boolean;
   bottomFuerte: boolean;
+  /**
+   * Vela del último pivote de swing: desde ahí arrancan las zonas.
+   *
+   * No es `topTime` ni `bottomTime` sino el más reciente de los dos: las
+   * zonas premium y descuento miden el tramo que va desde que se marcó
+   * el último extremo, no desde el más viejo de ellos.
+   */
+  pivoteTime: number;
 }
 
 export interface SenalBOS {
@@ -402,6 +410,9 @@ export function calcularSMC(
 
   // Para el umbral automático del FVG: promedio del impulso histórico.
   let sumaImpulso = 0;
+  // Las brechas todavía abiertas, aparte: recorrer TODAS las de la serie
+  // en cada vela es la otra forma de volver esto cuadrático.
+  const fvgAbiertas: BrechaFVG[] = [];
 
   for (let i = 0; i < n; i++) {
     const k = velas[i];
@@ -483,6 +494,12 @@ export function calcularSMC(
       !cfg.filtroConfluencia ||
       k.high - Math.max(k.close, k.open) < Math.min(k.close, k.open - k.low);
 
+    // Los eventos de ESTA vela se juntan acá mientras se generan. Antes
+    // se filtraba `res.estructura` entera en cada vela para encontrarlos,
+    // que es O(n²): a 10.000 velas una pasada tardaba 44 ms y el
+    // reproductor del backtest se arrastraba. Medido.
+    const deEstaVela: EventoEstructura[] = [];
+
     const eventos: Array<{
       interna: boolean;
       alto: Pivote;
@@ -499,7 +516,7 @@ export function calcularSMC(
       if (cruzoHaciaArriba(k.close, e.alto) && !e.alto.cruzado && extraAlcista) {
         const tendencia = e.interna ? tendInterna : tendSwing;
         const tipo: TipoEvento = tendencia === BAJISTA ? "CHOCH" : "BOS";
-        res.estructura.push({
+        const ev: EventoEstructura = {
           tipo,
           sesgo: ALCISTA,
           interna: e.interna,
@@ -508,7 +525,9 @@ export function calcularSMC(
           desdeTime: e.alto.time,
           indice: i,
           time: k.time,
-        });
+        };
+        res.estructura.push(ev);
+        deEstaVela.push(ev);
         e.alto.cruzado = true;
         if (e.interna) tendInterna = ALCISTA;
         else tendSwing = ALCISTA;
@@ -530,7 +549,7 @@ export function calcularSMC(
       if (cruzoHaciaAbajo(k.close, e.bajo) && !e.bajo.cruzado && extraBajista) {
         const tendencia = e.interna ? tendInterna : tendSwing;
         const tipo: TipoEvento = tendencia === ALCISTA ? "CHOCH" : "BOS";
-        res.estructura.push({
+        const ev: EventoEstructura = {
           tipo,
           sesgo: BAJISTA,
           interna: e.interna,
@@ -539,7 +558,9 @@ export function calcularSMC(
           desdeTime: e.bajo.time,
           indice: i,
           time: k.time,
-        });
+        };
+        res.estructura.push(ev);
+        deEstaVela.push(ev);
         e.bajo.cruzado = true;
         if (e.interna) tendInterna = BAJISTA;
         else tendSwing = BAJISTA;
@@ -583,11 +604,12 @@ export function calcularSMC(
 
     // ── 6. brechas de valor justo (FVG) ──────────────────────────────
     // Se rellena cuando el precio vuelve a entrar en la brecha.
-    for (const g of res.fvg) {
-      if (g.rellenadaEn !== null) continue;
+    for (let f = fvgAbiertas.length - 1; f >= 0; f--) {
+      const g = fvgAbiertas[f];
       if ((g.sesgo === ALCISTA && k.low < g.bajo) ||
           (g.sesgo === BAJISTA && k.high > g.alto)) {
         g.rellenadaEn = i;
+        fvgAbiertas.splice(f, 1);
       }
     }
     if (i >= 2) {
@@ -600,23 +622,27 @@ export function calcularSMC(
       sumaImpulso += Math.abs(impulso);
       const umbral = cfg.umbralFvgAuto ? (sumaImpulso / (i + 1)) * 2 : 0;
       if (k.low > dos.high && prev.close > dos.high && impulso > umbral) {
-        res.fvg.push({
+        const g: BrechaFVG = {
           sesgo: ALCISTA,
           alto: k.low,
           bajo: dos.high,
           indice: i,
           time: k.time,
           rellenadaEn: null,
-        });
+        };
+        res.fvg.push(g);
+        fvgAbiertas.push(g);
       } else if (k.high < dos.low && prev.close < dos.low && -impulso > umbral) {
-        res.fvg.push({
+        const g: BrechaFVG = {
           sesgo: BAJISTA,
           alto: dos.low,
           bajo: k.high,
           indice: i,
           time: k.time,
           rellenadaEn: null,
-        });
+        };
+        res.fvg.push(g);
+        fvgAbiertas.push(g);
       }
     }
 
@@ -624,13 +650,11 @@ export function calcularSMC(
     if (cfg.senales.activas) {
       const s = cfg.senales;
       const interna = s.estructura === "interna";
-      const deEstaVela = res.estructura.filter(
-        (x) => x.indice === i && x.interna === interna,
-      );
-      const bosArriba = deEstaVela.some((x) => x.tipo === "BOS" && x.sesgo === ALCISTA);
-      const bosAbajo = deEstaVela.some((x) => x.tipo === "BOS" && x.sesgo === BAJISTA);
-      const chochArriba = deEstaVela.some((x) => x.tipo === "CHOCH" && x.sesgo === ALCISTA);
-      const chochAbajo = deEstaVela.some((x) => x.tipo === "CHOCH" && x.sesgo === BAJISTA);
+      const mios = deEstaVela.filter((x) => x.interna === interna);
+      const bosArriba = mios.some((x) => x.tipo === "BOS" && x.sesgo === ALCISTA);
+      const bosAbajo = mios.some((x) => x.tipo === "BOS" && x.sesgo === BAJISTA);
+      const chochArriba = mios.some((x) => x.tipo === "CHOCH" && x.sesgo === ALCISTA);
+      const chochAbajo = mios.some((x) => x.tipo === "CHOCH" && x.sesgo === BAJISTA);
 
       // Seguimiento de la operación abierta. Empieza en la vela
       // SIGUIENTE a la entrada: la vela de entrada ya se consumió para
@@ -763,6 +787,7 @@ export function calcularSMC(
     bottomIndice,
     topFuerte: tendSwing === BAJISTA,
     bottomFuerte: tendSwing === ALCISTA,
+    pivoteTime: Math.max(topTime, bottomTime),
   };
 
   return res;

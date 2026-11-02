@@ -5,6 +5,7 @@ import { IndicadoresMenu } from "./IndicadoresMenu";
 import { EditorMedias } from "./EditorMedias";
 import { EditorVwap } from "./EditorVwap";
 import { BarraDibujo } from "./BarraDibujo";
+import { MenuSMC } from "@/components/chart/MenuSMC";
 import type { IndicatorConfig } from "@/lib/store/chart-store";
 import { TEMPORALIDADES_BT } from "@/lib/backtest/multi";
 import type { Panel } from "@/lib/store/backtest-store";
@@ -12,6 +13,7 @@ import type { MediaMovil } from "@/lib/chart/medias";
 import type { Cual, NivelDibujado } from "./CapaNiveles";
 import type { Operacion } from "@/lib/backtest/tipos";
 import type { Candle, Timeframe } from "@/lib/binance/types";
+import type { SenalBOS } from "@/lib/smc/motor";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -42,6 +44,9 @@ interface Props {
   onConfig: (parche: Record<string, unknown>) => void;
   /** Clave de los dibujos de este backtest; sin ella no hay caja de herramientas. */
   claveDibujos?: string;
+  /** Convertir una señal del SMC en operación del backtest. */
+  onOperarSenal?: (s: SenalBOS) => void;
+  senalesOperadas?: Array<{ tiempoEntrada: number; precioEntrada: number }>;
 }
 
 /** Una de las gráficas del backtest, con sus propios controles arriba. */
@@ -68,6 +73,8 @@ export function BarraPanel({
   config,
   onConfig,
   claveDibujos,
+  onOperarSenal,
+  senalesOperadas,
 }: Props) {
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -121,6 +128,7 @@ export function BarraPanel({
         {indicadores.includes("vwap") && (
           <EditorVwap config={config} onCambiar={onConfig} />
         )}
+        <MenuSMC />
       </div>
       <div className="flex min-h-[280px] flex-1 lg:min-h-0">
       {/* La caja de herramientas va PEGADA a su gráfica, no en una barra
@@ -154,6 +162,8 @@ export function BarraPanel({
           idGrafico={claveDibujos ? `${claveDibujos}:${panel}` : undefined}
           niveles={niveles}
           onMoverNivel={onMoverNivel}
+          onOperarSenal={onOperarSenal}
+          senalesOperadas={senalesOperadas}
         />
       </div>
       </div>

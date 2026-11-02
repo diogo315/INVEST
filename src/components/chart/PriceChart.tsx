@@ -86,6 +86,7 @@ import { formatPrice, formatVolume } from "@/lib/format";
 import { IndicatorPill } from "./IndicatorPill";
 import { ControlReplay } from "./ControlReplay";
 import { CapaDibujos } from "./CapaDibujos";
+import { CapaSMC } from "./CapaSMC";
 import { indiceDeTiempo, tiempoDeIndice } from "@/lib/dibujos/coordenadas";
 import { MeasureOverlay } from "./MeasureOverlay";
 
@@ -483,6 +484,9 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
   const setSettingsTarget = (k: IndicatorKey | null) =>
     setSettingsTargetStore(k, graficoId);
   const timezone = useChartStore((s) => s.timezone);
+  const smcActivo = useChartStore((s) => s.smcActivo);
+  const smcVista = useChartStore((s) => s.smcVista);
+  const smcCfg = useChartStore((s) => s.smcCfg);
   const apariencia = useChartStore((s) => s.apariencia);
   /** Cómo se dibujan las chapas de los indicadores: normal, agua u ocultas. */
   const modoChapas = apariencia.chapas;
@@ -3676,6 +3680,25 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
           aPrecio={(y) => serie.coordinateToPrice(y)}
           tick={renderTick}
         />
+        {/* El SMC va DEBAJO de los dibujos a mano: lo que uno marca tiene
+            que quedar encima de lo que calcula el indicador. */}
+        {smcActivo && (
+          <CapaSMC
+            velas={candlesRef.current}
+            cfg={smcCfg}
+            vista={smcVista}
+            ancho={anchoCapa}
+            alto={altoTotal}
+            altoPrecios={paneOffsets[0].height}
+            aX={(t) =>
+              ts.logicalToCoordinate(
+                indiceDeTiempo(candlesRef.current, t) as Logical,
+              )
+            }
+            aY={(precio) => serie.priceToCoordinate(precio)}
+            tick={renderTick}
+          />
+        )}
       </div>
     );
   }

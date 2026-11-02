@@ -12,6 +12,12 @@ import {
 import { Columns2, Square } from "lucide-react";
 import { BarraPanel } from "./BarraPanel";
 import { NIVELES_INICIAL, PanelOperar, type EstadoNiveles } from "./PanelOperar";
+import { PanelSenalesSMC } from "./PanelSenalesSMC";
+import { useChartStore } from "@/lib/store/chart-store";
+import { operacionDeSenal } from "@/lib/smc/operar";
+import { pasoDeCantidad } from "@/lib/backtest/niveles";
+import { nocionalMaximo } from "@/lib/backtest/futuros";
+import type { SenalBOS } from "@/lib/smc/motor";
 import { BarraMercado } from "./BarraMercado";
 import { Operaciones } from "./Operaciones";
 import { useVelas } from "./useVelas";
@@ -65,6 +71,15 @@ export function VistaBacktest() {
   const velocidad = useBacktestStore((s) => s.velocidad);
   const setVelocidad = useBacktestStore((s) => s.setVelocidad);
   const operar = useBacktestStore((s) => s.operar);
+  const smcActivo = useChartStore((st) => st.smcActivo);
+  const smcCfg = useChartStore((st) => st.smcCfg);
+  /**
+   * Riesgo del botón «Operar» del gráfico: el mismo 1 % del capital
+   * inicial que propone el panel. Se fija acá y no se pregunta porque
+   * ese botón es para tomar una señal de un clic; para afinar el tamaño
+   * está el panel de la derecha.
+   */
+  const RIESGO_UN_CLIC = 1;
   const cerrarOp = useBacktestStore((s) => s.cerrar);
   const liquidarVencidas = useBacktestStore((s) => s.liquidarVencidas);
   const alternarIndicador = useBacktestStore((s) => s.alternarIndicador);
@@ -447,6 +462,40 @@ export function VistaBacktest() {
   const permiteOpciones = exchange === "ALP";
   const r = resumen?.r;
 
+  /**
+   * El botón «Operar» que aparece sobre una señal en el gráfico.
+   *
+   * Dimensiona con la misma regla que el panel —riesgo fijo sobre el
+   * capital inicial— para que tomar una señal a mano y correrlas todas
+   * den operaciones comparables. Si fueran dos tamaños distintos, los
+   * números de la tabla mezclarían dos estrategias.
+   */
+  const operarSenal = (s: SenalBOS) => {
+    if (!bt) return;
+    const precioAhora = visiblesBase.at(-1)?.close ?? s.entrada;
+    const o = operacionDeSenal(s, bt.capitalInicial, {
+      riesgoPorcentaje: RIESGO_UN_CLIC,
+      nocionalMaximo: esFuturos
+        ? nocionalMaximo(Math.max(0, r?.efectivo ?? bt.capitalInicial), {
+            ...cfgFut,
+            comision: conComisiones ? cfgFut.comision : 0,
+          })
+        : Math.max(0, r?.efectivo ?? bt.capitalInicial),
+      pasoCantidad: pasoDeCantidad(precioAhora || 1),
+    });
+    if (!o) return;
+    operar({
+      instrumento: "activo",
+      lado: o.lado,
+      cantidad: o.cantidad,
+      precioEntrada: o.precioEntrada,
+      tiempoEntrada: o.tiempoEntrada,
+      stopLoss: o.stopLoss,
+      takeProfit: o.takeProfit,
+      ...(esFuturos ? { apalancamiento: cfgFut.apalancamiento } : {}),
+    });
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* ── cabecera ─────────────────────────────────────────────── */}
@@ -545,6 +594,8 @@ export function VistaBacktest() {
             // zona en 15m. Tenerlas separadas obligaba a dibujar dos
             // veces lo mismo y a mantener dos versiones de la misma idea.
             claveDibujos={`bt:${bt.id}`}
+            onOperarSenal={operarSenal}
+            senalesOperadas={bt.operaciones}
             niveles={base === "a" ? nivelesDibujados : undefined}
             onMoverNivel={base === "a" ? moverNivel : undefined}
           />
@@ -573,6 +624,8 @@ export function VistaBacktest() {
               config={configBT}
               onConfig={setConfigBT}
               claveDibujos={`bt:${bt.id}`}
+              onOperarSenal={operarSenal}
+              senalesOperadas={bt.operaciones}
               niveles={base === "b" ? nivelesDibujados : undefined}
               onMoverNivel={base === "b" ? moverNivel : undefined}
             />
@@ -614,6 +667,19 @@ export function VistaBacktest() {
               onFuturos={setFuturos}
               onComisiones={setConComisiones}
             />
+            {smcActivo && (
+              <PanelSenalesSMC
+                visibles={visiblesBase}
+                cfg={smcCfg}
+                capitalInicial={bt.capitalInicial}
+                efectivo={r?.efectivo ?? bt.capitalInicial}
+                operaciones={bt.operaciones}
+                esFuturos={esFuturos}
+                futuros={cfgFut}
+                conComisiones={conComisiones}
+                onOperar={operar}
+              />
+            )}
             <PanelOperar
               precio={precio}
               tiempo={tiempo}
