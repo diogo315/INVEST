@@ -29,7 +29,6 @@ import type { SerieSpec } from "@/lib/chart/indicadores-nuevos";
 import { indiceDeTiempo, tiempoDeIndice } from "@/lib/dibujos/coordenadas";
 import { CapaDibujos } from "@/components/chart/CapaDibujos";
 import { CapaSMC } from "@/components/chart/CapaSMC";
-import type { SenalBOS } from "@/lib/smc/motor";
 import { CapaNiveles, type Cual, type NivelDibujado } from "./CapaNiveles";
 import type { Operacion } from "@/lib/backtest/tipos";
 import type { Candle } from "@/lib/binance/types";
@@ -80,10 +79,6 @@ interface Props {
    * y arrastrar uno movería el de la otra.
    */
   idGrafico?: string;
-  /** Si viene, las señales del SMC ofrecen un botón para operarlas. */
-  onOperarSenal?: (s: SenalBOS) => void;
-  /** Señales ya convertidas en operación, para no ofrecerlas de nuevo. */
-  senalesOperadas?: Array<{ tiempoEntrada: number; precioEntrada: number }>;
 }
 
 /** Lo que hay montado de un indicador, para poder quitarlo después. */
@@ -186,8 +181,6 @@ export function GraficoBacktest({
   config,
   claveDibujos,
   idGrafico,
-  onOperarSenal,
-  senalesOperadas,
 }: Props) {
   const zonaEje = zonaDelEje(zona, temporalidad);
   const cajaRef = useRef<HTMLDivElement>(null);
@@ -755,7 +748,6 @@ export function GraficoBacktest({
               vista={smcVista}
               ancho={medidas.ancho}
               alto={medidas.alto}
-              altoPrecios={medidas.altoPrecios}
               aX={(t) =>
                 listo.chart
                   .timeScale()
@@ -765,8 +757,6 @@ export function GraficoBacktest({
               }
               aY={(precio) => listo.serie.priceToCoordinate(precio)}
               tick={tick}
-              onOperar={onOperarSenal}
-              yaOperadas={senalesOperadas}
             />
           )}
         </div>

@@ -3689,7 +3689,6 @@ export function PriceChart({ graficoId, symbol, timeframe, compacto }: Props) {
             vista={smcVista}
             ancho={anchoCapa}
             alto={altoTotal}
-            altoPrecios={paneOffsets[0].height}
             aX={(t) =>
               ts.logicalToCoordinate(
                 indiceDeTiempo(candlesRef.current, t) as Logical,

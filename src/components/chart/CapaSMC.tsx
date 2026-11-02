@@ -8,7 +8,6 @@ import {
   zonasDe,
   type ConfigSMC,
   type PeriodoNivel,
-  type SenalBOS,
 } from "@/lib/smc/motor";
 import {
   AZUL_SMC,
@@ -19,7 +18,6 @@ import {
   soloElUltimo,
   type VistaSMC,
 } from "@/lib/smc/vista";
-import { senalesNuevas } from "@/lib/smc/operar";
 import type { Candle } from "@/lib/binance/types";
 import { formatPrice } from "@/lib/format";
 
@@ -29,21 +27,10 @@ interface Props {
   vista: VistaSMC;
   ancho: number;
   alto: number;
-  /** Alto del panel de precios: abajo de eso ya no hay escala de precio. */
-  altoPrecios: number;
   aX: (t: number) => number | null;
   aY: (p: number) => number | null;
   /** Cambia cuando el gráfico se mueve, para obligar a redibujar. */
   tick: number;
-  /** Si viene, cada señal ofrece pasarse al backtest con un clic. */
-  onOperar?: (s: SenalBOS) => void;
-  /**
-   * Operaciones que ya existen, para no ofrecer dos veces la misma
-   * señal. Se comparan por hora y precio de entrada —no por índice de
-   * vela—, con la misma regla que usa el panel: la ventana del backtest
-   * se desplaza y el mismo momento cambia de número.
-   */
-  yaOperadas?: Array<{ tiempoEntrada: number; precioEntrada: number }>;
 }
 
 /** Margen fuera del área visible antes de dejar de dibujar algo. */
@@ -53,8 +40,14 @@ const HOLGURA = 300;
  * El indicador SMC dibujado encima del gráfico.
  *
  * Es un SVG con `pointer-events: none`: el gráfico se sigue moviendo y
- * haciendo zoom con el mouse por debajo. Lo único que recibe clics es el
- * botón de operar una señal, y ese va en HTML aparte.
+ * haciendo zoom con el mouse por debajo. No recibe un solo clic.
+ *
+ * NO DIBUJA LAS SEÑALES DE ENTRADA. Las dibujaba, con su caja verde de
+ * ganancia y su caja roja de riesgo, y era ilegible: una señal que
+ * todavía no tocó el stop ni el objetivo se extiende hasta la última
+ * vela, así que la caja tapaba media pantalla y las velas quedaban
+ * debajo de un rectángulo de color. Las señales siguen calculándose
+ * —el panel del backtest las usa— pero acá no se pintan.
  *
  * Todo lo que se ve sale de `calcularSMC` sobre las velas que se le
  * pasan. En el backtest eso son las velas HASTA EL RELOJ, así que el
@@ -70,12 +63,9 @@ export function CapaSMC({
   vista,
   ancho,
   alto,
-  altoPrecios,
   aX,
   aY,
   tick,
-  onOperar,
-  yaOperadas,
 }: Props) {
   void tick;
   const r = useMemo(() => calcularSMC(velas, cfg), [velas, cfg]);
@@ -134,8 +124,7 @@ export function CapaSMC({
     velas.length > 1 ? velas[velas.length - 1].time - velas[velas.length - 2].time : 60;
 
   return (
-    <>
-      <svg
+    <svg
         width={ancho}
         height={alto}
         className="pointer-events-none absolute left-0 top-0"
@@ -397,117 +386,6 @@ export function CapaSMC({
             </g>
           );
         })()}
-
-        {/* ── señales: caja de ganancia, caja de riesgo y flecha ─────── */}
-        {vista.senales &&
-          r.senales.map((s) => {
-            const x1 = X(s.time);
-            const x2 = X(s.salida ? s.salida.time : velas[velas.length - 1].time);
-            const yE = Y(s.entrada);
-            const yS = Y(s.stop);
-            const yO = Y(s.objetivo);
-            if (
-              !enPantalla(x1, x2) ||
-              !Number.isFinite(yE) ||
-              !Number.isFinite(yS) ||
-              !Number.isFinite(yO)
-            ) {
-              return null;
-            }
-            const w = Math.max(3, Math.abs(x2 - x1));
-            const izq = Math.min(x1, x2);
-            // El verde es siempre lo que se gana y el rojo lo que se
-            // pierde, sea compra o venta: el color dice el resultado, no
-            // la dirección.
-            return (
-              <g key={`sig-${s.indice}`}>
-                <rect
-                  x={izq}
-                  y={Math.min(yE, yO)}
-                  width={w}
-                  height={Math.max(1, Math.abs(yO - yE))}
-                  fill="#26a69a"
-                  fillOpacity={0.15}
-                  stroke="#26a69a"
-                  strokeOpacity={0.45}
-                />
-                <rect
-                  x={izq}
-                  y={Math.min(yE, yS)}
-                  width={w}
-                  height={Math.max(1, Math.abs(yS - yE))}
-                  fill="#ef5350"
-                  fillOpacity={0.15}
-                  stroke="#ef5350"
-                  strokeOpacity={0.45}
-                />
-                <line x1={izq} y1={yE} x2={izq + w} y2={yE} stroke="#ffffff" strokeWidth={1} />
-                <text x={izq + 3} y={yE - 4} fill="#ffffff" fontSize={9} className="tabular-nums">
-                  {s.sesgo === ALCISTA ? "Compra" : "Venta"} {formatPrice(s.entrada)} · B/R{" "}
-                  {s.relacion.toFixed(2)}
-                </text>
-                {s.salida && (
-                  <text
-                    x={izq + w - 3}
-                    y={(s.salida.motivo === "objetivo" ? yO : yS) + (s.sesgo === ALCISTA ? -4 : 12)}
-                    fill={s.salida.motivo === "objetivo" ? "#26a69a" : "#ef5350"}
-                    fontSize={9}
-                    textAnchor="end"
-                  >
-                    {s.salida.motivo === "objetivo"
-                      ? "Objetivo"
-                      : s.salida.motivo === "stop"
-                        ? "Stop"
-                        : "Stop/Objetivo ambiguo"}
-                  </text>
-                )}
-                {/* La flecha, del lado del que entra. */}
-                <path
-                  d={
-                    s.sesgo === ALCISTA
-                      ? `M ${izq} ${yE + 16} l 5 8 l -10 0 z`
-                      : `M ${izq} ${yE - 16} l 5 -8 l -10 0 z`
-                  }
-                  fill={s.sesgo === ALCISTA ? "#26a69a" : "#ef5350"}
-                />
-              </g>
-            );
-          })}
-      </svg>
-
-      {/* El botón de operar va en HTML y no en el SVG: es lo único de
-          esta capa que recibe clics, y meterlo adentro obligaría a darle
-          eventos a todo el lienzo. */}
-      {onOperar &&
-        vista.senales &&
-        senalesNuevas(
-          r.senales.filter((s) => s.salida === null),
-          yaOperadas ?? [],
-        ).map((s) => {
-            const x = X(s.time);
-            const y = Y(s.entrada);
-            if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-            if (x < -40 || x > ancho + 40) return null;
-            return (
-              <button
-                key={`op-${s.indice}`}
-                type="button"
-                onClick={() => onOperar(s)}
-                title={`Abrir esta señal en el backtest: ${
-                  s.sesgo === ALCISTA ? "compra" : "venta"
-                } en ${formatPrice(s.entrada)}, stop ${formatPrice(s.stop)}, objetivo ${formatPrice(
-                  s.objetivo,
-                )}`}
-                className="pointer-events-auto absolute z-20 rounded border border-tv-border bg-tv-panel/95 px-1.5 py-0.5 text-[10px] font-semibold text-tv-text shadow hover:bg-tv-blue hover:text-white"
-                style={{
-                  left: Math.min(Math.max(2, x + 6), ancho - 60),
-                  top: Math.min(Math.max(2, y - 10), altoPrecios - 18),
-                }}
-              >
-                Operar
-              </button>
-            );
-          })}
-    </>
+    </svg>
   );
 }

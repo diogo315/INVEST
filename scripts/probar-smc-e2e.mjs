@@ -130,6 +130,15 @@ console.log("2. Encenderlo dibuja");
     p.textos.some((t) => /BOS|CHoCH/.test(t ?? "")),
     (p.textos ?? []).slice(0, 10).join(" | "));
   ck("y cajas de bloques de órdenes", p.rects > 0, String(p.rects));
+  // Las señales se calculan pero NO se dibujan. Se dibujaban, y una que
+  // todavía no tocó su stop ni su objetivo se extiende hasta la última
+  // vela: la caja tapaba media pantalla. Esta comprobación está para
+  // que no vuelvan sin que alguien lo decida.
+  ck("LAS SEÑALES DE ENTRADA NO SE DIBUJAN",
+    !p.textos.some((t) => /B\/R|^Compra |^Venta /.test(t ?? "")),
+    (p.textos ?? []).join(" | "));
+  ck("ni hay botones de operar sobre el gráfico",
+    (await pag.getByRole("button", { name: "Operar" }).count()) === 0);
 }
 
 console.log("3. Los interruptores apagan lo que dicen");

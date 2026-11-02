@@ -32,8 +32,6 @@ export interface VistaSMC {
   nivelDiario: boolean;
   nivelSemanal: boolean;
   nivelMensual: boolean;
-  /** Las flechas de compra y venta con su stop y su objetivo. */
-  senales: boolean;
 }
 
 export const VISTA_SMC: VistaSMC = {
@@ -53,7 +51,6 @@ export const VISTA_SMC: VistaSMC = {
   nivelDiario: false,
   nivelSemanal: false,
   nivelMensual: false,
-  senales: true,
 };
 
 // Los colores del indicador original.

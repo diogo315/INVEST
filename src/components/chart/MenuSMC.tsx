@@ -26,7 +26,6 @@ const PARTES: Array<{ clave: keyof VistaSMC; etiqueta: string; pista: string }> 
   { clave: "nivelDiario", etiqueta: "Nivel del día anterior", pista: "Máximo y mínimo de ayer" },
   { clave: "nivelSemanal", etiqueta: "Nivel de la semana anterior", pista: "Máximo y mínimo de la semana pasada" },
   { clave: "nivelMensual", etiqueta: "Nivel del mes anterior", pista: "Máximo y mínimo del mes pasado" },
-  { clave: "senales", etiqueta: "Señales BOS + retesteo", pista: "Las entradas con su stop y su objetivo" },
 ];
 
 /**
@@ -253,7 +252,13 @@ export function MenuSMC() {
               "Cuán cerca tienen que estar dos máximos para llamarlos iguales")}
           </div>
 
-          {titulo("Señales BOS + retesteo")}
+          {titulo("Señales BOS + retesteo (solo en el backtest)")}
+          <p className="text-[10px] leading-relaxed text-tv-text-dim">
+            Las señales no se dibujan en el gráfico: una que todavía no
+            tocó su stop ni su objetivo se extiende hasta la última vela y
+            la caja tapaba media pantalla. Se calculan igual, y el panel
+            del backtest las convierte en operaciones.
+          </p>
           <div className="flex flex-col gap-2">
             {eleccion(
               "Estructura",

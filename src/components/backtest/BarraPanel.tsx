@@ -13,7 +13,6 @@ import type { MediaMovil } from "@/lib/chart/medias";
 import type { Cual, NivelDibujado } from "./CapaNiveles";
 import type { Operacion } from "@/lib/backtest/tipos";
 import type { Candle, Timeframe } from "@/lib/binance/types";
-import type { SenalBOS } from "@/lib/smc/motor";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -44,9 +43,6 @@ interface Props {
   onConfig: (parche: Record<string, unknown>) => void;
   /** Clave de los dibujos de este backtest; sin ella no hay caja de herramientas. */
   claveDibujos?: string;
-  /** Convertir una señal del SMC en operación del backtest. */
-  onOperarSenal?: (s: SenalBOS) => void;
-  senalesOperadas?: Array<{ tiempoEntrada: number; precioEntrada: number }>;
 }
 
 /** Una de las gráficas del backtest, con sus propios controles arriba. */
@@ -73,8 +69,6 @@ export function BarraPanel({
   config,
   onConfig,
   claveDibujos,
-  onOperarSenal,
-  senalesOperadas,
 }: Props) {
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -162,8 +156,6 @@ export function BarraPanel({
           idGrafico={claveDibujos ? `${claveDibujos}:${panel}` : undefined}
           niveles={niveles}
           onMoverNivel={onMoverNivel}
-          onOperarSenal={onOperarSenal}
-          senalesOperadas={senalesOperadas}
         />
       </div>
       </div>
